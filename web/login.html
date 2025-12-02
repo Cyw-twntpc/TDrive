@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
+    <title>TDrive - 登入</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script type="text/javascript" src="/eel.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto:wght@400;500&display=swap');
+        :root {
+            --primary-color: #007aff; --primary-hover-color: #0056b3; --success-color: #28a745;
+            --danger-color: #dc3545; --warning-color: #ffc107; --background-color: #f4f7fc;
+            --card-bg: #ffffff; --text-color: #333; --text-light-color: #666;
+            --border-color: #e9eef5; --font-family-main: 'Noto Sans TC', 'Roboto', sans-serif;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: var(--font-family-main); min-height: 100vh; background: var(--background-color); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .bg-decoration { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+        .floating-element { position: absolute; background: rgba(0, 122, 255, 0.08); border-radius: 50%; animation: float 25s infinite linear; }
+        .floating-element:nth-child(1) { width: 100px; height: 100px; top: 15%; left: 8%; animation-delay: 0s; }
+        .floating-element:nth-child(2) { width: 60px; height: 60px; top: 70%; right: 12%; animation-delay: -8s; }
+        .floating-element:nth-child(3) { width: 80px; height: 80px; top: 45%; left: 85%; animation-delay: -16s; }
+        @keyframes float { 0% { transform: translateY(0px) translateX(0px) rotate(0deg); } 25% { transform: translateY(-20px) translateX(15px) rotate(90deg); } 50% { transform: translateY(10px) translateX(-10px) rotate(180deg); } 75% { transform: translateY(-15px) translateX(-20px) rotate(270deg); } 100% { transform: translateY(0px) translateX(0px) rotate(360deg); } }
+        .login-container { background: var(--card-bg); border-radius: 16px; padding: 40px; width: 100%; max-width: 520px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08); border: 1px solid var(--border-color); position: relative; z-index: 1; animation: slideUp 0.5s ease-out; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .logo-section { text-align: center; margin-bottom: 32px; }
+        .logo { width: 64px; height: 64px; background: var(--primary-color); border-radius: 16px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0, 122, 255, 0.2); }
+        .logo i { font-size: 28px; color: white; }
+        .app-title { font-size: 28px; font-weight: 700; color: var(--text-color); margin-bottom: 6px; }
+        .app-subtitle { font-size: 14px; color: var(--text-light-color); font-weight: 400; }
+        .form-section { min-height: 320px; }
+        .screen { display: none; animation: fadeIn 0.3s ease-out; }
+        .screen.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(15px); } to { opacity: 1; transform: translateX(0); } }
+        .login-method-selector { display: flex; gap: 12px; margin-bottom: 24px; }
+        .method-btn { flex: 1; padding: 16px; border: 2px solid var(--border-color); background: white; border-radius: 12px; cursor: pointer; transition: all 0.3s ease; text-align: center; position: relative; }
+        .method-btn:hover { border-color: var(--primary-color); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 122, 255, 0.15); }
+        .method-btn.active { border-color: var(--primary-color); background: rgba(0, 122, 255, 0.05); }
+        .method-btn i { font-size: 24px; color: var(--primary-color); margin-bottom: 8px; }
+        .method-btn h4 { font-size: 14px; font-weight: 600; color: var(--text-color); margin-bottom: 4px; }
+        .method-btn p { font-size: 12px; color: var(--text-light-color); }
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; font-size: 13px; font-weight: 600; color: var(--text-color); margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 15px; transition: all 0.3s ease; background: white; font-family: var(--font-family-main); }
+        .form-input:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1); }
+        .form-input.error { border-color: var(--danger-color); animation: shake 0.4s ease-in-out; }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+        .btn { width: 100%; padding: 14px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; position: relative; overflow: hidden; font-family: var(--font-family-main); }
+        .btn:hover { background: var(--primary-hover-color); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; background: var(--primary-color); transform: none; }
+        .btn .btn-text { transition: opacity 0.2s; }
+        .btn .spinner { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid transparent; border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; opacity: 0; transition: opacity 0.2s; }
+        .btn.loading .btn-text { opacity: 0; }
+        .btn.loading .spinner { opacity: 1; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-message { color: var(--danger-color); font-size: 13px; margin-top: 6px; display: none; align-items: center; gap: 4px; }
+        .error-message.show { display: flex; }
+        .info-box { background: rgba(0, 122, 255, 0.05); border-left: 3px solid var(--primary-color); padding: 14px; border-radius: 6px; margin-bottom: 20px; }
+        .info-box p { color: var(--text-color); font-size: 13px; line-height: 1.4; }
+        .info-box a { color: var(--primary-color); text-decoration: none; font-weight: 600; }
+        .info-box a:hover { text-decoration: underline; }
+        .qr-container { text-align: center; margin: 20px 0; }
+        .qr-code { width: 200px; height: 200px; margin: 0 auto 16px; border: 1px solid var(--border-color); border-radius: 12px; display: flex; align-items: center; justify-content: center; background: white; }
+        .qr-loading { color: var(--text-light-color); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+        .qr-loading i { font-size: 48px; animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        .qr-refresh { background: none; border: 1px solid var(--border-color); color: var(--text-light-color); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.3s ease; }
+        .qr-refresh:hover { border-color: var(--primary-color); color: var(--primary-color); }
+        .success-icon { width: 64px; height: 64px; background: var(--success-color); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; animation: bounceIn 0.5s ease-out; }
+        .success-icon i { font-size: 28px; color: white; }
+        @keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.05); } 70% { transform: scale(0.9); } 100% { transform: scale(1); opacity: 1; } }
+        .text-center { text-align: center; }
+        .text-muted { color: var(--text-light-color); }
+        .verification-input { text-align: center; font-size: 20px; letter-spacing: 4px; font-weight: 600; }
+        .method-switch button { background: none; border: none; color: var(--primary-color); cursor: pointer; font-size: 13px; text-decoration: underline; margin-top: 16px; }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+    <div class="bg-decoration">
+        <div class="floating-element"></div>
+        <div class="floating-element"></div>
+        <div class="floating-element"></div>
+    </div>
+
+    <div class="login-container">
+        <div class="logo-section">
+            <div class="logo"><i class="fas fa-cloud"></i></div>
+            <h1 class="app-title">TDrive</h1>
+            <p class="app-subtitle">安全的 Telegram 雲端儲存</p>
+        </div>
+
+        <div class="form-section">
+            <div class="screen active" id="apiScreen">
+                <div class="info-box">
+                    <p>開始前，請先輸入您的 Telegram API 金鑰。可前往 <a href="https://my.telegram.org" target="_blank">my.telegram.org</a> 申請。</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="apiId">API ID</label>
+                    <input type="text" id="apiId" class="form-input" placeholder="請輸入您的 API ID" spellcheck="false" autocomplete="off">
+                    <div class="error-message" id="apiIdError"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="apiHash">API Hash</label>
+                    <input type="text" id="apiHash" class="form-input" placeholder="請輸入您的 API Hash" spellcheck="false" autocomplete="off">
+                    <div class="error-message" id="apiHashError"></div>
+                </div>
+                <button class="btn" id="submitApiBtn" onclick="submitApiCredentials()">
+                    <span class="btn-text">連接 Telegram</span><span class="spinner"></span>
+                </button>
+            </div>
+
+            <div class="screen" id="methodScreen">
+                <h3 class="text-center" style="margin-bottom: 20px;">選擇驗證方式</h3>
+                <div class="login-method-selector">
+                    <div class="method-btn active" id="qrMethod" onclick="selectMethod('qr')"><i class="fas fa-qrcode"></i><h4>QR 碼登入</h4><p>快速安全</p></div>
+                    <div class="method-btn" id="phoneMethod" onclick="selectMethod('phone')"><i class="fas fa-mobile-alt"></i><h4>手機號碼</h4><p>接收驗證碼</p></div>
+                </div>
+                <button class="btn" onclick="proceedWithMethod()"><span class="btn-text">繼續</span><span class="spinner"></span></button>
+                 <div class="text-center"><button onclick="showScreen('apiScreen')">返回 API 設定</button></div>
+            </div>
+
+            <div class="screen" id="qrScreen">
+                <div class="text-center" style="margin-bottom: 20px;">
+                    <h3>掃描 QR 碼登入</h3><p class="text-muted">使用 Telegram 手機應用程式掃描</p>
+                </div>
+                <div class="qr-container">
+                    <div class="qr-code" id="qrCodeContainer"><div class="qr-loading"><i class="fas fa-spinner"></i><span>產生中...</span></div></div>
+                    <button class="qr-refresh" id="refreshQrBtn" onclick="startQrLogin()"><i class="fas fa-sync-alt"></i> 重新產生</button>
+                </div>
+                <div class="text-center"><button onclick="showScreen('methodScreen')">使用其他登入方式</button></div>
+            </div>
+
+            <div class="screen" id="phoneScreen">
+                <div class="text-center" style="margin-bottom: 20px;"><h3>手機號碼登入</h3><p class="text-muted">輸入您註冊的 Telegram 手機號碼</p></div>
+                <div class="form-group">
+                    <label class="form-label" for="phoneNumber"><i class="fas fa-phone"></i> 手機號碼</label>
+                    <input type="tel" id="phoneNumber" class="form-input" placeholder="+886 912345678" spellcheck="false" autocomplete="off">
+                    <div class="error-message" id="phoneNumberError"></div>
+                </div>
+                <button class="btn" id="submitPhoneBtn" onclick="submitPhoneNumber()"><span class="btn-text">發送驗證碼</span><span class="spinner"></span></button>
+                <div class="text-center"><button onclick="showScreen('methodScreen')">使用其他登入方式</button></div>
+            </div>
+
+            <div class="screen" id="verificationScreen">
+                <div class="text-center" style="margin-bottom: 20px;"><i class="fas fa-shield-alt" style="font-size: 40px; color: var(--primary-color); margin-bottom: 12px;"></i><h3>驗證您的帳號</h3><p class="text-muted" id="verificationMessage">驗證碼已發送到您的 Telegram</p></div>
+                <div class="form-group">
+                    <label class="form-label" for="verificationCode">驗證碼</label>
+                    <input type="text" id="verificationCode" class="form-input verification-input" placeholder="12345" maxlength="5" spellcheck="false" autocomplete="off">
+                    <div class="error-message" id="verificationCodeError"></div>
+                </div>
+                <button class="btn" id="submitCodeBtn" onclick="submitVerificationCode()"><span class="btn-text">驗證</span><span class="spinner"></span></button>
+            </div>
+            
+            <div class="screen" id="passwordScreen">
+                 <div class="text-center" style="margin-bottom: 20px;"><i class="fas fa-key" style="font-size: 40px; color: var(--primary-color); margin-bottom: 12px;"></i><h3>需要兩步驟驗證</h3><p class="text-muted">請輸入您的帳號密碼</p></div>
+                 <div class="form-group">
+                    <label class="form-label" for="password">密碼 (Password)</label>
+                    <input type="password" id="password" class="form-input" placeholder="請輸入您的密碼" spellcheck="false" autocomplete="off">
+                    <div class="error-message" id="passwordError"></div>
+                </div>
+                <button class="btn" id="submitPasswordBtn" onclick="submitPassword()"><span class="btn-text">登入</span><span class="spinner"></span></button>
+            </div>
+
+            <div class="screen" id="successScreen">
+                <div class="text-center">
+                    <div class="success-icon"><i class="fas fa-check"></i></div>
+                    <h3 style="margin-bottom: 12px;">登入成功！</h3>
+                    <p class="text-muted" style="margin-bottom: 28px;">正在初始化您的 TDrive，請稍候...</p>
+                    <div class="btn loading" id="initializingIndicator"><span class="btn-text"></span><span class="spinner"></span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedMethod = 'qr';
+
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+            document.getElementById(screenId)?.classList.add('active');
+        }
+
+        function setLoading(btnId, loading) {
+            const btn = document.getElementById(btnId);
+            if (btn) btn.classList.toggle('loading', loading);
+        }
+
+        // The old showError function is removed from here. We will use UIHandler.showInlineError
+
+        function selectMethod(method) {
+            selectedMethod = method;
+            document.querySelectorAll('.method-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(method + 'Method')?.classList.add('active');
+        }
+
+        async function submitApiCredentials() {
+            ['apiId', 'apiHash'].forEach(id => UIHandler.showInlineError(id, ''));
+            const apiId = document.getElementById('apiId').value.trim();
+            const apiHash = document.getElementById('apiHash').value.trim();
+            let hasError = false;
+
+            if (!apiId) { UIHandler.showInlineError('apiId', '請輸入 API ID'); hasError = true; }
+            if (!/^\d+$/.test(apiId)) { UIHandler.showInlineError('apiId', 'API ID 必須是數字'); hasError = true; }
+            if (!apiHash) { UIHandler.showInlineError('apiHash', '請輸入 API Hash'); hasError = true; }
+            if (hasError) return;
+
+            setLoading('submitApiBtn', true);
+            const result = await eel.verify_api_credentials(Number(apiId), apiHash)();
+            setLoading('submitApiBtn', false);
+            
+            if (result.success) {
+                if (result.authorized) {
+                    await loginSuccess();
+                } else {
+                    showScreen('methodScreen');
+                }
+            } else {
+                // Use the new centralized handler and correct property
+                UIHandler.showInlineError('apiId', result.message);
+            }
+        }
+        
+        function proceedWithMethod() {
+            showScreen(selectedMethod + 'Screen');
+            if (selectedMethod === 'qr') {
+                startQrLogin();
+            }
+        }
+
+        async function startQrLogin() {
+            const qrContainer = document.getElementById('qrCodeContainer');
+            const refreshBtn = document.getElementById('refreshQrBtn');
+            
+            qrContainer.innerHTML = '<div class="qr-loading"><i class="fas fa-spinner"></i><span>產生中...</span></div>';
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 產生中';
+            
+            try {
+                const result = await eel.start_qr_login()();
+                
+                if (result.success) {
+                    qrContainer.innerHTML = `<img src="${result.qr_url}" alt="QR Code" style="width: 100%; height: 100%; object-fit: contain;">`;
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重新產生';
+                } else {
+                    qrContainer.innerHTML = `<div class="qr-loading"><i class="fas fa-times-circle" style="color: var(--danger-color);"></i><span>${result.message}</span></div>`;
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重試';
+                }
+            } catch (error) {
+                console.error('QR Login Error:', error);
+                qrContainer.innerHTML = '<div class="qr-loading"><i class="fas fa-times-circle" style="color: var(--danger-color);"></i><span>網路錯誤，請重試</span></div>';
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重試';
+            }
+        }
+
+        eel.expose(on_login_event, 'on_login_event');
+        function on_login_event(event) {
+            console.log('QR Login Event:', event);
+            
+            try {
+                switch (event.status) {
+                    case 'completed':
+                        loginSuccess();
+                        break;
+                    case 'password_needed':
+                        showScreen('passwordScreen');
+                        break;
+                    case 'expired':
+                    case 'cancelled':
+                    case 'failed':
+                    default:
+                        document.getElementById('qrCodeContainer').innerHTML = 
+                            `<div class="qr-loading">
+                                <i class="fas fa-times-circle" style="color: var(--warning-color);"></i>
+                                <span>${event.error || '登入失敗'}</span>
+                                <button onclick="startQrLogin()" style="margin-top: 8px; padding: 4px 8px; font-size: 12px;">重試</button>
+                            </div>`;
+                        break;
+                }
+            } catch (error) {
+                console.error('處理登入事件時發生錯誤:', error);
+            }
+        }        
+
+        async function submitPhoneNumber() {
+            UIHandler.showInlineError('phoneNumber', '');
+            const phone = document.getElementById('phoneNumber').value.trim();
+            if (!phone) { UIHandler.showInlineError('phoneNumber', '請輸入手機號碼'); return; }
+
+            setLoading('submitPhoneBtn', true);
+            const result = await eel.send_code_request(phone)();
+            setLoading('submitPhoneBtn', false);
+
+            if (result.success) {
+                document.getElementById('verificationMessage').textContent = `驗證碼已發送到 ${phone}`;
+                showScreen('verificationScreen');
+            } else {
+                UIHandler.showInlineError('phoneNumber', result.message);
+            }
+        }
+
+        async function submitVerificationCode() {
+            UIHandler.showInlineError('verificationCode', '');
+            const code = document.getElementById('verificationCode').value.trim();
+            if (!code) { UIHandler.showInlineError('verificationCode', '請輸入驗證碼'); return; }
+
+            setLoading('submitCodeBtn', true);
+            const result = await eel.submit_verification_code(code)();
+            setLoading('submitCodeBtn', false);
+
+            if (result.success) {
+                if (result.password_needed) {
+                    showScreen('passwordScreen');
+                } else {
+                    await loginSuccess();
+                }
+            } else {
+                UIHandler.showInlineError('verificationCode', result.message);
+            }
+        }
+        
+        async function submitPassword() {
+            UIHandler.showInlineError('password', '');
+            const password = document.getElementById('password').value.trim();
+            if (!password) { UIHandler.showInlineError('password', '請輸入密碼'); return; }
+            
+            setLoading('submitPasswordBtn', true);
+            const result = await eel.submit_password(password)();
+            setLoading('submitPasswordBtn', false);
+
+            if (result.success) {
+                await loginSuccess();
+            } else {
+                UIHandler.showInlineError('password', result.message);
+            }
+        }
+
+        async function loginSuccess() {
+            console.log('開始登入成功流程');
+            
+            try {
+                showScreen('successScreen');
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                console.log('正在初始化 TDrive...');
+                const result = await eel.perform_post_login_initialization()();
+                
+                if (result.success) {
+                    console.log('初始化成功，跳轉到主頁面');
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else {
+                    console.error('初始化失敗:', result.message);
+                    // Use the new handler for a consistent alert
+                    await UIHandler.handleBackendError(result); 
+                    showScreen('methodScreen');
+                }
+            } catch (error) {
+                console.error('登入成功流程中發生錯誤:', error);
+                await UIHandler.showAlert('嚴重錯誤', '發生未預期的錯誤，請重新登入');
+                showScreen('methodScreen');
+            }
+        }
+
+        // Need to load ui_handler.js to use its functions
+        const uiHandlerScript = document.createElement('script');
+        uiHandlerScript.src = 'ui_handler.js';
+        document.head.appendChild(uiHandlerScript);
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
+    <title>TDrive - 您的安全雲端儲存</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script type="text/javascript" src="/eel.js"></script>
+</head>
+<body oncontextmenu="return false;">
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo unselectable">
+                <img src="title.png" alt="TDrive Logo">
+            </div>
+            <nav class="file-tree-nav">
+                <ul id="file-tree"></ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="top-row">
+                    <div class="search-container">
+                        <div class="search-bar">
+                            <i class="fas fa-search"></i>
+                            <input type="text" placeholder="在 TDrive 中搜尋" spellcheck="false" autocomplete="off">
+                        </div>
+                        <button id="search-scope-toggle" class="search-scope-btn" title="切換搜尋範圍">全部資料夾</button>
+                    </div>
+                    <div class="user-actions">
+                        <button id="help-btn" class="btn-icon" title="幫助" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
+                        <button id="settings-btn" class="btn-icon" title="設定" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
+                        <button id="user-btn" class="btn-icon" title="使用者資訊" data-popover="user-popover">
+                            <i class="fas fa-user-circle"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="bottom-row">
+                    <nav id="breadcrumb" class="breadcrumb-nav"></nav>
+                    <div class="action-buttons">
+                        <button id="upload-btn" class="btn"><i class="fas fa-upload"></i> 上傳</button>
+                        <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
+                        <button id="new-folder-btn" class="btn"><i class="fas fa-folder-plus"></i> 新增資料夾</button>
+                        <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
+                    </div>
+                </div>
+            </header>
+
+            <section id="file-list-container" class="file-list-section">
+                <div class="file-list-header">
+                    <div class="file-item-col name sortable" data-sort="name">
+                        <div class="header-name-wrapper">
+                            <span>名稱</span>
+                            <span class="sort-icon"></span>
+                        </div>
+                    </div>
+                    <div class="file-item-col date sortable" data-sort="date">
+                        <div class="header-name-wrapper">
+                            <span>修改日期</span>
+                            <span class="sort-icon"></span>
+                        </div>
+                    </div>
+                    <div class="file-item-col type sortable" data-sort="type">
+                        <div class="header-name-wrapper">
+                            <span>類型</span>
+                            <span class="sort-icon"></span>
+                        </div>
+                    </div>
+                    <div class="file-item-col size sortable" data-sort="size">
+                        <div class="header-name-wrapper">
+                            <span>檔案大小</span>
+                            <span class="sort-icon"></span>
+                        </div>
+                    </div>
+                </div>
+                <div id="file-list-body" class="file-list-body">
+                </div>
+                <div id="selection-box"></div>
+            </section>
+        </main>
+    </div>
+    
+    <div id="help-popover" class="popover hidden unselectable">
+        <h3>幫助中心</h3>
+        <p>歡迎使用 TDrive！這是一個基於 Telegram 的安全雲端儲存工具。</p>
+        <p><b>操作提示：</b></p>
+        <ul>
+            <li><b>單擊</b>資料夾：導覽至該資料夾。</li>
+            <li><b>單擊小箭頭</b>：展開/收合資料夾。</li>
+            <li>按住 <b>Ctrl</b> 鍵再單擊可進行多選。</li>
+            <li>在空白處<b>拖曳滑鼠</b>可以框選多個項目。</li>
+        </ul>
+    </div>
+
+    <div id="settings-popover" class="popover hidden unselectable">
+        <h3>設定</h3>
+        <div class="setting-item">
+            <label for="theme-select">主題</label>
+            <select id="theme-select">
+                <option value="light">明亮模式</option>
+                <option value="dark" disabled>黑暗模式 (即將推出)</option>
+            </select>
+        </div>
+        <div class="setting-item">
+            <label for="concurrency-limit">同時傳輸數量</label>
+            <select id="concurrency-limit">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+            </select>
+        </div>
+        <button id="save-settings-btn" class="btn" style="margin-top: 20px; width: 100%;">儲存設定</button>
+    </div>
+
+    <div id="user-popover" class="popover hidden unselectable">
+        <h3>使用者資訊</h3>
+        <div id="user-info-content"></div>
+        <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;">登出</button>
+    </div>
+
+    <div id="transfer-summary-panel" class="transfer-summary hidden unselectable">
+        <div class="panel-content">
+            <div id="summary-uploads" class="summary-section hidden">
+                <h4 id="summary-uploads-title">上傳中...</h4>
+                <div class="total-progress-bar">
+                    <div id="summary-uploads-progress" class="progress-fill"></div>
+                </div>
+            </div>
+            <div id="summary-downloads" class="summary-section hidden">
+                <h4 id="summary-downloads-title">下載中...</h4>
+                <div class="total-progress-bar">
+                    <div id="summary-downloads-progress" class="progress-fill"></div>
+                </div>
+            </div>
+            <div class="panel-actions">
+                <button id="show-details-btn" class="panel-btn">顯示詳細資訊</button>
+                <button id="cancel-all-btn" class="panel-btn-danger">全部取消</button>
+            </div>
+        </div>
+        <div id="minimized-transfer-icon" class="minimized-icon" title="顯示傳輸狀態">
+            <i class="fas fa-exchange-alt"></i>
+            <div class="progress-ring-bg"></div>
+            <svg class="progress-ring" width="36" height="36">
+                <circle id="minimized-progress-circle" class="progress-ring-circle" stroke="white" stroke-width="3" fill="transparent" r="16" cx="18" cy="18"/>
+            </svg>
+        </div>
+    </div>
+
+    <div id="transfer-details-modal" class="modal-overlay hidden unselectable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>傳輸管理器</h2>
+                <button id="close-modal-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-tabs">
+                    <button class="tab-btn active" data-tab="uploads">上傳中 <span id="upload-count"></span></button>
+                    <button class="tab-btn" data-tab="downloads">下載中 <span id="download-count"></span></button>
+                </div>
+                <div id="uploads-tab" class="tab-content active">
+                    <div id="upload-list" class="transfer-list"></div>
+                </div>
+                <div id="downloads-tab" class="tab-content">
+                     <div id="download-list" class="transfer-list"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="pause-all-btn" class="btn"><i class="fas fa-pause"></i> 全部暫停</button>
+                <button id="resume-all-btn" class="btn"><i class="fas fa-play"></i> 全部繼續</button>
+                <button id="clear-completed-btn" class="btn"><i class="fas fa-check-circle"></i> 清除已完成項目</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="confirm-modal" class="modal-overlay hidden unselectable">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="confirm-title">確認操作</h2>
+                <button id="confirm-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message">您確定要執行此操作嗎？</p>
+            </div>
+            <div class="modal-footer">
+                <button id="confirm-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="confirm-ok-btn" class="btn btn-danger">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="alert-modal" class="modal-overlay hidden unselectable">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="alert-title">提示</h2>
+                <button id="alert-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="alert-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="alert-ok-btn" class="btn">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="prompt-modal" class="modal-overlay hidden">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="prompt-title">請輸入</h2>
+                <button id="prompt-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="prompt-message">請輸入新的名稱：</p>
+                <input type="text" id="prompt-input" class="modal-input" spellcheck="false" autocomplete="off">
+                <p id="prompt-error" class="modal-error hidden"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="prompt-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="prompt-ok-btn" class="btn">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <template id="transfer-item-template">
+        <div class="transfer-item" data-id="" data-parent-id="">
+            <div class="item-indent"></div>
+            <span class="item-toggle"></span>
+            <i class="file-icon"></i>
+            <div class="item-info">
+                <span class="item-name"></span>
+                <div class="item-details">
+                    <span class="item-progress-text"></span>
+                    <span class="item-speed"></span>
+                </div>
+                <div class="item-progress-bar">
+                    <div class="progress-fill"></div>
+                </div>
+            </div>
+            <div class="item-status"></div>
+            <div class="item-actions">
+                <button class="action-btn pause-item" title="暫停"><i class="fas fa-pause"></i></button>
+                <button class="action-btn resume-item" title="繼續"><i class="fas fa-play"></i></button>
+                <button class="action-btn cancel-item" title="取消"><i class="fas fa-times"></i></button>
+                <button class="action-btn retry-item" title="重試"><i class="fas fa-sync-alt"></i></button>
+            </div>
+        </div>
+    </template>
+    
+    <script type="text/javascript" src="transfer_manager.js"></script>
+    <script type="text/javascript" src="ui_handler.js"></script>
+    <script type="text/javascript" src="main.js"></script>
+</body>
+</html>

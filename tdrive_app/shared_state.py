@@ -1,0 +1,26 @@
+import asyncio
+from typing import Dict, Any, Optional
+from telethon import TelegramClient
+
+class SharedState:
+    """
+    一個用來集中管理所有服務共享狀態的類別。
+    其實例會被傳遞給所有需要存取或修改共享狀態的子服務。
+    """
+    def __init__(self):
+        # 認證與連線相關
+        self.client: Optional[TelegramClient] = None
+        self.api_id: Optional[int] = None
+        self.api_hash: Optional[str] = None
+        self.is_logged_in: bool = False
+
+        # 登入流程中暫存的資訊
+        self.phone: Optional[str] = None
+        self.phone_code_hash: Optional[str] = None
+
+        # 非同步與回呼相關
+        self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+        self.eel_instance: Optional[Any] = None
+
+        # 傳輸任務管理
+        self.active_tasks: Dict[str, asyncio.Task] = {}
