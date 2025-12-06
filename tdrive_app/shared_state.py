@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from typing import Dict, Any, Optional
 from telethon import TelegramClient
 
@@ -24,3 +25,6 @@ class SharedState:
 
         # 傳輸任務管理
         self.active_tasks: Dict[str, asyncio.Task] = {}
+        
+        # 資料庫上傳防抖計時器
+        self.db_upload_timer: Optional[threading.Timer] = None

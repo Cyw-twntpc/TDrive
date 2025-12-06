@@ -62,11 +62,12 @@ class TDriveService:
         if client and client.is_connected():
             logger.info("正在斷開與 Telegram 的連接...")
             disconnect_coro = client.disconnect()
-            if asyncio.iscoroutine(disconnect_coro) or isinstance(disconnect_coro, types.CoroutineType): # 確保它是有效的協程物件
+            if asyncio.iscoroutine(disconnect_coro) or isinstance(disconnect_coro, types.CoroutineType):
                 try:
-                    self._async_call(disconnect_coro)
+                    # [FIXED] 將斷開連接作為背景任務排程，不阻塞主執行緒
+                    self._shared_state.loop.call_soon_threadsafe(asyncio.create_task, disconnect_coro)
                 except Exception as e:
-                    logger.error(f"斷開 Telegram 連接時發生錯誤: {e}", exc_info=True)
+                    logger.error(f"排程斷開 Telegram 連接時發生錯誤: {e}", exc_info=True)
             else:
                 logger.error("client.disconnect() 沒有返回一個有效的協程對象，無法斷開連接。")
 

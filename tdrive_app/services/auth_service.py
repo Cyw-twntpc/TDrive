@@ -280,10 +280,12 @@ class AuthService:
             logger.info("已成功斷開連線。")
         try:
             if os.path.exists('./file'):
-                shutil.rmtree('./file', ignore_errors=True)
+                shutil.rmtree('./file')
         except Exception as e:
             logger.error(f"登出時清理本機檔案失敗: {e}", exc_info=True)
-            return {"success": False, "error_code": "LOGOUT_CLEANUP_FAILED", "message": "登出時清理檔案失敗"}
+            # Log the error but don't block the rest of the logout process
+            # Let the frontend know something went wrong but logout can still proceed
+            return {"success": True, "warning": "登出完成，但部分本地檔案清理失敗。"}
         
         self.shared_state.client = None
         self.shared_state.api_id = None

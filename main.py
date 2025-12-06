@@ -16,27 +16,35 @@ logger = logging.getLogger(__name__)
 
 # --- UI 互動函式 (保留在 GUI 層) ---
 
-@eel.expose
-def ask_files(title, options):
-    """開啟一個用於選擇單一或多個檔案的對話方塊。"""
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes('-topmost', True)
-    if options.get('multiple', False):
-        file_paths = filedialog.askopenfilenames(title=title)
-    else:
-        file_paths = [filedialog.askopenfilename(title=title)]
-    root.destroy()
-    return list(file_paths) if file_paths else []
+# --- UI 互動函式 (保留在 GUI 層) ---
 
 @eel.expose
-def ask_folder(title):
+def select_files(multiple=False, title="選取檔案", initial_dir=None):
+    """開啟一個用於選擇單一或多個檔案的對話方塊。"""
+    root = tk.Tk()
+    root.withdraw() # 隱藏主視窗
+    root.attributes('-topmost', True) # 讓對話方塊置頂
+    
+    file_paths = []
+    if multiple:
+        file_paths_tuple = filedialog.askopenfilenames(title=title, initialdir=initial_dir)
+        file_paths = list(file_paths_tuple)
+    else:
+        file_path_str = filedialog.askopenfilename(title=title, initialdir=initial_dir)
+        if file_path_str:
+            file_paths = [file_path_str]
+    
+    root.destroy() # 銷毀 tkinter 根視窗
+    return file_paths if file_paths else []
+
+@eel.expose
+def select_directory(title="選取資料夾", initial_dir=None):
     """開啟一個用於選擇資料夾的對話方塊。"""
     root = tk.Tk()
-    root.withdraw()
-    root.attributes('-topmost', True)
-    folder_path = filedialog.askdirectory(title=title)
-    root.destroy()
+    root.withdraw() # 隱藏主視窗
+    root.attributes('-topmost', True) # 讓對話方塊置頂
+    folder_path = filedialog.askdirectory(title=title, initialdir=initial_dir)
+    root.destroy() # 銷毀 tkinter 根視窗
     return folder_path if folder_path else ""
 
 # --- 進度回呼 ---
@@ -145,6 +153,10 @@ if __name__ == "__main__":
     @eel.expose
     def cancel_transfer(task_id):
         return tdrive_service.cancel_transfer(task_id)
+
+    @eel.expose
+    def get_os_sep():
+        return os.sep
     
     # 3. 設定瀏覽器路徑
     bits, _ = platform.architecture()
