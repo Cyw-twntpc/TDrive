@@ -230,23 +230,36 @@ async def download_file(client, group_id, split_files_info, original_file_name, 
                     part_info_map[message.id]['downloaded'] = True
                     logger.debug(f"檔案 '{original_file_name}' 的分塊 {part_num} 已存在並通過校驗。")
 
+        MAX_DOWNLOAD_PART_RETRIES = 3 # 設定最大重試次數
+
         for message in messages_to_download:
             if part_info_map[message.id].get('downloaded'):
                 continue
 
             last_call_bytes = 0
             expected_part_hash = part_info_map[message.id]["hash"]
+            retry_count = 0 # 初始化重試計數器
             
-            while True:
+            while retry_count < MAX_DOWNLOAD_PART_RETRIES: # 限制重試次數
                 downloaded_part_path = await message.download_media(file=temp_dir, progress_callback=callback)
-                if not downloaded_part_path or not os.path.exists(downloaded_part_path): continue
+                if not downloaded_part_path or not os.path.exists(downloaded_part_path):
+                    retry_count += 1
+                    logger.warning(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 下載失敗或檔案不存在，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    await asyncio.sleep(1) # 等待一秒再重試
+                    continue
 
                 actual_part_hash = cr.hash_data(downloaded_part_path)
                 if actual_part_hash == expected_part_hash:
                     logger.debug(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 下載完成並通過校驗。")
-                    break
+                    break # 校驗成功，跳出重試迴圈
                 else:
-                    logger.warning(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 校驗失敗，正在重試下載...")
+                    retry_count += 1
+                    logger.warning(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 校驗失敗，正在重試下載... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    await asyncio.sleep(1) # 等待一秒再重試
+            
+            if retry_count == MAX_DOWNLOAD_PART_RETRIES:
+                logger.error(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 在 {MAX_DOWNLOAD_PART_RETRIES} 次重試後仍校驗失敗，視為損壞。")
+                raise ValueError(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 損壞，無法下載。")
             downloaded_bytes += message.document.size
 
         logger.info(f"檔案 '{original_file_name}' (task_id: {task_id}) 所有分塊下載完成，開始合併。")
@@ -304,9 +317,10 @@ async def _perform_db_upload(client, group_id, db_path, remote_db_message):
             z.write(db_path, os.path.basename(db_path))
         logger.info(f"資料庫已成功壓縮到 '{temp_zip_path}'。")
 
-        # 計算 Hash
-        local_db_hash = cr.hash_data(db_path)
-        caption = f"db_hash:{local_db_hash}"
+        # 獲取版本號
+        db = DatabaseHandler(db_path)
+        version = db.get_db_version()
+        caption = f"db_version:{version}"
 
         # 刪除舊的備份
         if remote_db_message:
@@ -323,7 +337,7 @@ async def _perform_db_upload(client, group_id, db_path, remote_db_message):
         # 上傳新備份並置頂
         new_message = await client.send_file(group_id, file=temp_zip_path, caption=caption)
         await client.pin_message(group_id, new_message.id, notify=False)
-        logger.info("已上傳並置頂新的資料庫備份。")
+        logger.info(f"已上傳並置頂新的資料庫備份 (版本: {version})。")
 
     except Exception as e:
         logger.error(f"上傳資料庫時發生錯誤: {e}", exc_info=True)
@@ -335,98 +349,70 @@ async def _perform_db_upload(client, group_id, db_path, remote_db_message):
 async def sync_database_file(client, group_id, mode='sync', db_path='./file/tdrive.db'):
     """
     同步本地與雲端的 tdrive.db 資料庫檔案。
-
-    :param client: Telegram 客戶端實例。
-    :param group_id: TDrive 的儲存群組 ID。
-    :param mode: 操作模式，可以是 'sync' (同步) 或 'upload' (強制上傳)。
-    :param db_path: 本地資料庫檔案的路徑。
     """
-    
     async with update_lock:
         # 尋找雲端置頂的資料庫備份訊息
         messages = await client.get_messages(group_id, limit=1, filter=InputMessagesFilterPinned)
-        remote_db_message = None
-        if messages:
-            remote_db_message = messages[0]
+        remote_db_message = messages[0] if messages else None
 
         if mode == 'upload':
             await _perform_db_upload(client, group_id, db_path, remote_db_message)
+            return
 
-        elif mode == 'sync':
+        if mode == 'sync':
             logger.info("正在執行同步資料庫模式...")
             
             # 確保本地資料庫存在
             if not os.path.exists(db_path):
-                logger.error(f"本地資料庫檔案 '{db_path}' 不存在，無法進行同步。")
+                # 如果本地沒有資料庫，但雲端有，則下載
+                if remote_db_message:
+                    logger.warning(f"本地資料庫 '{db_path}' 不存在，將從雲端下載。")
+                    await client.download_media(remote_db_message, file=db_path + ".zip")
+                    with zipfile.ZipFile(db_path + ".zip", 'r') as z:
+                        z.extractall(os.path.dirname(db_path))
+                    os.remove(db_path + ".zip")
+                    logger.info("已成功從雲端恢復資料庫。")
+                else:
+                    logger.error(f"本地資料庫 '{db_path}' 不存在，且雲端沒有備份，無法同步。")
                 return
 
             db = DatabaseHandler(db_path)
-            local_db_hash = cr.hash_data(db_path)
-            local_mod_time = db.get_modification_time()
+            local_version = db.get_db_version()
             
-            remote_db_hash = None
+            remote_version = -1 # 預設為一個無效的舊版本
             
             # 檢查雲端是否有資料庫備份
-            if remote_db_message and remote_db_message.media:
-                # 從 caption 中解析 Hash
-                if remote_db_message.text and remote_db_message.text.startswith("db_hash:"):
-                    remote_db_hash = remote_db_message.text.split("db_hash:", 1)[1].strip()
-                else:
-                    logger.warning("雲端資料庫備份訊息的 caption 中未找到有效的 Hash。")
+            if remote_db_message and remote_db_message.text and "db_version:" in remote_db_message.text:
+                try:
+                    # 從 caption 中解析版本號
+                    remote_version = int(remote_db_message.text.split("db_version:", 1)[1].split(',')[0].strip())
+                except (ValueError, IndexError):
+                    logger.warning("無法從雲端資料庫備份的 caption 中解析版本號。")
+            else:
+                logger.warning("雲端找不到資料庫備份或備份版本資訊不完整。")
+
+            # 比較版本號
+            logger.info(f"本地資料庫版本: {local_version}，雲端資料庫版本: {remote_version}")
+            if local_version > remote_version:
+                logger.info("本地版本較新，將上傳至雲端。")
+                await _perform_db_upload(client, group_id, db_path, remote_db_message)
             
-            # 比較 Hash
-            if remote_db_hash and local_db_hash == remote_db_hash:
-                logger.info("本地與雲端資料庫 Hash 一致，無需同步。")
+            elif remote_version > local_version:
+                logger.info("雲端版本較新，將從雲端下載並覆蓋本地版本。")
+                temp_zip_path = db_path + ".zip"
+                try:
+                    await client.download_media(remote_db_message, file=temp_zip_path)
+                    # 先刪除舊的 db，避免解壓縮失敗時殘留
+                    if os.path.exists(db_path): os.remove(db_path)
+                    with zipfile.ZipFile(temp_zip_path, 'r') as z:
+                        z.extractall(os.path.dirname(db_path))
+                    logger.info("本地資料庫已成功更新為雲端版本。")
+                except Exception as e:
+                    logger.error(f"從雲端下載或解壓縮資料庫失敗: {e}", exc_info=True)
+                finally:
+                    if os.path.exists(temp_zip_path):
+                        os.remove(temp_zip_path)
+
+            else: # local_version == remote_version
+                logger.info("本地與雲端資料庫版本一致，無需同步。")
                 return
-
-            logger.warning("本地與雲端資料庫 Hash 不一致，進行比對及同步...")
-            
-            temp_cloud_zip_path = os.path.join(os.path.dirname(db_path), f"temp_tdrive_cloud_{int(time.time())}.zip")
-            temp_cloud_db_path = os.path.join(os.path.dirname(db_path), f"temp_tdrive_cloud_{int(time.time())}.db")
-
-            try:
-                # 如果雲端有備份但 Hash 不一致，則下載雲端版本
-                if remote_db_message and remote_db_hash:
-                    logger.info("正在下載雲端資料庫備份進行比對...")
-                    await client.download_media(remote_db_message, file=temp_cloud_zip_path)
-                    
-                    if os.path.exists(temp_cloud_zip_path):
-                        with zipfile.ZipFile(temp_cloud_zip_path, 'r') as z:
-                            # 確保解壓縮到指定臨時路徑
-                            z.extract(os.path.basename(db_path), os.path.dirname(temp_cloud_db_path))
-                        # 將解壓縮後的檔案重新命名為我們預期的臨時名稱
-                        extracted_db_name = os.path.join(os.path.dirname(temp_cloud_db_path), os.path.basename(db_path))
-                        os.rename(extracted_db_name, temp_cloud_db_path)
-
-                        logger.info(f"雲端資料庫備份已下載並解壓縮到 '{temp_cloud_db_path}'。")
-                        
-                        temp_db_instance = DatabaseHandler(db_path=temp_cloud_db_path)
-                        cloud_db_mod_time = temp_db_instance.get_modification_time()
-                        
-                        if cloud_db_mod_time is None:
-                            logger.warning(f"無法獲取雲端副本 '{temp_cloud_db_path}' 的修改時間，將以本地為準進行上傳。")
-                            await _perform_db_upload(client, group_id, db_path, remote_db_message)
-                            return
-                        
-                        # 比較時間戳
-                        if local_mod_time is None or cloud_db_mod_time > local_mod_time:
-                            logger.info(f"雲端資料庫 ({cloud_db_mod_time}) 較新，將替換本地資料庫 ({local_mod_time})。")
-                            shutil.copy(temp_cloud_db_path, db_path)
-                            logger.info("本地資料庫已更新為雲端最新版本。")
-                        else:
-                            logger.info(f"本地資料庫 ({local_mod_time}) 較新或相同，將上傳本地版本。")
-                            await _perform_db_upload(client, group_id, db_path, remote_db_message)
-                    else:
-                        logger.error("從 Telegram 下載雲端資料庫備份失敗。將上傳本地資料庫。")
-                        await _perform_db_upload(client, group_id, db_path, remote_db_message)
-                else:
-                    logger.warning("雲端沒有資料庫備份或無法解析，將上傳本地資料庫。")
-                    await _perform_db_upload(client, group_id, db_path, remote_db_message)
-
-            except Exception as e:
-                logger.error(f"同步資料庫時發生錯誤: {e}", exc_info=True)
-            finally:
-                if os.path.exists(temp_cloud_zip_path):
-                    os.remove(temp_cloud_zip_path)
-                if os.path.exists(temp_cloud_db_path):
-                    os.remove(temp_cloud_db_path)

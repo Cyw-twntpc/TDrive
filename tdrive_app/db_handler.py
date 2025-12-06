@@ -28,7 +28,7 @@ class DatabaseHandler:
 
     def _init_db(self):
         """
-        執行 CREATE TABLE IF NOT EXISTS 語句，建立所有表格，並初始化根目錄。
+        執行 CREATE TABLE IF NOT EXISTS 語句，建立所有表格，並初始化根目錄和 metadata。
         """
         conn = self._get_conn()
         cursor = conn.cursor()
@@ -88,6 +88,11 @@ class DatabaseHandler:
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date) VALUES (?, ?, ?)", 
                            (None, 'TDrive', time.time()))
         
+        # 檢查並初始化 db_version
+        cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
+        if cursor.fetchone() is None:
+            cursor.execute("INSERT INTO metadata (key, value) VALUES ('db_version', '0')")
+        
         conn.commit()
         conn.close()
         logger.info("資料庫表格初始化完成。")
@@ -113,9 +118,22 @@ class DatabaseHandler:
             return "0 B"
         k = 1024
         sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-        i = int(math.floor(math.log(bytes_num, k)))
+        # Handle log(0) case
+        if bytes_num < 1:
+            i = 0
+        else:
+            i = int(math.floor(math.log(bytes_num, k)))
         return f"{bytes_num / (k ** i):.1f} {sizes[i]}"
     
+    def _is_valid_item_name(self, name):
+        """檢查名稱是否有效，防止路徑遍歷和無效檔名。"""
+        if not name or name == "." or name == "..":
+            return False
+        # 檢查是否包含任何路徑分隔符或常見的無效字元
+        if any(c in name for c in r'\/<>:"|?*'):
+            return False
+        return True
+
     def _update_folder_size_recursively(self, cursor, folder_id, size_delta):
         """
         遞迴更新父資料夾的大小。
@@ -127,149 +145,134 @@ class DatabaseHandler:
             result = cursor.fetchone()
             current_id = result['parent_id'] if result else None
 
-    def _update_modification_time(self, cursor):
+    def _increment_db_version(self, cursor):
         """
-        在 metadata 表中更新資料庫的最後修改時間。
+        在 metadata 表中將 db_version 加 1。
         """
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                       ('db_last_modified', time.time()))
+        cursor.execute("UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'db_version'")
 
     def _search_single_folder_items(self, search_term, folder_id):
         """
         根據資料夾id搜尋名稱包含search_term的資料夾與檔案。
         不包含子資料夾的內容，不區分大小寫。
-        回傳格式:
-        {
-            "folders": [
-                { "id": 15, "parent_id": 1, "name": "工作文件", "raw_size": 15728640, "size": "15.0 MB", "modif_date": "2025/11/22 下午 03:45" }
-            ],
-            "files": [
-                { "id": 22, "parent_id": 15, "name": "工作簡報.pptx", "raw_size": 5242880, "size": "5.0 MB", "modif_date": "2025/11/22 下午 03:40" }
-            ]
-        }
         """
         conn = self._get_conn()
-        cursor = conn.cursor()
-        search_pattern = f'%{search_term}%'
-        
-        folders = []
-        files = []
+        try:
+            cursor = conn.cursor()
+            search_pattern = f'%{search_term}%'
+            
+            folders = []
+            files = []
 
-        # 查詢子資料夾，並包含 parent_id
-        cursor.execute("SELECT id, name, total_size, modif_date, parent_id FROM folders WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE", 
-                       (folder_id, search_pattern))
-        for row in cursor.fetchall():
-            folders.append({
-                "id": row['id'],
-                "parent_id": row['parent_id'],
-                "name": row['name'],
-                "raw_size": row['total_size'],
-                "size": self._format_size(row['total_size']),
-                "modif_date": self._format_timestamp(row['modif_date'])
-            })
+            # 查詢子資料夾，並包含 parent_id
+            cursor.execute("SELECT id, name, total_size, modif_date, parent_id FROM folders WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE", 
+                           (folder_id, search_pattern))
+            for row in cursor.fetchall():
+                folders.append({
+                    "id": row['id'],
+                    "parent_id": row['parent_id'],
+                    "name": row['name'],
+                    "raw_size": row['total_size'],
+                    "size": self._format_size(row['total_size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
 
-        # 查詢檔案
-        cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE",
-                       (folder_id, search_pattern))
-        for row in cursor.fetchall():
-            files.append({
-                "id": row['id'],
-                "parent_id": folder_id, # 檔案的 parent_id 就是當前搜尋的 folder_id
-                "name": row['name'],
-                "raw_size": row['size'],
-                "size": self._format_size(row['size']),
-                "modif_date": self._format_timestamp(row['modif_date'])
-            })
-        
-        conn.close()
-        return {"folders": folders, "files": files}
+            # 查詢檔案
+            cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE",
+                           (folder_id, search_pattern))
+            for row in cursor.fetchall():
+                files.append({
+                    "id": row['id'],
+                    "parent_id": folder_id, # 檔案的 parent_id 就是當前搜尋的 folder_id
+                    "name": row['name'],
+                    "raw_size": row['size'],
+                    "size": self._format_size(row['size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
+            
+            return {"folders": folders, "files": files}
+        finally:
+            if conn:
+                conn.close()
 
     # --- 公開的 API ---
     def get_folder_contents(self, folder_id):
         """
         根據資料夾id回傳資料夾內容。
-        回傳格式:
-        {
-            "folders": [
-                { "id": 15, "name": "工作文件", "raw_size": 15728640, "size": "15.0 MB", "modif_date": "2025/11/22 下午 03:45" }
-            ],
-            "files": [
-                { "id": 22, "name": "專案簡報.pptx", "raw_size": 5242880, "size": "5.0 MB", "modif_date": "2025/11/22 下午 03:40" }
-            ]
-        }
         """
         conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        folders = []
-        files = []
+        try:
+            cursor = conn.cursor()
+            
+            folders = []
+            files = []
 
-        # 查詢子資料夾
-        cursor.execute("SELECT id, name, total_size, modif_date FROM folders WHERE parent_id = ?", (folder_id,))
-        for row in cursor.fetchall():
-            folders.append({
-                "id": row['id'],
-                "name": row['name'],
-                "raw_size": row['total_size'],
-                "size": self._format_size(row['total_size']),
-                "modif_date": self._format_timestamp(row['modif_date'])
-            })
+            # 查詢子資料夾
+            cursor.execute("SELECT id, name, total_size, modif_date FROM folders WHERE parent_id = ?", (folder_id,))
+            for row in cursor.fetchall():
+                folders.append({
+                    "id": row['id'],
+                    "name": row['name'],
+                    "raw_size": row['total_size'],
+                    "size": self._format_size(row['total_size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
 
-        # 查詢檔案
-        cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ?", (folder_id,))
-        for row in cursor.fetchall():
-            files.append({
-                "id": row['id'],
-                "name": row['name'],
-                "raw_size": row['size'],
-                "size": self._format_size(row['size']),
-                "modif_date": self._format_timestamp(row['modif_date'])
-            })
-        
-        conn.close()
-        return {"folders": folders, "files": files}
+            # 查詢檔案
+            cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ?", (folder_id,))
+            for row in cursor.fetchall():
+                files.append({
+                    "id": row['id'],
+                    "name": row['name'],
+                    "raw_size": row['size'],
+                    "size": self._format_size(row['size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
+            
+            return {"folders": folders, "files": files}
+        finally:
+            if conn:
+                conn.close()
 
     def get_folder_tree(self):
         """
-        獲取資料庫中所有的資料夾，並按名稱排序。主要用於在 UI 左側建立可展開的資料夾樹狀結構。
-        回傳格式:
-        [
-            { "id": 1, "parent_id": null, "name": "TDrive" },
-            { "id": 15, "parent_id": 1, "name": "工作文件" }
-        ]
+        獲取資料庫中所有的資料夾，並按名稱排序。
         """
         conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id, parent_id, name FROM folders ORDER BY name COLLATE NOCASE")
-        all_folders = []
-        for row in cursor.fetchall():
-            all_folders.append({
-                "id": row['id'],
-                "parent_id": row['parent_id'],
-                "name": row['name']
-            })
-        
-        conn.close()
-        return all_folders
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, parent_id, name FROM folders ORDER BY name COLLATE NOCASE")
+            all_folders = [dict(row) for row in cursor.fetchall()]
+            
+            return all_folders
+        finally:
+            if conn:
+                conn.close()
 
     def find_file_by_hash(self, file_hash):
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id, parent_id, name, size, hash, modif_date FROM files WHERE hash = ?", (file_hash,))
-        file_row = cursor.fetchone()
-        conn.close()
-
-        if file_row:
-            # 獲取分塊資訊
-            chunks_data = []
+        conn = None
+        try:
             conn = self._get_conn()
             cursor = conn.cursor()
-            cursor.execute("SELECT part_num, message_id, part_hash FROM chunks WHERE file_id = ?", (file_row['id'],))
-            for chunk_row in cursor.fetchall():
-                chunks_data.append([chunk_row['part_num'], chunk_row['message_id'], chunk_row['part_hash']])
-            conn.close()
+            cursor.execute("SELECT id, parent_id, name, size, hash, modif_date FROM files WHERE hash = ?", (file_hash,))
+            file_row = cursor.fetchone()
+        finally:
+            if conn:
+                conn.close()
+
+        if file_row:
+            chunks_data = []
+            conn_chunks = None
+            try:
+                conn_chunks = self._get_conn()
+                cursor_chunks = conn_chunks.cursor()
+                cursor_chunks.execute("SELECT part_num, message_id, part_hash FROM chunks WHERE file_id = ?", (file_row['id'],))
+                for chunk_row in cursor_chunks.fetchall():
+                    chunks_data.append([chunk_row['part_num'], chunk_row['message_id'], chunk_row['part_hash']])
+            finally:
+                if conn_chunks:
+                    conn_chunks.close()
 
             return {
                 "id": file_row['id'],
@@ -283,6 +286,9 @@ class DatabaseHandler:
         return None
     
     def add_folder(self, parent_id, name):
+        if not self._is_valid_item_name(name):
+            raise errors.InvalidNameError(f"資料夾名稱 '{name}' 包含無效字元。")
+        
         conn = self._get_conn()
         try:
             with conn:
@@ -291,7 +297,7 @@ class DatabaseHandler:
                     "INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)",
                     (parent_id, name, time.time(), 0)
                 )
-                self._update_modification_time(cursor)
+                self._increment_db_version(cursor)
         except sqlite3.IntegrityError:
             raise errors.ItemAlreadyExistsError(f"資料夾 '{name}' 已存在。")
         finally:
@@ -299,6 +305,9 @@ class DatabaseHandler:
                 conn.close()
 
     def add_file(self, folder_id, name, size, file_hash, modif_date_ts, chunks_data):
+        if not self._is_valid_item_name(name):
+            raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
+
         conn = self._get_conn()
         try:
             with conn: # 使用 with 陳述句自動處理交易
@@ -317,7 +326,7 @@ class DatabaseHandler:
                 
                 # 遞迴更新資料夾大小
                 self._update_folder_size_recursively(cursor, folder_id, size)
-                self._update_modification_time(cursor)
+                self._increment_db_version(cursor)
         except sqlite3.IntegrityError:
             raise errors.ItemAlreadyExistsError(f"檔案 '{name}' 或其 hash 已存在。")
         finally:
@@ -345,7 +354,7 @@ class DatabaseHandler:
                 
                 # 更新資料夾大小
                 self._update_folder_size_recursively(cursor, file_info['parent_id'], -file_info['size']) # 使用 parent_id
-                self._update_modification_time(cursor)
+                self._increment_db_version(cursor)
                 
                 return message_ids
         finally:
@@ -354,44 +363,54 @@ class DatabaseHandler:
 
     def remove_folder(self, folder_id):
         conn = self._get_conn()
-        all_message_ids = []
-        
-        def _recursive_delete(cursor, f_id):
-            # 獲取所有子資料夾
-            cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (f_id,))
-            subfolder_ids = [row['id'] for row in cursor.fetchall()]
-            for sub_id in subfolder_ids:
-                _recursive_delete(cursor, sub_id)
-            
-            # 獲取並刪除當前資料夾下的檔案
-            cursor.execute("SELECT id FROM files WHERE parent_id = ?", (f_id,))
-            file_ids = [row['id'] for row in cursor.fetchall()]
-            for file_id in file_ids:
-                cursor.execute("SELECT message_id FROM chunks WHERE file_id = ?", (file_id,))
-                all_message_ids.extend([row['message_id'] for row in cursor.fetchall()])
-                cursor.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
-                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
-
-            # 刪除當前資料夾
-            cursor.execute("DELETE FROM folders WHERE id = ?", (f_id,))
-
         try:
             with conn:
                 cursor = conn.cursor()
-                # 獲取資料夾資訊以更新父資料夾大小
+                
+                # 1. 獲取資料夾資訊以更新父資料夾大小
                 cursor.execute("SELECT parent_id, total_size FROM folders WHERE id = ?", (folder_id,))
                 folder_info = cursor.fetchone()
                 if not folder_info:
                     raise errors.PathNotFoundError(f"資料夾 ID '{folder_id}' 不存在。")
 
-                _recursive_delete(cursor, folder_id)
+                # 2. 使用 CTE 遞迴獲取所有後代資料夾和檔案的 ID
+                get_descendants_query = """
+                WITH RECURSIVE folder_hierarchy(id) AS (
+                    SELECT ?
+                    UNION ALL
+                    SELECT f.id FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
+                )
+                SELECT id FROM folder_hierarchy;
+                """
+                cursor.execute(get_descendants_query, (folder_id,))
+                all_folder_ids = [row['id'] for row in cursor.fetchall()]
                 
-                # 更新父資料夾的大小 (保留防禦性檢查)
+                id_placeholders = ','.join(['?'] * len(all_folder_ids))
+                
+                cursor.execute(f"SELECT id FROM files WHERE parent_id IN ({id_placeholders})", all_folder_ids)
+                all_file_ids = [row['id'] for row in cursor.fetchall()]
+
+                all_message_ids = []
+                if all_file_ids:
+                    file_id_placeholders = ','.join(['?'] * len(all_file_ids))
+                    # 3. 批次獲取所有 message_id
+                    cursor.execute(f"SELECT message_id FROM chunks WHERE file_id IN ({file_id_placeholders})", all_file_ids)
+                    all_message_ids = [row['message_id'] for row in cursor.fetchall()]
+                    
+                    # 4. 批次刪除 chunks 和 files
+                    cursor.execute(f"DELETE FROM chunks WHERE file_id IN ({file_id_placeholders})", all_file_ids)
+                    cursor.execute(f"DELETE FROM files WHERE id IN ({file_id_placeholders})", all_file_ids)
+
+                # 5. 批次刪除資料夾
+                cursor.execute(f"DELETE FROM folders WHERE id IN ({id_placeholders})", all_folder_ids)
+                
+                # 6. 更新父資料夾的大小
                 if folder_info['parent_id'] is not None:
                     self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])
-                self._update_modification_time(cursor)
-            
-            return all_message_ids
+                
+                self._increment_db_version(cursor)
+                
+                return all_message_ids
         finally:
             if conn:
                 conn.close()
@@ -400,24 +419,29 @@ class DatabaseHandler:
         """
         根據資料夾id重命名資料夾。
         """
+        if not self._is_valid_item_name(new_name):
+            raise errors.InvalidNameError(f"資料夾名稱 '{new_name}' 包含無效字元。")
+
         conn = self._get_conn()
         try:
             with conn:
                 cursor = conn.cursor()
+                # 獲取要重新命名資料夾的 parent_id
+                cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
+                folder_info = cursor.fetchone()
+                if not folder_info:
+                    raise errors.PathNotFoundError(f"資料夾 ID '{folder_id}' 不存在。")
+                parent_id = folder_info['parent_id']
+
+                # 檢查同一個 parent_id 下是否已存在同名資料夾 (排除自身)
+                cursor.execute("SELECT id FROM folders WHERE parent_id = ? AND name = ? AND id != ?",
+                               (parent_id, new_name, folder_id))
+                if cursor.fetchone():
+                    raise errors.ItemAlreadyExistsError(f"在相同的父資料夾下，目標名稱 '{new_name}' 已存在。")
+
                 cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?",
                                (new_name, time.time(), folder_id))
-                self._update_modification_time(cursor)
-        except sqlite3.IntegrityError:
-            # Check if an item with the new_name already exists in the same parent folder.
-            # We need to get the parent_id of the folder being renamed.
-            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
-            parent_id_row = cursor.fetchone()
-            if parent_id_row:
-                parent_id = parent_id_row['parent_id']
-                raise errors.ItemAlreadyExistsError(f"在相同的父資料夾下，目標名稱 '{new_name}' 已存在。")
-            else:
-                # Fallback for unexpected integrity error
-                raise errors.TDriveError(f"重命名資料夾 '{folder_id}' 為 '{new_name}' 時發生整合性錯誤。")
+                self._increment_db_version(cursor)
         finally:
             if conn:
                 conn.close()
@@ -426,24 +450,29 @@ class DatabaseHandler:
         """
         根據檔案id重命名資料夾。
         """
+        if not self._is_valid_item_name(new_name):
+            raise errors.InvalidNameError(f"檔案名稱 '{new_name}' 包含無效字元。")
+
         conn = self._get_conn()
         try:
             with conn:
                 cursor = conn.cursor()
+                # 獲取要重新命名檔案的 parent_id
+                cursor.execute("SELECT parent_id FROM files WHERE id = ?", (file_id,))
+                file_info = cursor.fetchone()
+                if not file_info:
+                    raise errors.PathNotFoundError(f"檔案 ID '{file_id}' 不存在。")
+                parent_id = file_info['parent_id']
+
+                # 檢查同一個 parent_id 下是否已存在同名檔案 (排除自身)
+                cursor.execute("SELECT id FROM files WHERE parent_id = ? AND name = ? AND id != ?",
+                               (parent_id, new_name, file_id))
+                if cursor.fetchone():
+                    raise errors.ItemAlreadyExistsError(f"在相同的父資料夾下，目標名稱 '{new_name}' 已存在。")
+
                 cursor.execute("UPDATE files SET name = ?, modif_date = ? WHERE id = ?",
                                (new_name, time.time(), file_id))
-                self._update_modification_time(cursor)
-        except sqlite3.IntegrityError:
-            # Check if an item with the new_name already exists in the same parent folder.
-            # We need to get the parent_id of the file being renamed.
-            cursor.execute("SELECT parent_id FROM files WHERE id = ?", (file_id,))
-            parent_id_row = cursor.fetchone()
-            if parent_id_row:
-                parent_id = parent_id_row['parent_id']
-                raise errors.ItemAlreadyExistsError(f"在相同的父資料夾下，目標名稱 '{new_name}' 已存在。")
-            else:
-                # Fallback for unexpected integrity error
-                raise errors.TDriveError(f"重命名檔案 '{file_id}' 為 '{new_name}' 時發生整合性錯誤。")
+                self._increment_db_version(cursor)
         finally:
             if conn:
                 conn.close()
@@ -452,10 +481,10 @@ class DatabaseHandler:
         """
         專門用來獲取單一檔案的完整下載資訊。
         """
-        conn = self._get_conn()
-        cursor = conn.cursor()
-
+        conn = None
         try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
             # 獲取檔案基本資訊
             cursor.execute("SELECT id, name, size, hash FROM files WHERE id = ?", (file_id,))
             file_row = cursor.fetchone()
@@ -485,12 +514,11 @@ class DatabaseHandler:
     def get_folder_contents_recursive(self, folder_id):
         """
         專門用來遞迴獲取一個資料夾內的所有內容。
-        返回一個包含根資料夾名稱和扁平化後代項目列表的物件。
         """
-        conn = self._get_conn()
-        cursor = conn.cursor()
-
+        conn = None
         try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
             # 1. 獲取根資料夾的名稱
             cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
             root_folder_row = cursor.fetchone()
@@ -499,78 +527,44 @@ class DatabaseHandler:
             root_folder_name = root_folder_row['name']
 
             # 2. 使用遞迴 CTE 獲取所有後代項目
-            # path 為從指定的 folder_id 開始的相對路徑
             query = """
             WITH RECURSIVE
               folder_hierarchy(id, parent_id, name, path) AS (
-                -- Anchor member: select the starting folder
-                SELECT id, parent_id, name, name
-                FROM folders
-                WHERE id = :folder_id
+                SELECT id, parent_id, name, name FROM folders WHERE id = :folder_id
                 UNION ALL
-                -- Recursive member: select children
-                SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name
-                FROM folders f
-                JOIN folder_hierarchy fh ON f.parent_id = fh.id
+                SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
               )
-            -- 3. 組合資料夾和檔案的結果
             SELECT
-              fh.id,
-              'folder' as type,
-              fh.name,
-              SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
-              NULL as size,
-              NULL as hash
-            FROM folder_hierarchy fh
-            WHERE fh.id != :folder_id -- 不包含根目錄本身在列表中
-
+              fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
+              NULL as size, NULL as hash
+            FROM folder_hierarchy fh WHERE fh.id != :folder_id
             UNION ALL
-
             SELECT
-              f.id,
-              'file' as type,
-              f.name,
-              CASE
-                WHEN fh.id = :folder_id THEN f.name -- 檔案在根目錄下
-                ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || f.name
-              END as relative_path,
-              f.size,
-              f.hash
-            FROM files f
-            JOIN folder_hierarchy fh ON f.parent_id = fh.id;
+              f.id, 'file' as type, f.name,
+              CASE WHEN fh.id = :folder_id THEN f.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || f.name END as relative_path,
+              f.size, f.hash
+            FROM files f JOIN folder_hierarchy fh ON f.parent_id = fh.id;
             """
             cursor.execute(query, {"folder_id": folder_id, "root_name": root_folder_name})
-            items = cursor.fetchall()
-            
-            all_items = [dict(row) for row in items]
+            items = [dict(row) for row in cursor.fetchall()]
             
             # 4. 批次獲取所有相關檔案的分塊資訊
-            file_ids = tuple([item['id'] for item in all_items if item['type'] == 'file'])
+            file_ids = tuple([item['id'] for item in items if item['type'] == 'file'])
             
             chunks_map = {}
             if file_ids:
-                chunk_query = f"""
-                SELECT file_id, part_num, message_id, part_hash
-                FROM chunks
-                WHERE file_id IN ({','.join(['?'] * len(file_ids))})
-                ORDER BY file_id, part_num
-                """
+                chunk_query = f"SELECT file_id, part_num, message_id, part_hash FROM chunks WHERE file_id IN ({','.join(['?'] * len(file_ids))}) ORDER BY file_id, part_num"
                 cursor.execute(chunk_query, file_ids)
                 for chunk_row in cursor.fetchall():
                     f_id = chunk_row['file_id']
-                    if f_id not in chunks_map:
-                        chunks_map[f_id] = []
+                    if f_id not in chunks_map: chunks_map[f_id] = []
                     chunks_map[f_id].append(dict(chunk_row))
 
             # 5. 將分塊資訊附加到檔案項目中
-            for item in all_items:
-                if item['type'] == 'file':
-                    item['chunks'] = chunks_map.get(item['id'], [])
+            for item in items:
+                if item['type'] == 'file': item['chunks'] = chunks_map.get(item['id'], [])
 
-            return {
-                "folder_name": root_folder_name,
-                "items": all_items
-            }
+            return {"folder_name": root_folder_name, "items": items}
 
         except Exception as e:
             logger.error(f"遞迴獲取資料夾 {folder_id} 內容時發生錯誤: {e}", exc_info=True)
@@ -582,75 +576,56 @@ class DatabaseHandler:
     def search_db_items(self, search_term, base_folder_id):
         """
         在資料庫中搜尋檔案和資料夾，並返回格式化的結果。
-        搜尋範圍包含base_folder_id及其子資料夾內所有檔案和資料夾。
-        使用_search_single_folder_items遞迴。
-        回傳格式:
-        {
-            "folders": [
-                { "id": 15, "name": "工作文件", "raw_size": 15728640, "size": "15.0 MB", "modif_date": "2025/11/22 下午 03:45" }
-            ],
-            "files": [
-                { "id": 22, "name": "工作簡報.pptx", "raw_size": 5242880, "size": "5.0 MB", "modif_date": "2025/11/22 下午 03:40" }
-            ]
-        }
         """
-        all_found_folders = []
-        all_found_files = []
-        
         conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        # 使用佇列進行廣度優先搜尋 (BFS)
-        folders_to_visit = [base_folder_id]
-        visited_folders = set() # 避免重複處理
-
-        while folders_to_visit:
-            current_folder_id = folders_to_visit.pop(0)
-
-            if current_folder_id in visited_folders:
-                continue
-            visited_folders.add(current_folder_id)
-
-            # 搜尋當前資料夾層級的項目
-            local_results = self._search_single_folder_items(search_term, current_folder_id)
-            all_found_folders.extend(local_results['folders'])
-            all_found_files.extend(local_results['files'])
-            
-            # 獲取所有子資料夾，將其加入待處理佇列
-            cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (current_folder_id,))
-            for sub_folder_row in cursor.fetchall():
-                folders_to_visit.append(sub_folder_row['id'])
-        
-        conn.close()
-        
-        return {"folders": all_found_folders, "files": all_found_files}
-    
-    def get_modification_time(self, db_path=None):
-        """
-        獲取資料庫的最後修改時間。
-        :param db_path: 可選的資料庫路徑，如果提供則連接到該路徑。
-        :return: 最後修改時間 (Unix timestamp) 或 None。
-        """
-        target_db_path = db_path if db_path else self.db_path
-        
-        # 檢查檔案是否存在，避免連接不存在的檔案
-        if not os.path.exists(target_db_path):
-            logger.warning(f"資料庫檔案 '{target_db_path}' 不存在，無法獲取修改時間。")
-            return None
-
-        conn = None
         try:
-            conn = self._get_conn(db_path=target_db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM metadata WHERE key = 'db_last_modified'")
-            result = cursor.fetchone()
-            if result:
-                return float(result['value'])
-            return None
-        except Exception as e:
-            logger.error(f"從資料庫 '{target_db_path}' 獲取修改時間失敗: {e}", exc_info=True)
-            return None
+            
+            # 使用佇列進行廣度優先搜尋 (BFS)
+            folders_to_visit = [base_folder_id]
+            visited_folders = set() # 避免重複處理
+
+            while folders_to_visit:
+                current_folder_id = folders_to_visit.pop(0)
+                if current_folder_id in visited_folders: continue
+                visited_folders.add(current_folder_id)
+
+                local_results = self._search_single_folder_items(search_term, current_folder_id)
+                all_found_folders.extend(local_results['folders'])
+                all_found_files.extend(local_results['files'])
+                
+                cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (current_folder_id,))
+                for sub_folder_row in cursor.fetchall():
+                    folders_to_visit.append(sub_folder_row['id'])
+            
+            return {"folders": all_found_folders, "files": all_found_files}
         finally:
             if conn:
                 conn.close()
+    
+    def get_db_version(self, db_path=None):
+        """
+        獲取資料庫的版本號。
+        :param db_path: 可選的資料庫路徑，如果提供則連接到該路徑。
+        :return: 版本號 (int) 或 0。
+        """
+        target_db_path = db_path if db_path else self.db_path
+        
+        if not os.path.exists(target_db_path):
+            logger.warning(f"資料庫檔案 '{target_db_path}' 不存在，無法獲取版本號。")
+            return 0
 
+        conn = self._get_conn(db_path=target_db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
+            result = cursor.fetchone()
+            if result:
+                return int(result['value'])
+            return 0 # 如果找不到，預設為 0
+        except Exception as e:
+            logger.error(f"從資料庫 '{target_db_path}' 獲取版本號失敗: {e}", exc_info=True)
+            return 0
+        finally:
+            if conn:
+                conn.close()

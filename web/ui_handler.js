@@ -67,6 +67,16 @@ const UIHandler = {
         if (!AppState.folderTreeData || AppState.folderTreeData.length === 0) {
             return;
         }
+
+        // --- Smart Expansion Logic ---
+        // 1. Create a set of all ancestors of the current folder.
+        const ancestors = new Set();
+        let currentId = AppState.currentFolderId;
+        while (currentId) {
+            ancestors.add(currentId);
+            const folder = AppState.folderMap.get(currentId);
+            currentId = folder ? folder.parent_id : null;
+        }
     
         const childrenOf = new Map();
         AppState.folderTreeData.forEach(folder => {
@@ -80,17 +90,17 @@ const UIHandler = {
         const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
     
         if (rootFolder) {
-            const rootItem = this._buildTreeItem(rootFolder, AppState, navigateTo, childrenOf, true);
+            // 2. Pass the ancestor set down the build process.
+            const rootItem = this._buildTreeItem(rootFolder, AppState, navigateTo, childrenOf, ancestors, true);
             const rootUl = document.createElement('ul');
             rootUl.appendChild(rootItem);
             this.fileTreeEl.appendChild(rootUl);
-            this.expandTreeToId(AppState.currentFolderId, AppState.folderMap);
         } else {
             console.error("Could not find root folder to render file tree.");
         }
     },
     
-    _buildTreeItem(folder, AppState, navigateTo, childrenOf, isRoot = false) {
+    _buildTreeItem(folder, AppState, navigateTo, childrenOf, ancestors, isRoot = false) {
         const li = document.createElement('li');
         const itemDiv = document.createElement('div');
         itemDiv.className = 'tree-item';
@@ -124,7 +134,13 @@ const UIHandler = {
     
         if (hasSubFolders) {
             const ul = document.createElement('ul');
-            ul.classList.add('collapsed');
+            // 3. If the current folder is NOT an ancestor, it should be collapsed by default.
+            if (!ancestors.has(folder.id)) {
+                ul.classList.add('collapsed');
+            } else {
+                toggle.classList.add('open');
+            }
+
             const sortedChildrenIds = childrenOf.get(folder.id).sort((a, b) => {
                 const nameA = AppState.folderMap.get(a).name;
                 const nameB = AppState.folderMap.get(b).name;
@@ -133,7 +149,7 @@ const UIHandler = {
     
             sortedChildrenIds.forEach(childId => {
                 const childFolder = AppState.folderMap.get(childId);
-                const childLi = this._buildTreeItem(childFolder, AppState, navigateTo, childrenOf);
+                const childLi = this._buildTreeItem(childFolder, AppState, navigateTo, childrenOf, ancestors);
                 ul.appendChild(childLi);
             });
             li.appendChild(ul);
@@ -142,23 +158,6 @@ const UIHandler = {
         return li;
     },
     
-    expandTreeToId(folderId, folderMap) {
-        let currentId = folderId;
-        while (currentId) {
-            const element = this.fileTreeEl.querySelector(`.tree-item[data-id="${currentId}"]`);
-            if (element) {
-                const subTree = element.parentElement.querySelector('ul');
-                if (subTree) {
-                    subTree.classList.remove('collapsed');
-                    const toggle = element.querySelector('.folder-toggle');
-                    if (toggle) toggle.classList.add('open');
-                }
-            }
-            const folder = folderMap.get(currentId);
-            currentId = folder ? folder.parent_id : null;
-        }
-    },
-
     updateTreeSelection(AppState) {
         this.fileTreeEl.querySelector('.tree-item.active')?.classList.remove('active');
         const newActive = this.fileTreeEl.querySelector(`.tree-item[data-id="${AppState.currentFolderId}"]`);
@@ -205,8 +204,9 @@ const UIHandler = {
     },
 
     updateFileList(contents, AppState) {
+        console.log('[DEBUG] updateFileList received raw contents from backend:', JSON.parse(JSON.stringify(contents)));
         this.fileListBodyEl.innerHTML = '';
-        AppState.selectedItems.clear();
+        AppState.selectedItems.length = 0; // Correct way to clear the array
         
         const fragment = document.createDocumentFragment();
         contents.folders.forEach(folder => fragment.appendChild(this.createItemElement(folder, true, AppState)));
@@ -345,37 +345,58 @@ const UIHandler = {
     addSelectionListener(element, item, AppState) {
         element.addEventListener('click', (e) => {
             if (e.detail !== 1 || element.classList.contains('is-uploading')) return;
+
             const itemId = item.id;
+            const findIndex = () => AppState.selectedItems.findIndex(i => i.id === itemId);
+            const itemIndex = findIndex();
+
             if (e.ctrlKey) {
-                element.classList.toggle('selected');
-                element.classList.contains('selected') ? AppState.selectedItems.add(itemId) : AppState.selectedItems.delete(itemId);
+                if (itemIndex > -1) {
+                    // Item is already selected, so unselect it
+                    element.classList.remove('selected');
+                    AppState.selectedItems.splice(itemIndex, 1);
+                } else {
+                    // Item is not selected, so select it
+                    element.classList.add('selected');
+                    AppState.selectedItems.push(item);
+                }
             } else {
-                if (AppState.selectedItems.size === 1 && AppState.selectedItems.has(itemId)) return;
+                // Normal click
+                if (AppState.selectedItems.length === 1 && itemIndex === 0) return;
+
                 document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.clear();
+                AppState.selectedItems.length = 0; // Clear array
                 element.classList.add('selected');
-                AppState.selectedItems.add(itemId);
+                AppState.selectedItems.push(item);
             }
         });
     },
     
     selectSingleItem(itemId, AppState) {
         document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-        AppState.selectedItems.clear();
+        AppState.selectedItems.length = 0;
+        
         const itemEl = this.fileListBodyEl.querySelector(`.file-item[data-id="${itemId}"]`);
+        
+        // Find the full item object from the current view to push into the selection
+        const folderItem = AppState.currentFolderContents.folders.find(i => i.id === itemId);
+        if (folderItem) {
+            AppState.selectedItems.push(folderItem);
+        } else {
+            const fileItem = AppState.currentFolderContents.files.find(i => i.id === itemId);
+            if (fileItem) AppState.selectedItems.push(fileItem);
+        }
+
         if (itemEl) {
             itemEl.classList.add('selected');
-            AppState.selectedItems.add(itemId);
         }
     },
 
     setupSelection(containerEl, AppState, onUpdate) {
         let isDragging = false, startX = 0, startY = 0;
         containerEl.addEventListener('mousedown', e => {
-            // 忽略滾動條上的點擊
-            if (e.offsetX >= containerEl.clientWidth) return;
-
-            // 阻止瀏覽器預設的文字選取行為，這是關鍵
+            if (e.target !== containerEl && e.target !== document.getElementById('file-list-body')) return;
+            
             e.preventDefault(); 
             
             isDragging = true;
@@ -387,7 +408,7 @@ const UIHandler = {
             
             if (!e.ctrlKey) {
                 document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.clear();
+                AppState.selectedItems.length = 0;
             }
 
             const onMouseMove = (moveE) => {
@@ -407,18 +428,22 @@ const UIHandler = {
                 document.querySelectorAll('.file-item:not(.is-uploading)').forEach(itemEl => {
                     const itemRect = itemEl.getBoundingClientRect();
                     const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                    const isSelected = itemEl.classList.contains('selected');
-                    const itemId = parseInt(itemEl.dataset.id, 10);
+                    const itemId = parseFloat(itemEl.dataset.id);
+                    const isSelected = AppState.selectedItems.some(i => i.id === itemId);
 
                     if (intersects) {
                         if (!isSelected) {
                             itemEl.classList.add('selected');
-                            AppState.selectedItems.add(itemId);
+                            // Find the full item object to add
+                            const item = AppState.currentFolderContents.folders.find(i => i.id === itemId) || AppState.currentFolderContents.files.find(i => i.id === itemId);
+                            if(item) AppState.selectedItems.push(item);
                         }
                     } else {
                         if (isSelected && !e.ctrlKey) {
                             itemEl.classList.remove('selected');
-                            AppState.selectedItems.delete(itemId);
+                            // Filter out the item
+                            const indexToRemove = AppState.selectedItems.findIndex(i => i.id === itemId);
+                            if (indexToRemove > -1) AppState.selectedItems.splice(indexToRemove, 1);
                         }
                     }
                 });

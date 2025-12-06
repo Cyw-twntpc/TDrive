@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import threading
 from telethon import TelegramClient
 from typing import TYPE_CHECKING, Optional
 
@@ -70,18 +71,17 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
 
 async def trigger_db_upload_in_background(shared_state: 'SharedState'):
     """
-    在背景執行緒的事件迴圈中調度資料庫上傳協程。
+    使用防抖 (debounce) 機制，在背景觸發資料庫上傳。
+    這可以將短時間內的多個修改合併為一次上傳。
     """
-    if not (shared_state.client and shared_state.loop and shared_state.api_id):
-        logger.error("無法觸發背景資料庫上傳：缺少 client, loop 或 api_id。")
-        return
-
-    async def task():
+    
+    # 建立要在 asyncio 事件迴圈中執行的任務
+    async def upload_task():
         try:
-            # 使用 ensure_client_connected 確保連線有效
+            logger.info("執行延遲的資料庫上傳任務...")
             client = await ensure_client_connected(shared_state)
-            if not client:
-                logger.error("背景資料庫上傳任務中止，因為無法確保客戶端連線。")
+            if not client or not shared_state.api_id:
+                logger.error("背景資料庫上傳任務中止，因為無法確保客戶端連線或 api_id 不存在。")
                 return
 
             group_id = await telegram_comms.get_group(client, shared_state.api_id)
@@ -89,6 +89,21 @@ async def trigger_db_upload_in_background(shared_state: 'SharedState'):
             logger.info("背景資料庫上傳任務已完成。")
         except Exception as e:
             logger.error(f"背景資料庫上傳任務失敗: {e}", exc_info=True)
-    
-    # 在正確的事件迴圈中執行
-    shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(task()))
+
+    # 這個函式將被 Timer 呼叫
+    def schedule_async_task():
+        if shared_state.loop.is_running():
+            shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(upload_task()))
+        else:
+            logger.warning("事件迴圈未執行，無法排程資料庫上傳。")
+
+    # 如果存在計時器，取消它
+    if shared_state.db_upload_timer:
+        shared_state.db_upload_timer.cancel()
+        logger.debug("取消了先前的資料庫上傳計時器。")
+
+    # 建立並啟動一個新的計時器，延遲 2 秒執行
+    shared_state.db_upload_timer = threading.Timer(2.0, schedule_async_task)
+    shared_state.db_upload_timer.start()
+    logger.debug("已排程一個新的資料庫上傳任務在 2 秒後執行。")
+
