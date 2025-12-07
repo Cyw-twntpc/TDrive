@@ -584,6 +584,8 @@ class DatabaseHandler:
             # 使用佇列進行廣度優先搜尋 (BFS)
             folders_to_visit = [base_folder_id]
             visited_folders = set() # 避免重複處理
+            all_found_folders = []
+            all_found_files = []
 
             while folders_to_visit:
                 current_folder_id = folders_to_visit.pop(0)

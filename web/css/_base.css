@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto:wght@400;500&display=swap');
+
+:root {
+    --primary-color: #007aff;
+    --primary-hover-color: #0056b3;
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --danger-hover-color: #c82333;
+    --warning-color: #ffc107;
+    --selected-bg-color: #e0efff;
+    --selection-box-bg: rgba(0, 122, 255, 0.2);
+    --selection-box-border: 1px solid rgba(0, 122, 255, 0.5);
+    --background-color: #f4f7fc;
+    --sidebar-bg: #ffffff;
+    --main-content-bg: #ffffff;
+    --text-color: #333;
+    --text-light-color: #666;
+    --border-color: #e9eef5;
+    --header-bg: #ffffff;
+    --font-family-main: 'Noto Sans TC', 'Roboto', sans-serif;
+    --sort-icon-color: #9db2ce;
+}
+
+.unselectable { 
+    user-select: none; 
+}
+
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+}
+
+body { 
+    font-family: var(--font-family-main); 
+    background-color: var(--background-color); 
+    color: var(--text-color); 
+    font-size: 16px; 
+    overflow: hidden; 
+}

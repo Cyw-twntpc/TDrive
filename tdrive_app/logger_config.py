@@ -63,6 +63,12 @@ def setup_logging():
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 
+    # --- 過濾第三方套件的日誌 ---
+    # 將吵雜的第三方套件日誌等級設定為 ERROR，只在發生嚴重錯誤時才記錄
+    logging.getLogger('telethon').setLevel(logging.ERROR)
+    logging.getLogger('asyncio').setLevel(logging.ERROR)
+    logging.getLogger('geventwebsocket').setLevel(logging.ERROR)
+
     root_logger.info("日誌系統初始化完成。日誌將儲存到 %s", log_filename)
 
 if __name__ == '__main__':

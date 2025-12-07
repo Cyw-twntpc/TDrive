@@ -105,8 +105,6 @@ const TransferManager = {
             return;
         }
         
-        console.log(`[DEBUG] Found matching task (id: ${task.id}). Updating status to: ${data.status}`);
-        
         // [REMOVED] The complex and fragile ID-swapping logic is no longer needed.
 
         if (data.status === 'starting_folder' && task.isFolder) {
@@ -222,6 +220,7 @@ const TransferManager = {
             this.updateInterval = setInterval(() => this.tick(), 1000);
         }
         this.showPanel();
+        this.updateAllUI(); // Trigger immediate update so content is visible right away
     },
     
     tick() {
@@ -278,40 +277,88 @@ const TransferManager = {
         let totalDownloadProgress = 0, totalDownloadSize = 0, activeDownloads = 0;
 
         this.uploads.forEach(task => {
-            if (task.status === 'transferring' || task.status === 'queued') {
-                totalUploadProgress += task.progress;
+            // The denominator should include all tasks that haven't failed, for a stable percentage
+            if (task.status !== 'failed' && task.status !== 'cancelled') {
                 totalUploadSize += task.size;
+                // The numerator is the current progress, or full size if completed
+                if (task.status === 'completed') {
+                    totalUploadProgress += task.size;
+                } else {
+                    totalUploadProgress += task.progress;
+                }
+            }
+            if (task.status === 'transferring' || task.status === 'queued') {
                 activeUploads++;
             }
         });
 
         this.downloads.forEach(task => {
-            if (task.status === 'transferring' || task.status === 'starting_folder' || task.status === 'queued') {
-                totalDownloadProgress += task.progress;
+            if (task.status !== 'failed' && task.status !== 'cancelled') {
                 totalDownloadSize += task.size;
+                if (task.status === 'completed') {
+                    totalDownloadProgress += task.size;
+                } else {
+                    totalDownloadProgress += task.progress;
+                }
+            }
+            if (task.status === 'transferring' || task.status === 'starting_folder' || task.status === 'queued') {
                 activeDownloads++;
             }
         });
 
-        if (activeUploads > 0) {
+        // Show upload panel if there are any uploads at all
+        if (this.uploads.size > 0) {
             uploadsPanel.classList.remove('hidden');
             const percent = totalUploadSize > 0 ? (totalUploadProgress / totalUploadSize * 100) : 0;
-            document.getElementById('summary-uploads-title').textContent = `上傳中 ${activeUploads} 個項目...`;
-            document.getElementById('summary-uploads-progress').style.width = `${percent}%`;
+            const title = activeUploads > 0 ? `上傳中 ${activeUploads} 個項目...` : '上傳完成';
+            const uploadProgressBar = document.getElementById('summary-uploads-progress');
+            document.getElementById('summary-uploads-title').textContent = title;
+            uploadProgressBar.style.width = `${percent}%`;
+            
+            // Add/remove .completed class for styling
+            if (activeUploads === 0 && this.uploads.size > 0) { // All uploads are finished (completed, failed, or cancelled)
+                const hasActiveOrFailedUploads = [...this.uploads.values()].some(task => 
+                    task.status === 'transferring' || task.status === 'queued' || task.status === 'failed' || task.status === 'cancelled'
+                );
+                if (!hasActiveOrFailedUploads) { // No active or failed/cancelled uploads
+                    uploadProgressBar.classList.add('completed');
+                } else {
+                    uploadProgressBar.classList.remove('completed');
+                }
+            } else {
+                uploadProgressBar.classList.remove('completed');
+            }
         } else {
             uploadsPanel.classList.add('hidden');
         }
 
-        if (activeDownloads > 0) {
+        // Show download panel if there are any downloads at all
+        if (this.downloads.size > 0) {
             downloadsPanel.classList.remove('hidden');
             const percent = totalDownloadSize > 0 ? (totalDownloadProgress / totalDownloadSize * 100) : 0;
-            document.getElementById('summary-downloads-title').textContent = `下載中 ${activeDownloads} 個項目...`;
-            document.getElementById('summary-downloads-progress').style.width = `${percent}%`;
+            const title = activeDownloads > 0 ? `下載中 ${activeDownloads} 個項目...` : '下載完成';
+            const downloadProgressBar = document.getElementById('summary-downloads-progress');
+            document.getElementById('summary-downloads-title').textContent = title;
+            downloadProgressBar.style.width = `${percent}%`;
+            
+            // Add/remove .completed class for styling
+            if (activeDownloads === 0 && this.downloads.size > 0) { // All downloads are finished
+                const hasActiveOrFailedDownloads = [...this.downloads.values()].some(task => 
+                    task.status === 'transferring' || task.status === 'queued' || task.status === 'starting_folder' || task.status === 'failed' || task.status === 'cancelled'
+                );
+                if (!hasActiveOrFailedDownloads) { // No active or failed/cancelled downloads
+                    downloadProgressBar.classList.add('completed');
+                } else {
+                    downloadProgressBar.classList.remove('completed');
+                }
+            } else {
+                downloadProgressBar.classList.remove('completed');
+            }
         } else {
             downloadsPanel.classList.add('hidden');
         }
 
-        // 更新最小化圖示的環形進度條
+        // Minimized icon logic remains the same, but will now receive correct overall progress
         const combinedSize = totalUploadSize + totalDownloadSize;
         const combinedProgress = totalUploadProgress + totalDownloadProgress;
         const overallPercent = combinedSize > 0 ? (combinedProgress / combinedSize * 100) : 0;
@@ -329,7 +376,7 @@ const TransferManager = {
     },
     
     showDetailsModal() {
-        document.getElementById('transfer-details-modal').classList.remove('hidden');
+        UIManager.toggleModal('transfer-details-modal', true);
         this.updateDetailsModal();
     },
 
@@ -559,7 +606,7 @@ const TransferManager = {
         panel.addEventListener('mouseenter', () => clearTimeout(this.minimizeTimeout));
         panel.addEventListener('mouseleave', () => this.scheduleMinimize());
         document.getElementById('show-details-btn').addEventListener('click', () => this.showDetailsModal());
-        document.getElementById('close-modal-btn').addEventListener('click', () => document.getElementById('transfer-details-modal').classList.add('hidden'));
+        document.getElementById('close-modal-btn').addEventListener('click', () => UIManager.toggleModal('transfer-details-modal', false));
         document.getElementById('cancel-all-btn').addEventListener('click', () => this.cancelAll());
         document.querySelectorAll('.modal-tabs .tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {

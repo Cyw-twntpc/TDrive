@@ -1,0 +1,14 @@
+/* 檔案樹導覽 */
+.file-tree-nav { flex-grow: 1; overflow-y: auto; }
+#file-tree, #file-tree ul { list-style-type: none; padding-left: 0; }
+#file-tree ul { padding-left: 20px; }
+.tree-item { display: flex; align-items: center; padding: 4px 8px; border-radius: 6px; user-select: none; }
+.tree-item > .folder-content { flex-grow: 1; cursor: pointer; display: flex; align-items: center; border-radius: 4px; padding: 4px 5px; }
+.tree-item > .folder-content:hover { background-color: #f0f6ff; }
+.tree-item.active > .folder-content { background-color: var(--selected-bg-color); color: var(--primary-color); font-weight: 500; }
+.tree-item.active > .folder-content i { color: var(--primary-color); }
+.folder-toggle { width: 24px; height: 24px; text-align: center; line-height: 24px; margin-right: 2px; color: #888; transition: transform 0.2s ease, background-color 0.2s; display: inline-flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 50%; flex-shrink: 0; }
+.folder-toggle:hover { background-color: #eef1f5; }
+.folder-toggle.open { transform: rotate(90deg); }
+.tree-item .folder-icon { margin-right: 8px; color: var(--primary-color); }
+.collapsed { display: none; }

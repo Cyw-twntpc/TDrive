@@ -2,50 +2,16 @@ import eel
 import eel.browsers
 import os
 import platform
-import tkinter as tk
-from tkinter import filedialog
 import logging
 import json
 
 from tdrive_app import logger_config
 from tdrive_app.main_service import TDriveService
+from tdrive_app.gui_utils import core_select_files, core_select_directory
 
 # 初始化日誌系統
 logger_config.setup_logging()
 logger = logging.getLogger(__name__)
-
-# --- UI 互動函式 (保留在 GUI 層) ---
-
-# --- UI 互動函式 (保留在 GUI 層) ---
-
-@eel.expose
-def select_files(multiple=False, title="選取檔案", initial_dir=None):
-    """開啟一個用於選擇單一或多個檔案的對話方塊。"""
-    root = tk.Tk()
-    root.withdraw() # 隱藏主視窗
-    root.attributes('-topmost', True) # 讓對話方塊置頂
-    
-    file_paths = []
-    if multiple:
-        file_paths_tuple = filedialog.askopenfilenames(title=title, initialdir=initial_dir)
-        file_paths = list(file_paths_tuple)
-    else:
-        file_path_str = filedialog.askopenfilename(title=title, initialdir=initial_dir)
-        if file_path_str:
-            file_paths = [file_path_str]
-    
-    root.destroy() # 銷毀 tkinter 根視窗
-    return file_paths if file_paths else []
-
-@eel.expose
-def select_directory(title="選取資料夾", initial_dir=None):
-    """開啟一個用於選擇資料夾的對話方塊。"""
-    root = tk.Tk()
-    root.withdraw() # 隱藏主視窗
-    root.attributes('-topmost', True) # 讓對話方塊置頂
-    folder_path = filedialog.askdirectory(title=title, initialdir=initial_dir)
-    root.destroy() # 銷毀 tkinter 根視窗
-    return folder_path if folder_path else ""
 
 # --- 進度回呼 ---
 # 這個函式本身不加 @eel.expose，它是由後端服務呼叫，然後再由它呼叫前端的 eel 函式
@@ -78,6 +44,14 @@ if __name__ == "__main__":
     tdrive_service = TDriveService()
 
     # 2. 透過全域包裝函式將 TDriveService 的方法暴露給 eel
+    @eel.expose
+    def select_files(multiple=False, title="選取檔案", initial_dir=None):
+        return core_select_files(multiple, title, initial_dir)
+
+    @eel.expose
+    def select_directory(title="選取資料夾", initial_dir=None):
+        return core_select_directory(title, initial_dir)
+
     @eel.expose
     def verify_api_credentials(api_id, api_hash):
         return tdrive_service.verify_api_credentials(api_id, api_hash)
@@ -185,8 +159,6 @@ if __name__ == "__main__":
             start_page,
             mode='chrome',
             cmdline_args=chrome_cmd,
-            # 傳遞 progress callback 給 upload/download 方法
-            # 這一步驟現在改為在 JS 呼叫時直接傳遞，或由 TDriveService 內部處理
         )
     except (SystemExit, MemoryError, KeyboardInterrupt):
         logger.info("偵測到退出訊號。")

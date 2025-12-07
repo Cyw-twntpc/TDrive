@@ -1,0 +1,71 @@
+/* 檔案列表區段 */
+.file-list-section { position: relative; padding: 0 24px; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; user-select: none; }
+.file-list-header { font-weight: 500; color: var(--text-light-color); position: sticky; top: 0; background: var(--main-content-bg); z-index: 10; user-select: none; display: flex; align-items: center; border-bottom: 2px solid var(--border-color); }
+.file-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color); border-radius: 6px; transition: background-color 0.1s, opacity 0.3s; position: relative; }
+.file-item:hover { background-color: #f9fbfd; }
+.file-item.selected { background-color: var(--selected-bg-color); }
+.file-item.is-uploading { opacity: 0.6; } /* 樂觀更新的上傳中樣式 */
+.file-item-col { display: flex; align-items: center; padding: 12px 10px; }
+.file-list-body .file-item .file-item-col { padding-top: 0; padding-bottom: 0; }
+.file-item-col.name { flex: 3.5; min-width: 200px; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-right: 24px; }
+.file-item-col.date { flex: 2; min-width: 160px; }
+.file-item-col.type { flex: 1.5; min-width: 140px; }
+.file-item-col.size { flex: 1; justify-content: flex-end; min-width: 100px; }
+
+.header-name-wrapper { display: flex; align-items: center; }
+.name-col-main { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; }
+.name-col-main i { margin-right: 15px; font-size: 20px; width: 24px; text-align: center; pointer-events: none; }
+.folder-icon { color: var(--primary-color); }
+.file-icon { color: var(--text-light-color); }
+
+.file-item.in-transfer { opacity: 0.6; pointer-events: none; }
+.file-item .transfer-overlay-icon { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); font-size: 12px; color: white; background-color: rgba(0,0,0,0.6); width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.file-item .transfer-overlay-icon .fa-spin { animation: spin 1s linear infinite; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.file-item.flash-success {
+    animation: flash-green 0.8s ease-out;
+}
+.file-item.flash-fail {
+    animation: flash-red 0.8s ease-out;
+}
+
+@keyframes flash-green {
+    0% { background-color: transparent; }
+    30% { background-color: rgba(40, 167, 69, 0.4); }
+    100% { background-color: transparent; }
+}
+
+@keyframes flash-red {
+    0% { background-color: transparent; }
+    30% { background-color: rgba(220, 53, 69, 0.35); }
+    100% { background-color: transparent; }
+}
+
+.search-result-path {
+    font-size: 12px;
+    color: var(--text-light-color);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.name-col-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.item-action-btn { background: none; border: none; cursor: pointer; color: #b0b8c4; font-size: 14px; width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; visibility: hidden; opacity: 0; transition: opacity 0.15s ease-in-out, background-color 0.2s, color 0.2s; }
+.file-item:hover .item-action-btn { visibility: visible; opacity: 1; }
+.file-item.is-uploading .item-action-btn { display: none; } /* 上傳中隱藏操作按鈕 */
+.item-action-btn:hover { background-color: #e9eef5; }
+.item-action-btn.rename-btn:hover { color: var(--text-color); }
+.item-action-btn.download-btn:hover { color: var(--primary-color); }
+.item-action-btn.delete-btn:hover { color: var(--danger-color); }
+
+.file-list-header .sortable { cursor: pointer; border-radius: 6px; transition: background-color 0.2s, color 0.2s; width: 100%; }
+.file-list-header .sortable:hover { background-color: #f0f6ff; color: var(--primary-color); }
+.sort-icon { display: inline-block; width: 1em; height: 1em; margin-left: 8px; position: relative; top: 1px; }
+.sort-icon::before, .sort-icon::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); border-left: 5px solid transparent; border-right: 5px solid transparent; opacity: 0.4; }
+.sortable:not(.asc):not(.desc) .sort-icon::before { border-bottom: 6px solid var(--sort-icon-color); top: 0px; }
+.sortable:not(.asc):not(.desc) .sort-icon::after { border-top: 6px solid var(--sort-icon-color); bottom: -2px; }
+.sortable.asc .sort-icon::before { border-bottom: 6px solid var(--primary-color); top: 0px; opacity: 1; }
+.sortable.desc .sort-icon::after { border-top: 6px solid var(--primary-color); bottom: -2px; opacity: 1; }
+
+#selection-box { position: absolute; background: var(--selection-box-bg); border: var(--selection-box-border); z-index: 100; pointer-events: none; display: none; }

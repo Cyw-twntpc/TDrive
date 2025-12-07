@@ -1,0 +1,39 @@
+.app-container { display: flex; height: 100vh; }
+
+/* 側邊欄 */
+.sidebar { width: 260px; background-color: var(--sidebar-bg); border-right: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; transition: width 0.3s ease; }
+.logo { padding-bottom: 20px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: center; align-items: center; }
+.logo img { max-width: 80%; height: auto; object-fit: contain; }
+
+/* 主要內容 & 頂部欄 */
+.main-content { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--main-content-bg); position: relative; }
+.top-bar { display: flex; flex-direction: column; padding: 12px 24px; border-bottom: 1px solid var(--border-color); background-color: var(--header-bg); flex-shrink: 0; gap: 12px; }
+.top-row, .bottom-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+
+/* 搜尋樣式 */
+.search-container { display: flex; align-items: center; height: 40px; flex: 1 1 50%; min-width: 350px; max-width: 800px; }
+.search-bar { display: flex; align-items: center; flex-grow: 1; padding: 0 12px; background-color: #f0f2f5; border-radius: 8px 0 0 8px; height: 100%; }
+.search-bar i { color: #888; }
+.search-bar input { border: none; background: transparent; outline: none; margin-left: 10px; font-size: 15px; width: 100%; height: 100%; }
+.search-scope-btn { background-color: #e1e4e8; border: none; height: 100%; padding: 0 16px; font-size: 14px; font-family: inherit; color: var(--text-color); outline: none; cursor: pointer; border-radius: 0 8px 8px 0; flex-shrink: 0; transition: background-color 0.2s; }
+.search-scope-btn:hover { background-color: #d1d5db; }
+
+.user-actions { display: flex; align-items: center; gap: 10px; position: relative; }
+
+/* 麵包屑樣式 */
+.breadcrumb-nav { display: flex; align-items: center; gap: 6px; font-size: 18px; user-select: none; }
+.breadcrumb-nav a { color: #57606a; text-decoration: none; transition: color 0.2s; }
+.breadcrumb-nav a:hover { color: var(--primary-color); }
+.breadcrumb-nav span.separator { color: #aab1b9; }
+.breadcrumb-nav .breadcrumb-current { color: #1c2025; font-weight: 700; }
+
+/* 搜尋結果中，麵包屑的醒目提示樣式 */
+.breadcrumb-search-term {
+    color: var(--primary-color);
+    font-weight: 700;
+    background-color: var(--selected-bg-color);
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.action-buttons { display: flex; gap: 10px; }
