@@ -8,6 +8,7 @@ import json
 from tdrive_app import logger_config
 from tdrive_app.main_service import TDriveService
 from tdrive_app.gui_utils import core_select_files, core_select_directory
+from tdrive_app.services.utils import cleanup_temp_folders
 
 # 初始化日誌系統
 logger_config.setup_logging()
@@ -39,6 +40,8 @@ def gui_progress_callback(task_id, name, current, total, status, speed, message=
 # --- 程式主入口 ---
 
 if __name__ == "__main__":
+    cleanup_temp_folders()
+
     logger.info("正在建立 TDriveService...")
     # 1. 建立 TDriveService 的唯一實例
     tdrive_service = TDriveService()
@@ -166,5 +169,8 @@ if __name__ == "__main__":
         # 7. 關閉後端服務
         logger.info("正在關閉 TDriveService...")
         tdrive_service.close()
+        
+        # 8. 結束時再次清理
+        cleanup_temp_folders()
 
     logger.info("TDrive GUI 已成功關閉。")

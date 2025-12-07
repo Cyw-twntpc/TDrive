@@ -1,7 +1,11 @@
 import asyncio
+import os
 import threading
 from typing import Dict, Any, Optional
 from telethon import TelegramClient
+
+TEMP_DIR = os.path.join('file', 'temp')
+
 
 class SharedState:
     """

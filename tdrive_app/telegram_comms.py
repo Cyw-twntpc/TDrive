@@ -12,6 +12,7 @@ import logging # 匯入 logging 模組
 from . import crypto_handler as cr
 from . import file_processor as fp
 from .db_handler import DatabaseHandler
+from .shared_state import TEMP_DIR
 
 logger = logging.getLogger(__name__) # 取得 logger 實例
 
@@ -93,7 +94,7 @@ async def upload_file_with_info(client, group_id, file_path, task_id, progress_c
     上傳檔案，並返回所有分塊的資訊（ID, hash 等）。
     不再檢查遠端檔案，不再寫入 caption。
     """
-    temp_dir = f".\\temp_upload_{os.path.basename(file_path)}_{task_id}"
+    temp_dir = os.path.join(TEMP_DIR, f"temp_upload_{os.path.basename(file_path)}_{task_id}")
     file_name = os.path.basename(file_path)
     split_files_info = [] # 用於儲存返回的分塊資訊
     
@@ -187,7 +188,7 @@ async def download_file(client, group_id, split_files_info, original_file_name, 
     part_info_map = {part[1]: {"num": part[0], "hash": part[2]} for part in split_files_info}
     message_ids = list(part_info_map.keys())
     
-    temp_dir = f".\\temp_download_{task_id}"
+    temp_dir = os.path.join(TEMP_DIR, f"temp_download_{task_id}")
     
     try:
         os.makedirs(temp_dir, exist_ok=True)

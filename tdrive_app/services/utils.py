@@ -3,6 +3,10 @@ import asyncio
 import threading
 from telethon import TelegramClient
 from typing import TYPE_CHECKING, Optional
+import os
+import glob
+import shutil
+from ..shared_state import TEMP_DIR
 
 from .. import telegram_comms
 
@@ -11,6 +15,26 @@ if TYPE_CHECKING:
     from ..shared_state import SharedState
 
 logger = logging.getLogger(__name__)
+
+def cleanup_temp_folders():
+    """清理所有符合 'temp_*' 模式的暫存資料夾。"""
+    logger.info("正在執行暫存檔案清理...")
+    try:
+        # 確保基礎暫存目錄存在，如果不存在則建立
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        
+        temp_dirs_pattern = os.path.join(TEMP_DIR, 'temp_*')
+        for temp_dir in glob.glob(temp_dirs_pattern):
+            if os.path.isdir(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"已清理暫存目錄: {temp_dir}")
+                except OSError as e:
+                    logger.error(f"清理暫存目錄失敗 {temp_dir}: {e}")
+        logger.info("暫存檔案清理完成。")
+    except Exception as e:
+        logger.error(f"執行暫存檔案清理時發生未知錯誤: {e}", exc_info=True)
+
 
 async def ensure_client_connected(shared_state: 'SharedState') -> Optional[TelegramClient]:
     """
