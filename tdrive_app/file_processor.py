@@ -1,36 +1,40 @@
 import os
-import re
 from . import crypto_handler as cr
 
-def split_file(file_path, key, file_hash, temp_dir):
-    chunk_size = int(1024 * 1024 * 1024 * 1.5)  # 1.5 GB
+CHUNK_SIZE = int(1024 * 1024 * 1024 * 1.5) # 分塊大小 1.5 GB
+
+def stream_split_and_encrypt(file_path, key, file_hash, temp_dir):
+    """
+    以串流模式讀取檔案，逐塊加密並寫入暫存檔。
+    這是一個生成器函式，每次產出一個 (分塊編號, 暫存路徑)。
+    """
     file_name_base = file_hash[:20]
-    split_files = []
     with open(file_path, 'rb') as f_in:
-        chunk = f_in.read(chunk_size)
         i = 1
-        while chunk:
+        while True:
+            chunk = f_in.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            
             output_path = os.path.join(temp_dir, f"{file_name_base}.part_{i}")
             with open(output_path, 'wb') as f_out:
                 f_out.write(cr.encrypt(chunk, key))
-            split_files.append(output_path)
+            
+            yield i, output_path # 產出分塊編號和路徑
+            
             i += 1
-            chunk = f_in.read(chunk_size)
-    return split_files
 
-def merge_files(file_list, save_file, key):
-    with open(save_file, 'wb') as f_out:
-        for file_part_path in file_list:
-            with open(file_part_path, 'rb') as f_in:
-                f_out.write(cr.decrypt(f_in.read(), key))
-
-def find_part_files(folder_path):
-    file_list = []
-    pattern = r".*\.part_(\d+)"
-    for file in os.listdir(folder_path):
-        match = re.match(pattern, file)
-        if match:
-            number = int(match.group(1))
-            file_list.append((number, os.path.join(folder_path, file)))
-    file_list.sort(key=lambda x: x[0])
-    return [f[1] for f in file_list]
+def decrypt_and_write_chunk(part_path, output_path, key, offset):
+    """
+    解密單一分塊並將其寫入輸出檔案的指定偏移位置。
+    """
+    try:
+        with open(output_path, 'r+b') as f_out:
+            with open(part_path, 'rb') as f_in:
+                encrypted_content = f_in.read()
+            
+            decrypted_content = cr.decrypt(encrypted_content, key)
+            f_out.seek(offset)
+            f_out.write(decrypted_content)
+    except IOError as e:
+        raise IOError(f"寫入檔案 '{output_path}' 時發生錯誤: {e}") from e

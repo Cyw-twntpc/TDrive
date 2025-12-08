@@ -31,7 +31,6 @@ def gui_progress_callback(task_id, name, current, total, status, speed, message=
             "children": children,
             "total_files": total_files
         }
-        logger.debug(f"向前端傳送進度更新: {json.dumps(payload, ensure_ascii=False)}")
         eel.update_transfer_progress(payload)()
     except Exception as e:
         logger.warning(f"更新傳輸進度至 UI 時失敗 (Task ID: {task_id}): {e}")

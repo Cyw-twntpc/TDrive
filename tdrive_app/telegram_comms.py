@@ -1,5 +1,4 @@
-from telethon.tl.types import DocumentAttributeFilename, InputMessagesFilterPinned
-from telethon.tl.functions.messages import CreateChatRequest, EditChatAboutRequest
+from telethon.tl.types import InputMessagesFilterPinned
 from telethon.tl.functions.channels import CreateChannelRequest
 import os
 import shutil
@@ -8,13 +7,13 @@ import time
 import asyncio
 import json
 
-import logging # 匯入 logging 模組
+import logging
 from . import crypto_handler as cr
 from . import file_processor as fp
 from .db_handler import DatabaseHandler
 from .shared_state import TEMP_DIR
 
-logger = logging.getLogger(__name__) # 取得 logger 實例
+logger = logging.getLogger(__name__)
 
 update_lock = asyncio.Lock()
 
@@ -88,65 +87,56 @@ async def get_group(client, app_api_id):
     _save_group_id(app_api_id, group_id)
     return group_id
 
-
 async def upload_file_with_info(client, group_id, file_path, task_id, progress_callback=None):
     """
-    上傳檔案，並返回所有分塊的資訊（ID, hash 等）。
-    不再檢查遠端檔案，不再寫入 caption。
+    【串流式】上傳檔案，並返回所有分塊的資訊（ID, hash 等）。
     """
     temp_dir = os.path.join(TEMP_DIR, f"temp_upload_{os.path.basename(file_path)}_{task_id}")
     file_name = os.path.basename(file_path)
-    split_files_info = [] # 用於儲存返回的分塊資訊
-    
+    split_files_info = []
+
     try:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.info(f"清理舊的暫存上傳目錄: {temp_dir}")
         os.makedirs(temp_dir, exist_ok=True)
         
         original_file_hash = cr.hash_data(file_path)
         key = cr.generate_key(original_file_hash[:32], original_file_hash[-32:])
         
-        # 1. 產生所有本地分塊
-        temp_parts = fp.split_file(file_path, key, original_file_hash, temp_dir)
-        
         total_size = os.path.getsize(file_path)
         uploaded_bytes = 0
 
-        # 定義進度回呼函式
         last_update_time = 0
         last_call_bytes = 0
         def callback(current, total):
             nonlocal uploaded_bytes, last_update_time, last_call_bytes
             now = time.time()
             if now - last_update_time > 0.5 or current == total:
-                elapsed = now - last_update_time # 修正錯誤的公式
+                elapsed = now - last_update_time
                 speed = (current - last_call_bytes) / elapsed if elapsed > 0 else 0
                 last_call_bytes = current
                 last_update_time = now
-                
-                current_total_progress = uploaded_bytes + current
-                
                 if progress_callback:
-                    progress_callback(task_id, file_name, current_total_progress, total_size, 'transferring', speed)
+                    progress_callback(task_id, file_name, uploaded_bytes + current, total_size, 'transferring', speed)
 
-        # 2. 迭代上傳所有分塊
-        for i, part_path in enumerate(temp_parts):
-            part_hash = cr.hash_data(part_path)
-            part_num = i + 1
-            last_call_bytes = 0
+        # 新的串流模式迴圈
+        for part_num, part_path in fp.stream_split_and_encrypt(file_path, key, original_file_hash, temp_dir):
+            try:
+                part_hash = cr.hash_data(part_path)
+                last_call_bytes = 0
+                
+                message = await client.send_file(
+                    group_id,
+                    file=part_path,
+                    progress_callback=callback
+                )
+                
+                split_files_info.append([part_num, message.id, part_hash])
+                uploaded_bytes += os.path.getsize(part_path)
             
-            # 上傳檔案，不帶 caption
-            message = await client.send_file(
-                group_id,
-                file=part_path,
-                progress_callback=callback
-            )
-            
-            # 收集分塊資訊
-            split_files_info.append([part_num, message.id, part_hash])
-            uploaded_bytes += os.path.getsize(part_path)
-            
+            finally:
+                # 確保無論上傳成功或失敗，暫存分塊都會被刪除
+                if os.path.exists(part_path):
+                    os.remove(part_path)
+
         if progress_callback:
             progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
         
@@ -159,55 +149,54 @@ async def upload_file_with_info(client, group_id, file_path, task_id, progress_c
             progress_callback(task_id, file_name, 0, 0, 'failed', 0)
         raise e
     finally:
+        # 在流程結束時，清理最外層的暫存目錄
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            logger.info(f"清理上傳後暫存目錄: {temp_dir}")
+            logger.info(f"清理上傳主暫存目錄: {temp_dir}")
 
-
-async def search_messages_by_filename_prefixes(client, group_id, prefixes):
-    """根據檔名前綴搜尋訊息ID。"""
-    message_ids = []
-    prefixes_set = set(prefixes)
-    async for message in client.iter_messages(entity=group_id, limit=None):
-        if not (message.document and hasattr(message.document, 'attributes')):
-            continue
-        
-        for attribute in message.document.attributes:
-            if isinstance(attribute, DocumentAttributeFilename):
-                for prefix in prefixes_set:
-                    if attribute.file_name.startswith(prefix):
-                        message_ids.append(message.id)
-                        break 
-    return message_ids
-
-
-async def download_file(client, group_id, split_files_info, original_file_name, original_file_hash, download_dir, task_id, progress_callback=None):
+async def download_file(client, group_id, file_details, download_dir, task_id, progress_callback=None):
     """
-    根據分塊資訊列表（包含 message_id），下載所有分割檔，校驗並合併。
+    【串流式】根據分塊資訊列表，下載所有分割檔，校驗並寫入最終檔案。
     """
-    part_info_map = {part[1]: {"num": part[0], "hash": part[2]} for part in split_files_info}
+    file_name = file_details['name']
+    part_info_map = {part['message_id']: {"num": part['part_num'], "hash": part['part_hash']} for part in file_details['chunks']}
     message_ids = list(part_info_map.keys())
     
     temp_dir = os.path.join(TEMP_DIR, f"temp_download_{task_id}")
-    
+    final_path = os.path.join(download_dir, file_name)
+    key = cr.generate_key(file_details['hash'][:32], file_details['hash'][-32:])
+
     try:
         os.makedirs(temp_dir, exist_ok=True)
-        logger.info(f"開始下載檔案 '{original_file_name}' (task_id: {task_id})。")
+        logger.info(f"開始串流式下載檔案 '{file_name}' (task_id: {task_id})。")
 
         messages_to_download = await client.get_messages(group_id, ids=message_ids)
         messages_to_download = [m for m in messages_to_download if m]
         
-        if len(messages_to_download) != len(split_files_info):
-            logger.error(f"檔案 '{original_file_name}' 的部分分塊在雲端遺失。")
-            raise FileNotFoundError(f"檔案 '{original_file_name}' 的部分分塊在雲端遺失。")
+        if len(messages_to_download) != len(file_details['chunks']):
+            raise FileNotFoundError(f"檔案 '{file_name}' 的部分分塊在雲端遺失。")
 
-        total_size = sum(m.document.size for m in messages_to_download if m.document)
+        total_size = int(file_details['size'])
         
-        downloaded_bytes = 0
-        local_parts_by_name = {os.path.basename(p): p for p in fp.find_part_files(temp_dir)}
+        # --- 1. 空間檢查與檔案佔位 ---
+        free_space = shutil.disk_usage(download_dir).free
+        temp_free_space = shutil.disk_usage(temp_dir).free
+        if free_space < total_size:
+            raise IOError(f"磁碟空間不足。需要 {total_size / 1024**2:.2f} MB，可用 {free_space / 1024**2:.2f} MB。")
+        
+        if temp_free_space < fp.CHUNK_SIZE:
+            raise IOError(f"暫存空間不足。需要 {fp.CHUNK_SIZE / 1024**2:.2f} MB，可用 {free_space / 1024**2:.2f} MB。")
 
+        with open(final_path, 'wb') as f:
+            f.seek(total_size - 1)
+            f.write(b'\0')
+        logger.info(f"已在 '{final_path}' 建立大小為 {total_size} 的佔位檔案。")
+
+        # --- 2. 串流式下載與寫入 ---
+        downloaded_bytes = 0
         last_update_time = 0
         last_call_bytes = 0
+
         def callback(current, total):
             nonlocal downloaded_bytes, last_update_time, last_call_bytes
             now = time.time()
@@ -217,91 +206,85 @@ async def download_file(client, group_id, split_files_info, original_file_name, 
                 last_call_bytes = current
                 last_update_time = now
                 if progress_callback:
-                    progress_callback(task_id, original_file_name, downloaded_bytes + current, total_size, 'transferring', speed)
+                    progress_callback(task_id, file_name, downloaded_bytes + current, total_size, 'transferring', speed)
+
+        MAX_DOWNLOAD_PART_RETRIES = 3
 
         for message in messages_to_download:
             part_num = part_info_map[message.id]["num"]
             expected_part_hash = part_info_map[message.id]["hash"]
-            part_filename = f"{original_file_hash[:20]}.part_{part_num}"
-
-            if part_filename in local_parts_by_name:
-                part_path = local_parts_by_name[part_filename]
-                if os.path.exists(part_path) and cr.hash_data(part_path) == expected_part_hash:
-                    downloaded_bytes += os.path.getsize(part_path)
-                    part_info_map[message.id]['downloaded'] = True
-                    logger.debug(f"檔案 '{original_file_name}' 的分塊 {part_num} 已存在並通過校驗。")
-
-        MAX_DOWNLOAD_PART_RETRIES = 3 # 設定最大重試次數
-
-        for message in messages_to_download:
-            if part_info_map[message.id].get('downloaded'):
-                continue
-
             last_call_bytes = 0
-            expected_part_hash = part_info_map[message.id]["hash"]
-            retry_count = 0 # 初始化重試計數器
+            retry_count = 0
             
-            while retry_count < MAX_DOWNLOAD_PART_RETRIES: # 限制重試次數
+            while retry_count < MAX_DOWNLOAD_PART_RETRIES:
                 downloaded_part_path = await message.download_media(file=temp_dir, progress_callback=callback)
+                
                 if not downloaded_part_path or not os.path.exists(downloaded_part_path):
                     retry_count += 1
-                    logger.warning(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 下載失敗或檔案不存在，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
-                    await asyncio.sleep(1) # 等待一秒再重試
+                    logger.warning(f"分塊 {part_num} 下載失敗或檔案不存在，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    await asyncio.sleep(1)
                     continue
 
                 actual_part_hash = cr.hash_data(downloaded_part_path)
                 if actual_part_hash == expected_part_hash:
-                    logger.debug(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 下載完成並通過校驗。")
-                    break # 校驗成功，跳出重試迴圈
+                    logger.debug(f"分塊 {part_num} 校驗成功。")
+                    try:
+                        offset = (part_num - 1) * fp.CHUNK_SIZE
+                        fp.decrypt_and_write_chunk(downloaded_part_path, final_path, key, offset)
+                        logger.debug(f"分塊 {part_num} 已成功解密並寫入至偏移量 {offset}。")
+                        os.remove(downloaded_part_path)
+                        break
+                    except Exception as e:
+                        logger.error(f"處理分塊 {part_num} 時發生錯誤: {e}", exc_info=True)
+                        raise e # 將內部錯誤向上拋出
                 else:
                     retry_count += 1
-                    logger.warning(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 校驗失敗，正在重試下載... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
-                    await asyncio.sleep(1) # 等待一秒再重試
+                    logger.warning(f"分塊 {part_num} 校驗失敗，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    os.remove(downloaded_part_path) # 刪除錯誤的檔案
+                    await asyncio.sleep(1)
             
             if retry_count == MAX_DOWNLOAD_PART_RETRIES:
-                logger.error(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 在 {MAX_DOWNLOAD_PART_RETRIES} 次重試後仍校驗失敗，視為損壞。")
-                raise ValueError(f"檔案 '{original_file_name}' 的分塊 {part_info_map[message.id]['num']} 損壞，無法下載。")
+                raise ValueError(f"分塊 {part_num} 在 {MAX_DOWNLOAD_PART_RETRIES} 次重試後仍校驗失敗。")
+            
             downloaded_bytes += message.document.size
 
-        logger.info(f"檔案 '{original_file_name}' (task_id: {task_id}) 所有分塊下載完成，開始合併。")
-        sorted_part_files = fp.find_part_files(temp_dir)
-        if not sorted_part_files:
-            logger.error(f"找不到任何有效的檔案部分來合併檔案 '{original_file_name}'。")
-            raise FileNotFoundError(f"找不到任何有效的檔案部分來合併檔案 '{original_file_name}'。")
-
-        key = cr.generate_key(original_file_hash[:32], original_file_hash[-32:])
-        final_path = os.path.join(download_dir, original_file_name)
-        fp.merge_files(sorted_part_files, final_path, key)
-        logger.info(f"檔案 '{original_file_name}' 合併完成。")
-
+        # --- 3. 最終校驗 ---
+        logger.info(f"檔案 '{file_name}' 所有分塊處理完成，開始最終校驗。")
         final_hash = cr.hash_data(final_path)
-        if final_hash != original_file_hash:
-            logger.error(f"檔案 '{original_file_name}' 合併後最終校驗失敗！")
-            raise ValueError(f"檔案 '{original_file_name}' 合併後最終校驗失敗！")
-        logger.info(f"檔案 '{original_file_name}' 最終校驗成功。")
-
-        if progress_callback:
-            progress_callback(task_id, original_file_name, total_size, total_size, 'completed', 0)
+        if final_hash != file_details['hash']:
+            raise ValueError(f"檔案 '{file_name}' 合併後最終校驗失敗！")
         
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.info(f"清理下載後暫存目錄: {temp_dir}")
+        logger.info(f"檔案 '{file_name}' 最終校驗成功。")
+        if progress_callback:
+            progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
 
     except asyncio.CancelledError:
-        logger.warning(f"下載任務 '{original_file_name}' (ID: {task_id}) 已被使用者取消。")
+        logger.warning(f"下載任務 '{file_name}' (ID: {task_id}) 已被使用者取消。")
         if progress_callback:
-            progress_callback(task_id, original_file_name, 0, 0, 'cancelled', 0)
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.info(f"清理下載後暫存目錄: {temp_dir}")
+            progress_callback(task_id, file_name, 0, 0, 'cancelled', 0)
+        # 如果最終檔案已建立，刪除不完整的檔案
+        if 'final_path' in locals() and os.path.exists(final_path):
+            os.remove(final_path)
+            logger.info(f"已刪除因取消而未完成的檔案: {final_path}")
         raise
 
     except Exception as e:
-        logger.error(f"下載檔案 '{original_file_name}' (task_id: {task_id}) 失敗: {e}", exc_info=True)
+        logger.error(f"下載檔案 '{file_name}' (task_id: {task_id}) 失敗: {e}", exc_info=True)
         if progress_callback:
-            progress_callback(task_id, original_file_name, 0, 0, 'failed', 0)
-        raise e
-
+            # 根據錯誤類型傳遞更具體的訊息
+            msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "下載時發生未預期錯誤。"
+            progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
+        # 如果最終檔案已建立，刪除可能已損壞的檔案
+        if 'final_path' in locals() and os.path.exists(final_path):
+            os.remove(final_path)
+            logger.info(f"已刪除因錯誤而可能損壞的檔案: {final_path}")
+        raise
+    
+    finally:
+        # 清理暫存目錄
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            logger.info(f"清理下載後暫存目錄: {temp_dir}")
 
 async def _perform_db_upload(client, group_id, db_path, remote_db_message):
     """執行資料庫的上傳、置頂和清理操作。"""
@@ -345,7 +328,6 @@ async def _perform_db_upload(client, group_id, db_path, remote_db_message):
     finally:
         if os.path.exists(temp_zip_path):
             os.remove(temp_zip_path)
-
 
 async def sync_database_file(client, group_id, mode='sync', db_path='./file/tdrive.db'):
     """

@@ -273,94 +273,109 @@ const TransferManager = {
     updateSummaryPanel() {
         const uploadsPanel = document.getElementById('summary-uploads');
         const downloadsPanel = document.getElementById('summary-downloads');
-        let totalUploadProgress = 0, totalUploadSize = 0, activeUploads = 0;
-        let totalDownloadProgress = 0, totalDownloadSize = 0, activeDownloads = 0;
-
-        this.uploads.forEach(task => {
-            // The denominator should include all tasks that haven't failed, for a stable percentage
-            if (task.status !== 'failed' && task.status !== 'cancelled') {
-                totalUploadSize += task.size;
-                // The numerator is the current progress, or full size if completed
-                if (task.status === 'completed') {
-                    totalUploadProgress += task.size;
-                } else {
-                    totalUploadProgress += task.progress;
-                }
-            }
-            if (task.status === 'transferring' || task.status === 'queued') {
-                activeUploads++;
-            }
-        });
-
-        this.downloads.forEach(task => {
-            if (task.status !== 'failed' && task.status !== 'cancelled') {
-                totalDownloadSize += task.size;
-                if (task.status === 'completed') {
-                    totalDownloadProgress += task.size;
-                } else {
-                    totalDownloadProgress += task.progress;
-                }
-            }
-            if (task.status === 'transferring' || task.status === 'starting_folder' || task.status === 'queued') {
-                activeDownloads++;
-            }
-        });
-
-        // Show upload panel if there are any uploads at all
+        
+        // --- 上傳邏輯 ---
         if (this.uploads.size > 0) {
             uploadsPanel.classList.remove('hidden');
-            const percent = totalUploadSize > 0 ? (totalUploadProgress / totalUploadSize * 100) : 0;
-            const title = activeUploads > 0 ? `上傳中 ${activeUploads} 個項目...` : '上傳完成';
-            const uploadProgressBar = document.getElementById('summary-uploads-progress');
-            document.getElementById('summary-uploads-title').textContent = title;
-            uploadProgressBar.style.width = `${percent}%`;
-            
-            // Add/remove .completed class for styling
-            if (activeUploads === 0 && this.uploads.size > 0) { // All uploads are finished (completed, failed, or cancelled)
-                const hasActiveOrFailedUploads = [...this.uploads.values()].some(task => 
-                    task.status === 'transferring' || task.status === 'queued' || task.status === 'failed' || task.status === 'cancelled'
-                );
-                if (!hasActiveOrFailedUploads) { // No active or failed/cancelled uploads
-                    uploadProgressBar.classList.add('completed');
-                } else {
-                    uploadProgressBar.classList.remove('completed');
+            let totalUploadProgress = 0, totalUploadSize = 0, activeUploads = 0;
+
+            this.uploads.forEach(task => {
+                if (task.status !== 'failed' && task.status !== 'cancelled') {
+                    totalUploadSize += task.size;
+                    totalUploadProgress += (task.status === 'completed') ? task.size : task.progress;
                 }
-            } else {
-                uploadProgressBar.classList.remove('completed');
+                if (task.status === 'transferring' || task.status === 'queued') {
+                    activeUploads++;
+                }
+            });
+
+            const uploadProgressBar = document.getElementById('summary-uploads-progress');
+            const uploadPercent = totalUploadSize > 0 ? (totalUploadProgress / totalUploadSize * 100) : 0;
+            uploadProgressBar.style.width = `${uploadPercent}%`;
+
+            let uploadTitle = `上傳中 ${activeUploads} 個項目...`;
+            let uploadProgressClass = '';
+
+            if (activeUploads === 0) {
+                const hasFailures = [...this.uploads.values()].some(t => t.status === 'failed');
+                const hasCancellations = [...this.uploads.values()].some(t => t.status === 'cancelled');
+                
+                if (hasFailures) {
+                    uploadTitle = '部分項目上傳失敗';
+                    uploadProgressClass = 'failed';
+                } else if (hasCancellations) {
+                    uploadTitle = '上傳任務已取消';
+                    uploadProgressClass = 'cancelled'; // Note: 'cancelled' class is for logic, can be styled if needed
+                } else {
+                    uploadTitle = '上傳完成';
+                    uploadProgressClass = 'completed';
+                }
             }
+            
+            document.getElementById('summary-uploads-title').textContent = uploadTitle;
+            uploadProgressBar.className = 'progress-fill'; // Reset
+            if(uploadProgressClass) uploadProgressBar.classList.add(uploadProgressClass);
+
         } else {
             uploadsPanel.classList.add('hidden');
         }
 
-        // Show download panel if there are any downloads at all
+        // --- 下載邏輯 (與上傳邏輯對稱) ---
         if (this.downloads.size > 0) {
             downloadsPanel.classList.remove('hidden');
-            const percent = totalDownloadSize > 0 ? (totalDownloadProgress / totalDownloadSize * 100) : 0;
-            const title = activeDownloads > 0 ? `下載中 ${activeDownloads} 個項目...` : '下載完成';
-            const downloadProgressBar = document.getElementById('summary-downloads-progress');
-            document.getElementById('summary-downloads-title').textContent = title;
-            downloadProgressBar.style.width = `${percent}%`;
-            
-            // Add/remove .completed class for styling
-            if (activeDownloads === 0 && this.downloads.size > 0) { // All downloads are finished
-                const hasActiveOrFailedDownloads = [...this.downloads.values()].some(task => 
-                    task.status === 'transferring' || task.status === 'queued' || task.status === 'starting_folder' || task.status === 'failed' || task.status === 'cancelled'
-                );
-                if (!hasActiveOrFailedDownloads) { // No active or failed/cancelled downloads
-                    downloadProgressBar.classList.add('completed');
-                } else {
-                    downloadProgressBar.classList.remove('completed');
+            let totalDownloadProgress = 0, totalDownloadSize = 0, activeDownloads = 0;
+
+            this.downloads.forEach(task => {
+                if (task.status !== 'failed' && task.status !== 'cancelled') {
+                    totalDownloadSize += task.size;
+                    totalDownloadProgress += (task.status === 'completed') ? task.size : task.progress;
                 }
-            } else {
-                downloadProgressBar.classList.remove('completed');
+                if (['transferring', 'queued', 'starting_folder'].includes(task.status)) {
+                    activeDownloads++;
+                }
+            });
+
+            const downloadProgressBar = document.getElementById('summary-downloads-progress');
+            const downloadPercent = totalDownloadSize > 0 ? (totalDownloadProgress / totalDownloadSize * 100) : 0;
+            downloadProgressBar.style.width = `${downloadPercent}%`;
+
+            let downloadTitle = `下載中 ${activeDownloads} 個項目...`;
+            let downloadProgressClass = '';
+
+            if (activeDownloads === 0) {
+                const hasFailures = [...this.downloads.values()].some(t => t.status === 'failed');
+                const hasCancellations = [...this.downloads.values()].some(t => t.status === 'cancelled');
+
+                if (hasFailures) {
+                    downloadTitle = '部分項目下載失敗';
+                    downloadProgressClass = 'failed';
+                } else if (hasCancellations) {
+                    downloadTitle = '下載任務已取消';
+                    downloadProgressClass = 'cancelled';
+                } else {
+                    downloadTitle = '下載完成';
+                    downloadProgressClass = 'completed';
+                }
             }
+
+            document.getElementById('summary-downloads-title').textContent = downloadTitle;
+            downloadProgressBar.className = 'progress-fill'; // Reset
+            if(downloadProgressClass) downloadProgressBar.classList.add(downloadProgressClass);
+            
         } else {
             downloadsPanel.classList.add('hidden');
         }
 
-        // Minimized icon logic remains the same, but will now receive correct overall progress
-        const combinedSize = totalUploadSize + totalDownloadSize;
-        const combinedProgress = totalUploadProgress + totalDownloadProgress;
+        // --- 統一處理最小化圖示的進度環 ---
+        const allTasks = [...this.uploads.values(), ...this.downloads.values()];
+        let combinedProgress = 0, combinedSize = 0;
+        allTasks.forEach(task => {
+            if (task.status !== 'failed' && task.status !== 'cancelled') {
+                combinedSize += task.size;
+                combinedProgress += (task.status === 'completed') ? task.size : task.progress;
+            }
+        });
+
         const overallPercent = combinedSize > 0 ? (combinedProgress / combinedSize * 100) : 0;
         const circle = document.getElementById('minimized-progress-circle');
         const radius = circle.r.baseVal.value;

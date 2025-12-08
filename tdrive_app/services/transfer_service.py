@@ -3,8 +3,6 @@ import asyncio
 import os
 import uuid
 import time
-import json
-from telethon import errors as telethon_errors
 from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
 if TYPE_CHECKING:
@@ -214,10 +212,8 @@ class TransferService:
         try:
             progress_callback(task_id, file_name, 0, file_details.get("size", 0), 'transferring', 0, parent_task_id=parent_task_id)
             
-            chunks_for_downloader = [[c['part_num'], c['message_id'], c['part_hash']] for c in file_details['chunks']]
-            
             coro = telegram_comms.download_file(
-                client, group_id, chunks_for_downloader, file_name, file_details['hash'], destination,
+                client, group_id, file_details, destination,
                 task_id=task_id, progress_callback=progress_callback
             )
             task = asyncio.create_task(coro)
