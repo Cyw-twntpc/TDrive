@@ -25,9 +25,11 @@ class FileService:
         """
         logger.info(f"正在從資料庫獲取資料夾 ID: {folder_id} 的內容。")
         try:
-            # DB 操作本身是快速的同步 I/O，直接呼叫是可接受的
-            db = DatabaseHandler()
-            return db.get_folder_contents(folder_id)
+            def _sync_db_op():
+                db = DatabaseHandler()
+                return db.get_folder_contents(folder_id)
+            
+            return await asyncio.to_thread(_sync_db_op)
         except Exception as e:
             logger.error(f"獲取資料夾內容時發生錯誤 (ID: {folder_id}): {e}", exc_info=True)
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "無法獲取資料夾內容。"}
@@ -38,8 +40,11 @@ class FileService:
         """
         logger.info(f"正在遞迴地獲取資料夾 ID: {folder_id} 的內容。")
         try:
-            db = DatabaseHandler()
-            return db.get_folder_contents_recursive(folder_id)
+            def _sync_db_op():
+                db = DatabaseHandler()
+                return db.get_folder_contents_recursive(folder_id)
+            
+            return await asyncio.to_thread(_sync_db_op)
         except Exception as e:
             logger.error(f"遞迴獲取資料夾內容時發生錯誤 (ID: {folder_id}): {e}", exc_info=True)
             return {"folder_name": "Error", "items": [], "success": False, "error_code": "INTERNAL_ERROR", "message": "無法獲取資料夾內容。"}

@@ -40,19 +40,22 @@ class TDriveService:
 
     def _create_progress_adapter(self, signal_emitter):
         """
-        建立一個轉接函式，將後端的 6 個參數轉換為前端需要的 1 個字典。
+        建立一個轉接函式，將後端的參數轉換為前端需要的字典。
         """
-        def adapter(task_id, name, progress, total, status, speed, message=None):
+        def adapter(task_id, name, progress, total, status, speed, message=None, **kwargs):
             data = {
                 "id": task_id,
                 "name": name,
                 "progress": progress,
                 "size": total,
                 "status": status,
-                "speed": speed
+                "speed": speed,
             }
             if message:
                 data["message"] = message
+            
+            # 將所有額外的關鍵字參數加入到字典中
+            data.update(kwargs)
             
             # 將打包好的字典發送給 Bridge (Qt Signal)
             signal_emitter(data)

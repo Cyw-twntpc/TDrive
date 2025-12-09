@@ -161,8 +161,10 @@ const TransferManager = {
         }
 
         if (task.status === 'failed' && !task.alertShown) {
-            const typeText = task.isFolder ? '資料夾' : '檔案';
-            this.UIHandler.showAlert(`${typeText}傳輸失敗`, `項目 "${task.name}" 傳輸失敗。<br><b>原因:</b> ${task.message || '未知錯誤'}`);
+            this.UIHandler.handleBackendError({ 
+                error_code: 'TRANSFER_FAILED',
+                message: `項目 "${task.name}" 傳輸失敗。<br><b>原因:</b> ${task.message || '未知錯誤'}`
+            });
             task.alertShown = true;
         }
         this.startUpdater();

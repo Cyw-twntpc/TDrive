@@ -124,6 +124,17 @@ const FileListHandler = {
         itemEl.querySelector('.download-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-download', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-delete', { detail: itemDetail, bubbles: true })); });
         
+        // --- 修正：手動處理懸停效果以解決 CSS :hover 問題 ---
+        const actionsEl = itemEl.querySelector('.name-col-actions');
+        itemEl.addEventListener('mouseenter', () => {
+            actionsEl.style.visibility = 'visible';
+            actionsEl.style.opacity = '1';
+        });
+        itemEl.addEventListener('mouseleave', () => {
+            actionsEl.style.visibility = 'hidden';
+            actionsEl.style.opacity = '0';
+        });
+
         return itemEl;
     },
 

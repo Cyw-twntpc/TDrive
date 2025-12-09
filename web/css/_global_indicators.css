@@ -19,19 +19,22 @@
 
 #global-progress-bar .runner {
     position: absolute;
+    left: 0;
     width: 30%;
     height: 100%;
     background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.8) 50%, rgba(255,255,255,0) 100%), var(--primary-color);
     box-shadow: 0 0 10px var(--primary-color), 0 0 5px var(--primary-color);
     animation: run-across 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+    transform: translateX(-100%);
+    will-change: transform;
 }
 
 @keyframes run-across {
     0% {
-        left: -30%;
+        transform: translateX(-100%);
     }
     100% {
-        left: 100%;
+        transform: translateX(333%);
     }
 }
 
