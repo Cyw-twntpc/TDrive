@@ -22,18 +22,24 @@ const ActionHandler = {
     // --- Action Handlers ---
     async handleRename(item) {
         const { id, name, type } = item;
+        const newName = await this._uiModals.showPrompt('重新命名', `請為 "${name}" 輸入新的名稱：`, name);
+        if (newName === null || newName === name) return;
+
+        this._uiManager.startProgress();
+        this._uiManager.setInteractionLock(true);
         try {
-            const validator = async (newName) => {
-                if (newName === name) return { success: true };
-                return await this._apiService.renameItem(id, newName, type);
-            };
-            const newName = await this._uiModals.showPrompt('重新命名', `請為 "${name}" 輸入新的名稱：`, name, validator);
-            if (newName !== null) {
+            const result = await this._apiService.renameItem(id, newName, type);
+            if (result.success) {
                 await this._refreshAllCallback();
+            } else {
+                this._uiManager.handleBackendError(result);
             }
         } catch (error) {
             console.error("Rename operation failed:", error);
             this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+        } finally {
+            this._uiManager.stopProgress();
+            this._uiManager.setInteractionLock(false);
         }
     },
 
@@ -83,35 +89,44 @@ const ActionHandler = {
         const confirmation = await this._uiModals.showConfirm('確認刪除', `您確定要刪除這 ${this._appState.selectedItems.length} 個項目嗎？<br><b>此操作無法復原。</b>`);
         if (!confirmation) return;
 
-        const itemsToDelete = this._appState.selectedItems.map(item => ({ id: item.id, type: item.type }));
-        document.body.style.cursor = 'wait';
+        this._uiManager.startProgress();
+        this._uiManager.setInteractionLock(true);
         try {
+            const itemsToDelete = this._appState.selectedItems.map(item => ({ id: item.id, type: item.type }));
             const result = await this._apiService.deleteItems(itemsToDelete);
             if (result.success) {
                 await this._refreshAllCallback();
             } else {
-                await this._uiManager.handleBackendError(result);
+                this._uiManager.handleBackendError(result);
             }
         } catch (error) {
             console.error("Delete operation failed:", error);
             this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
         } finally {
-            document.body.style.cursor = 'default';
+            this._uiManager.stopProgress();
+            this._uiManager.setInteractionLock(false);
         }
     },
 
     async handleNewFolder() {
+        const newFolderName = await this._uiModals.showPrompt("新增資料夾", "請輸入新資料夾的名稱：", "未命名資料夾");
+        if (newFolderName === null) return;
+
+        this._uiManager.startProgress();
+        this._uiManager.setInteractionLock(true);
         try {
-            const validator = async (folderName) => {
-                return await this._apiService.createFolder(this._appState.currentFolderId, folderName);
-            };
-            const newFolderName = await this._uiModals.showPrompt("新增資料夾", "請輸入新資料夾的名稱：", "", validator);
-            if (newFolderName !== null) {
+            const result = await this._apiService.createFolder(this._appState.currentFolderId, newFolderName);
+            if (result.success) {
                 await this._refreshAllCallback();
+            } else {
+                this._uiManager.handleBackendError(result);
             }
         } catch (error) {
             console.error("Create folder operation failed:", error);
             this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+        } finally {
+            this._uiManager.stopProgress();
+            this._uiManager.setInteractionLock(false);
         }
     },
 
@@ -166,40 +181,36 @@ const ActionHandler = {
         }
     },
 
-    async handleSearch(term) {
+    handleSearch(term) {
         if (!term || term.trim() === '') {
             this.exitSearchMode();
-            await this._navigateToCallback(this._appState.currentFolderId);
+            this._navigateToCallback(this._appState.currentFolderId);
             return;
         }
+
+        const requestId = Date.now().toString();
+        this._appState.currentViewRequestId = requestId;
         this._appState.isSearching = true;
         this._appState.searchTerm = term.trim();
-        document.body.style.cursor = 'wait';
 
-        try {
-            const rootFolder = this._appState.folderTreeData.find(f => f.parent_id === null);
-            const baseFolderId = (this._appState.searchScope === 'all' && rootFolder) ? rootFolder.id : this._appState.currentFolderId;
-            
-            const rawResults = await this._apiService.searchDbItems(baseFolderId, this._appState.searchTerm);
-            
-            if (rawResults && rawResults.success !== false) {
-                this._appState.currentFolderContents = rawResults;
-                FileListHandler.sortAndRender(this._appState);
-                FileListHandler.updateBreadcrumb(this._appState, this._navigateToCallback);
-            } else {
-                await this._uiManager.handleBackendError(rawResults);
-            }
-        } catch (error) {
-            console.error("Search operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
-        } finally {
-            document.body.style.cursor = 'default';
-        }
+        // --- Visual Feedback & State Reset ---
+        this._uiManager.startProgress();
+        this._uiManager.toggleSearchSpinner(true);
+        this._appState.currentFolderContents = { folders: [], files: [] }; // Clear previous results
+        FileListHandler.sortAndRender(this._appState); // Render the empty state
+        FileListHandler.updateBreadcrumb(this._appState, this._navigateToCallback);
+        
+        // --- Fire-and-forget API call ---
+        const rootFolder = this._appState.folderTreeData.find(f => f.parent_id === null);
+        const baseFolderId = (this._appState.searchScope === 'all' && rootFolder) ? rootFolder.id : this._appState.currentFolderId;
+        this._apiService.searchDbItems(baseFolderId, this._appState.searchTerm, requestId);
     },
 
     async handleLogout() {
         const confirmed = await this._uiModals.showConfirm('確認登出', '您確定要登出嗎？這將清除所有本地資料和設定。');
         if (confirmed) {
+            this._uiManager.startProgress();
+            this._uiManager.setInteractionLock(true);
             try {
                 await this._apiService.logout();
                 localStorage.clear();
@@ -207,7 +218,10 @@ const ActionHandler = {
             } catch (error) {
                 console.error("Logout operation failed:", error);
                 this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+                this._uiManager.stopProgress();
+                this._uiManager.setInteractionLock(false);
             }
+            // On success, we navigate away, so no need to stop progress/unlock.
         }
     },
 

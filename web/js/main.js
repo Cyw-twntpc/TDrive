@@ -15,57 +15,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // --- Main Data & Navigation Logic ---
-    async function _fetchAndRenderContents(folderId) {
-        const rawContents = await ApiService.getFolderContents(folderId);
-        if (rawContents && rawContents.success !== false) {
-            AppState.currentFolderContents = rawContents;
-        } else {
-            await UIManager.handleBackendError(rawContents);
-            // On error, attempt to recover by navigating to the root folder
-            const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
-            if (rootFolder && rootFolder.id !== folderId) { // Avoid infinite loop if root is the problem
-                await navigateTo(rootFolder.id);
-            }
-            return false; // Indicate failure
-        }
-
-        renderListAndSyncManager();
-        FileTreeHandler.render(AppState, navigateTo);
-        FileListHandler.updateBreadcrumb(AppState, navigateTo);
-        FileTreeHandler.updateSelection(AppState);
-        return true; // Indicate success
-    }
-    
-    async function refreshAll() {
-        if (AppState.isSearching) {
-            await ActionHandler.handleSearch(AppState.searchTerm);
+    function onFolderContentsReady(response) {
+        const { data, request_id } = response;
+        if (request_id !== AppState.currentViewRequestId) {
+            console.log(`Ignoring stale folder content for request_id: ${request_id}`);
             return;
         }
 
-        const rawFolderTree = await ApiService.getFolderTreeData();
-        if (!Array.isArray(rawFolderTree)) {
-            console.error("Failed to load folder tree. Backend returned:", rawFolderTree);
-            return UIModals.showAlert('嚴重錯誤', '無法載入資料夾結構，請重新整理或重新登入。');
+        UIManager.stopProgress();
+
+        if (data && data.success !== false) {
+            AppState.currentFolderContents = data;
+            renderListAndSyncManager();
+        } else {
+            UIManager.handleBackendError(data || { message: "無法載入資料夾內容。" });
         }
-
-        AppState.folderTreeData = rawFolderTree;
-        AppState.folderMap.clear();
-        AppState.folderTreeData.forEach(f => AppState.folderMap.set(f.id, f));
-
-        FileTreeHandler.render(AppState, navigateTo);
-
-        if (AppState.currentFolderId === null) {
-            const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
-            if (rootFolder) {
-                AppState.currentFolderId = rootFolder.id;
-            } else {
-                return UIModals.showAlert('嚴重錯誤', '找不到根目錄，無法載入檔案。', 'btn-danger');
-            }
-        }
-        
-        await _fetchAndRenderContents(AppState.currentFolderId);
     }
-    
+
+    function onSearchResultsReady(response) {
+        const { request_id, type, data } = response;
+
+        if (request_id !== AppState.currentViewRequestId) {
+            return; // Stale search results, ignore.
+        }
+
+        if (type === 'batch') {
+            // Append new results
+            if (data.folders) AppState.currentFolderContents.folders.push(...data.folders);
+            if (data.files) AppState.currentFolderContents.files.push(...data.files);
+            // Re-sort and re-render the list progressively
+            renderListAndSyncManager();
+        } else if (type === 'done') {
+            UIManager.stopProgress();
+            UIManager.toggleSearchSpinner(false);
+            console.log(`Search complete for request_id: ${request_id}`);
+        } else if (type === 'error') {
+            UIManager.stopProgress();
+            UIManager.toggleSearchSpinner(false);
+            UIManager.handleBackendError(data || { message: "搜尋時發生未知錯誤。" });
+        }
+    }
+
     async function navigateTo(folderId) {
         if (AppState.isSearching) ActionHandler.exitSearchMode();
 
@@ -76,8 +66,62 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const requestId = Date.now().toString();
+        AppState.currentViewRequestId = requestId;
         AppState.currentFolderId = folderId;
-        await _fetchAndRenderContents(folderId);
+
+        // --- Visual Feedback ---
+        UIManager.startProgress();
+        // Clear old content immediately and show loading
+        AppState.currentFolderContents = { folders: [], files: [] };
+        renderListAndSyncManager(); 
+        // TODO: Add a proper loading state to the file list view itself
+
+        // --- Update UI that doesn't depend on the async call ---
+        FileTreeHandler.render(AppState, navigateTo);
+        FileListHandler.updateBreadcrumb(AppState, navigateTo);
+        FileTreeHandler.updateSelection(AppState);
+
+        // --- Fire-and-forget API call ---
+        ApiService.getFolderContents(folderId, requestId);
+    }
+
+    async function refreshAll() {
+        if (AppState.isSearching) {
+            // TODO: Refactor search handling in Phase 4
+            ActionHandler.handleSearch(AppState.searchTerm); // Assume search handler will be updated
+            return;
+        }
+
+        UIManager.startProgress();
+        // The folder tree is critical and usually fast, so we can await it.
+        const rawFolderTree = await ApiService.getFolderTreeData();
+        
+        // The main progress bar can stop after the tree is loaded,
+        // as navigateTo will manage the progress bar for its specific operation.
+        UIManager.stopProgress(); 
+
+        if (!Array.isArray(rawFolderTree)) {
+            console.error("Failed to load folder tree. Backend returned:", rawFolderTree);
+            return UIModals.showAlert('嚴重錯誤', '無法載入資料夾結構，請重新整理或重新登入。');
+        }
+
+        AppState.folderTreeData = rawFolderTree;
+        AppState.folderMap.clear();
+        AppState.folderTreeData.forEach(f => AppState.folderMap.set(f.id, f));
+
+        // Determine the root folder if no folder is selected or if the current folder was deleted
+        if (AppState.currentFolderId === null || !AppState.folderMap.has(AppState.currentFolderId)) {
+            const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
+            if (rootFolder) {
+                AppState.currentFolderId = rootFolder.id;
+            } else {
+                return UIModals.showAlert('嚴重錯誤', '找不到根目錄，無法載入檔案。', 'btn-danger');
+            }
+        }
+        
+        // Trigger the non-blocking navigation flow to refresh the contents
+        navigateTo(AppState.currentFolderId);
     }
     
     async function loadUserDisplayInfo() {
@@ -146,6 +190,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.tdrive_bridge.connection_status_changed) {
             window.tdrive_bridge.connection_status_changed.connect(UIManager.handleConnectionStatus);
             console.log("Connected to backend connection_status_changed signal.");
+        }
+        if (window.tdrive_bridge.folderContentsReady) {
+            window.tdrive_bridge.folderContentsReady.connect(onFolderContentsReady);
+            console.log("Connected to backend folderContentsReady signal.");
+        }
+        if (window.tdrive_bridge.searchResultsReady) {
+            window.tdrive_bridge.searchResultsReady.connect(onSearchResultsReady);
+            console.log("Connected to backend searchResultsReady signal.");
         }
 
         // 1. Initialize all handlers and managers

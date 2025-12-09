@@ -132,15 +132,15 @@ class TDriveService:
     def get_folder_tree_data(self) -> List[Dict[str, Any]]:
         return self._folder_service.get_folder_tree_data()
 
-    # --- 檔案 (FileService) - 部分同步 ---
-    def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
-        return self._file_service.get_folder_contents(folder_id)
+    # --- 檔案 (FileService) - 非同步讀取 ---
+    async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
+        return await self._file_service.get_folder_contents(folder_id)
 
-    def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
-        return self._file_service.get_folder_contents_recursive(folder_id)
+    async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
+        return await self._file_service.get_folder_contents_recursive(folder_id)
 
-    def search_db_items(self, base_folder_id: int, search_term: str) -> Dict[str, Any]:
-        return self._file_service.search_db_items(base_folder_id, search_term)
+    async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter, request_id: str):
+        await self._file_service.search_db_items(base_folder_id, search_term, result_signal_emitter, request_id)
 
     async def create_folder(self, parent_id: int, folder_name: str) -> Dict[str, Any]:
         return await self._file_service.create_folder(parent_id, folder_name)

@@ -11,6 +11,10 @@ class Bridge(QObject):
     """
     負責作為 Python 後端與 QWebEngineView 中 JavaScript 之間通訊的橋樑。
     """
+    # --- 新增：給事件驅動模式使用的 Signals ---
+    folderContentsReady = Signal(dict)
+    searchResultsReady = Signal(dict)
+
     login_event = Signal(dict)
     transfer_progress_updated = Signal(dict)
     connection_status_changed = Signal(str)
@@ -19,34 +23,54 @@ class Bridge(QObject):
         super().__init__(parent)
         self._service = tdrive_service
         self._loop = loop
+        self._is_busy = False # 用於關鍵操作的互斥鎖
+
+    def _run_background_task(self, coro, result_signal, request_id):
+        """
+        執行一個非同步任務，並在完成時透過指定的 signal 發送帶有 request_id 的結果。
+        這是一個發後不理 (fire-and-forget) 的任務。
+        """
+        async def task_wrapper():
+            try:
+                result = await coro
+                payload = {'data': result, 'request_id': request_id}
+                result_signal.emit(payload)
+            except Exception as e:
+                logger.error(f"背景讀取任務失敗 (request_id: {request_id}): {e}", exc_info=True)
+                error_payload = {
+                    'data': {"success": False, "error_code": "TASK_FAILED", "message": str(e)},
+                    'request_id': request_id
+                }
+                result_signal.emit(error_payload)
+        
+        asyncio.create_task(task_wrapper())
 
     def _wait_for_async(self, coro):
         """
-        關鍵修復：在單一執行緒中同步等待非同步任務。
-        使用局部的 QEventLoop 來防止 UI 死鎖。
+        為關鍵操作同步等待一個非同步任務。
+        [新增] 加入 _is_busy 互斥鎖，防止重入。
         """
+        if self._is_busy:
+            logger.warning("BUSY: 關鍵操作被拒絕，因為前一項操作仍在進行中。")
+            return {"success": False, "error_code": "BUSY", "message": "另一項關鍵操作正在進行中，請稍候。"}
+
         if not self._loop.is_running():
-            # 如果主迴圈沒在跑，嘗試直接運行 (主要用於測試或啟動時)
             return self._loop.run_until_complete(coro)
 
-        # 1. 將協程包裝成 Task
-        task = asyncio.create_task(coro)
-        
-        # 2. 建立一個局部的 Qt Event Loop
-        local_qt_loop = QtEventLoop()
+        self._is_busy = True
+        try:
+            task = asyncio.create_task(coro)
+            local_qt_loop = QtEventLoop()
 
-        # 3. 當 Task 完成時，退出局部迴圈
-        def on_done(future):
-            local_qt_loop.quit()
-        
-        task.add_done_callback(on_done)
-        
-        # 4. 開始「原地空轉」，這會阻塞此函式往下執行，
-        # 但會持續處理 Qt 事件 (包含 asyncio 的事件)，避免死鎖
-        local_qt_loop.exec()
+            def on_done(future):
+                local_qt_loop.quit()
+            
+            task.add_done_callback(on_done)
+            local_qt_loop.exec()
 
-        # 5. 返回結果或拋出異常
-        return task.result()
+            return task.result()
+        finally:
+            self._is_busy = False # 確保鎖總能被釋放
 
     def _async_call(self, coro):
         """包裝器：處理錯誤與呼叫 _wait_for_async"""
@@ -106,22 +130,28 @@ class Bridge(QObject):
     def logout(self):
         return self._async_call(self._service.logout())
 
-    # --- 資料夾與檔案服務 (同步) ---
+    # --- 資料夾與檔案服務 (事件驅動) ---
+    @Slot(int, str)
+    def get_folder_contents(self, folder_id, request_id):
+        coro = self._service.get_folder_contents(folder_id)
+        self._run_background_task(coro, self.folderContentsReady, request_id)
+
+    # --- 資料夾與檔案服務 (同步/舊版) ---
     @Slot(result=list)
     def get_folder_tree_data(self):
         return self._service.get_folder_tree_data()
 
     @Slot(int, result=dict)
-    def get_folder_contents(self, folder_id):
-        return self._service.get_folder_contents(folder_id)
-
-    @Slot(int, result=dict)
     def get_folder_contents_recursive(self, folder_id):
-        return self._service.get_folder_contents_recursive(folder_id)
+        # This is currently not used by the UI in an async way, keeping it sync for now
+        return self._async_call(self._service.get_folder_contents_recursive(folder_id))
 
-    @Slot(int, str, result=dict)
-    def search_db_items(self, base_folder_id, search_term):
-        return self._service.search_db_items(base_folder_id, search_term)
+    @Slot(int, str, str)
+    def search_db_items(self, base_folder_id, search_term, request_id):
+        # The service method will handle threading and emitting signals
+        emitter = self.searchResultsReady.emit
+        coro = self._service.search_db_items(base_folder_id, search_term, emitter, request_id)
+        asyncio.create_task(coro)
 
     # --- 資料夾與檔案服務 (非同步) ---
     @Slot(int, str, result=dict)

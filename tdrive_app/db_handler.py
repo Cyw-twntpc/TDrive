@@ -573,34 +573,52 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
-    def search_db_items(self, search_term, base_folder_id):
+    def search_db_items(self, search_term, base_folder_id, progress_callback):
         """
-        在資料庫中搜尋檔案和資料夾，並返回格式化的結果。
+        在資料庫中串流式搜尋檔案和資料夾，並透過回呼函式分批回傳結果。
         """
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
             
-            # 使用佇列進行廣度優先搜尋 (BFS)
             folders_to_visit = [base_folder_id]
-            visited_folders = set() # 避免重複處理
-            all_found_folders = []
-            all_found_files = []
+            visited_folders = set()
+            
+            # --- 新增：批次處理機制 ---
+            folders_batch = []
+            files_batch = []
+            BATCH_SIZE = 50
+
+            def yield_batch():
+                nonlocal folders_batch, files_batch
+                if folders_batch or files_batch:
+                    progress_callback({"folders": folders_batch, "files": files_batch})
+                    folders_batch, files_batch = [], []
 
             while folders_to_visit:
                 current_folder_id = folders_to_visit.pop(0)
-                if current_folder_id in visited_folders: continue
+                if current_folder_id in visited_folders:
+                    continue
                 visited_folders.add(current_folder_id)
 
                 local_results = self._search_single_folder_items(search_term, current_folder_id)
-                all_found_folders.extend(local_results['folders'])
-                all_found_files.extend(local_results['files'])
                 
+                if local_results["folders"]:
+                    folders_batch.extend(local_results["folders"])
+                if local_results["files"]:
+                    files_batch.extend(local_results["files"])
+
+                # 檢查是否達到批次大小
+                if len(folders_batch) + len(files_batch) >= BATCH_SIZE:
+                    yield_batch()
+
                 cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (current_folder_id,))
                 for sub_folder_row in cursor.fetchall():
                     folders_to_visit.append(sub_folder_row['id'])
+
+            # 迴圈結束後，處理剩餘的批次
+            yield_batch()
             
-            return {"folders": all_found_folders, "files": all_found_files}
         finally:
             if conn:
                 conn.close()

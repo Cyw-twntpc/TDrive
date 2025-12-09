@@ -1,24 +1,30 @@
 const ApiService = {
     // The 'expose' function is no longer needed as QWebChannel doesn't use it.
     
-    // Helper function to wrap QWebChannel calls in Promises
+    // Helper for calls that expect a return value via a callback (wrapped in a Promise)
     _callBridge(functionName, ...args) {
         return new Promise((resolve, reject) => {
             if (window.tdrive_bridge) {
                 // The actual function call, with a callback as the last argument
                 window.tdrive_bridge[functionName](...args, function(result) {
-                    // QJsonValue from Python is automatically converted to a JS object/value
                     if (result && result.success === false) {
-                        // Log the error but resolve with the error object so the UI can handle it
                         console.warn(`Bridge call '${functionName}' returned an error:`, result.message);
                     }
                     resolve(result);
                 });
             } else {
-                // This can happen if the channel is not ready yet.
                 reject(new Error("Bridge is not available."));
             }
         });
+    },
+
+    // Helper for fire-and-forget calls that do not have a direct return value
+    _fireAndForget(functionName, ...args) {
+        if (window.tdrive_bridge && typeof window.tdrive_bridge[functionName] === 'function') {
+            window.tdrive_bridge[functionName](...args);
+        } else {
+            console.error(`Bridge function '${functionName}' is not available for fire-and-forget call.`);
+        }
     },
 
     // --- User and Auth ---
@@ -28,8 +34,8 @@ const ApiService = {
 
     // --- File & Folder Data ---
     getFolderTreeData: () => ApiService._callBridge('get_folder_tree_data'),
-    getFolderContents: (folderId) => ApiService._callBridge('get_folder_contents', folderId),
-    searchDbItems: (baseFolderId, term) => ApiService._callBridge('search_db_items', baseFolderId, term),
+    getFolderContents: (folderId, requestId) => ApiService._fireAndForget('get_folder_contents', folderId, requestId),
+    searchDbItems: (baseFolderId, term, requestId) => ApiService._fireAndForget('search_db_items', baseFolderId, term, requestId),
 
     // --- File & Folder Actions ---
     renameItem: (id, newName, type) => ApiService._callBridge('rename_item', id, newName, type),
@@ -41,8 +47,6 @@ const ApiService = {
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),
 
     // --- Transfers ---
-    // Note: The progress callback mechanism will need to be redesigned with Qt signals.
-    // For now, these functions just start the process.
     uploadFiles: (parentId, files, concurrency) => ApiService._callBridge('upload_files', parentId, files, concurrency),
     downloadItems: (items, destination, concurrency) => ApiService._callBridge('download_items', items, destination, concurrency),
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),
