@@ -132,6 +132,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Application Initialization ---
     async function initialize() {
+        // Wait for the tdrive_bridge to be initialized by the QWebChannel
+        await new Promise(resolve => {
+            const interval = setInterval(() => {
+                if (window.tdrive_bridge) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            }, 100);
+        });
+
+        // Connect to backend signals
+        if (window.tdrive_bridge.connection_status_changed) {
+            window.tdrive_bridge.connection_status_changed.connect(UIManager.handleConnectionStatus);
+            console.log("Connected to backend connection_status_changed signal.");
+        }
+
         // 1. Initialize all handlers and managers
         ActionHandler.init({
             appState: AppState,
@@ -148,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         UIManager.setupPopovers();
         SettingsHandler.setupEventListeners();
-        TransferManager.initialize(AppState, eel, UIManager, refreshAll);
+        TransferManager.initialize(AppState, ApiService, UIManager, refreshAll);
 
         // 2. Load initial data and settings
         await refreshAll();

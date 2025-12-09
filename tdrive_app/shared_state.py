@@ -25,7 +25,7 @@ class SharedState:
 
         # 非同步與回呼相關
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
-        self.eel_instance: Optional[Any] = None
+        self.connection_emitter: Optional[callable] = None
 
         # 傳輸任務管理
         self.active_tasks: Dict[str, asyncio.Task] = {}

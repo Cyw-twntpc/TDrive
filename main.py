@@ -1,175 +1,116 @@
-import eel
-import eel.browsers
 import os
-import platform
+os.environ['QT_API'] = 'pyside6'
+
+import sys
+import ctypes
+
+import asyncio
 import logging
-import json
+from pathlib import Path
+
+from PySide6.QtCore import QUrl
+from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtGui import QIcon, QCloseEvent
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEngineSettings
+
+from qasync import QEventLoop
 
 from tdrive_app import logger_config
-from tdrive_app.main_service import TDriveService
-from tdrive_app.gui_utils import core_select_files, core_select_directory
 from tdrive_app.services.utils import cleanup_temp_folders
+from tdrive_app.main_service import TDriveService
+from tdrive_app.bridge import Bridge
 
-# 初始化日誌系統
-logger_config.setup_logging()
 logger = logging.getLogger(__name__)
 
-# --- 進度回呼 ---
-# 這個函式本身不加 @eel.expose，它是由後端服務呼叫，然後再由它呼叫前端的 eel 函式
-def gui_progress_callback(task_id, name, current, total, status, speed, message=None, parent_task_id=None, children=None, total_files=None):
-    """將進度更新傳送到使用者介面，支援樹狀結構。"""
-    try:
-        payload = {
-            "id": task_id,
-            "name": name,
-            "progress": current,
-            "size": total,
-            "speed": speed,
-            "status": status,
-            "message": message,
-            "parent_id": parent_task_id,
-            "children": children,
-            "total_files": total_files
-        }
-        eel.update_transfer_progress(payload)()
-    except Exception as e:
-        logger.warning(f"更新傳輸進度至 UI 時失敗 (Task ID: {task_id}): {e}")
+class TDriveMainWindow(QMainWindow):
+    def __init__(self, tdrive_service: TDriveService, loop: asyncio.AbstractEventLoop, start_url: QUrl):
+        super().__init__()
+        self.setWindowTitle("TDrive - 您的安全雲端儲存")
+        self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
+
+        # 使用傳入的後端服務實例和事件迴圈
+        self.tdrive_service = tdrive_service
+        self.bridge = Bridge(self.tdrive_service, loop)
+
+        # 設定 WebChannel
+        self.channel = QWebChannel()
+        self.channel.registerObject("tdrive_bridge", self.bridge)
+
+        # 設定 WebEngineView
+        self.web_view = QWebEngineView()
+        self.web_view.page().setWebChannel(self.channel)
+        self.web_view.setUrl(start_url)
+        self.setCentralWidget(self.web_view)
+
+        # 啟用腳本開啟新視窗的功能
+        settings = self.web_view.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
+        
+        self.showMaximized()
+        logger.info(f"主視窗已初始化並載入 URL: {start_url.toString()}")
+
+        self._is_ready_to_close = False 
+        self._loop = loop
+
+    async def _graceful_shutdown(self):
+        """執行非同步清理，然後手動關閉視窗"""
+        logger.info("正在執行非同步關閉程序...")
+        
+        # 取消計時器
+        if self.tdrive_service._shared_state.db_upload_timer:
+            self.tdrive_service._shared_state.db_upload_timer.cancel()
+        
+        # 關閉服務
+        await self.tdrive_service.close()
+        
+        logger.info("非同步關閉程序完成。")
+        self._is_ready_to_close = True
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent):
+        if self._is_ready_to_close:
+            logger.info("TDrive 應用程式正在關閉。")
+            event.accept()
+        else:
+            logger.info("攔截關閉信號，開始清理...")
+            event.ignore() # 暫停關閉
+            asyncio.create_task(self._graceful_shutdown())
 
 
-# --- 程式主入口 ---
-
-if __name__ == "__main__":
+def main():
+    logger_config.setup_logging()
     cleanup_temp_folders()
 
-    logger.info("正在建立 TDriveService...")
-    # 1. 建立 TDriveService 的唯一實例
-    tdrive_service = TDriveService()
-
-    # 2. 透過全域包裝函式將 TDriveService 的方法暴露給 eel
-    @eel.expose
-    def select_files(multiple=False, title="選取檔案", initial_dir=None):
-        return core_select_files(multiple, title, initial_dir)
-
-    @eel.expose
-    def select_directory(title="選取資料夾", initial_dir=None):
-        return core_select_directory(title, initial_dir)
-
-    @eel.expose
-    def verify_api_credentials(api_id, api_hash):
-        return tdrive_service.verify_api_credentials(api_id, api_hash)
-
-    @eel.expose
-    def start_qr_login():
-        return tdrive_service.start_qr_login()
-
-    @eel.expose
-    def send_code_request(phone_number):
-        return tdrive_service.send_code_request(phone_number)
-
-    @eel.expose
-    def submit_verification_code(code):
-        return tdrive_service.submit_verification_code(code)
-
-    @eel.expose
-    def submit_password(password):
-        return tdrive_service.submit_password(password)
-        
-    @eel.expose
-    def perform_post_login_initialization():
-        return tdrive_service.perform_post_login_initialization()
-
-    @eel.expose
-    def get_user_info():
-        return tdrive_service.get_user_info()
-
-    @eel.expose
-    def get_user_avatar():
-        return tdrive_service.get_user_avatar()
-
-    @eel.expose
-    def logout():
-        return tdrive_service.logout()
-
-    @eel.expose
-    def get_folder_tree_data():
-        return tdrive_service.get_folder_tree_data()
-
-    @eel.expose
-    def get_folder_contents(folder_id):
-        return tdrive_service.get_folder_contents(folder_id)
-
-    @eel.expose
-    def get_folder_contents_recursive(folder_id):
-        return tdrive_service.get_folder_contents_recursive(folder_id)
-
-    @eel.expose
-    def search_db_items(base_folder_id, search_term):
-        return tdrive_service.search_db_items(base_folder_id, search_term)
-
-    @eel.expose
-    def create_folder(parent_id, folder_name):
-        return tdrive_service.create_folder(parent_id, folder_name)
-
-    @eel.expose
-    def rename_item(item_id, new_name, item_type):
-        return tdrive_service.rename_item(item_id, new_name, item_type)
-
-    @eel.expose
-    def delete_items(items):
-        return tdrive_service.delete_items(items)
-
-    @eel.expose
-    def upload_files(parent_id, local_paths, concurrency_limit):
-        return tdrive_service.upload_files(parent_id, local_paths, concurrency_limit, gui_progress_callback)
-
-    @eel.expose
-    def download_items(items, destination_dir, concurrency_limit):
-        return tdrive_service.download_items(items, destination_dir, concurrency_limit, gui_progress_callback)
-
-    @eel.expose
-    def cancel_transfer(task_id):
-        return tdrive_service.cancel_transfer(task_id)
-
-    @eel.expose
-    def get_os_sep():
-        return os.sep
-    
-    # 3. 設定瀏覽器路徑
-    bits, _ = platform.architecture()
-    arch = "x64" if "64bit" in bits else "x32"
-    browser_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chrome', arch, 'chrome.exe')
-    eel.browsers.set_path('chrome', browser_path)
-    
-    # 4. 初始化 eel
-    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
-    eel.init(web_dir)
-    
-    logger.info("正在啟動 TDrive GUI...")
-    
-    # 5. 檢查登入狀態並決定起始頁面
-    if tdrive_service.check_startup_login():
-        logger.info("偵測到已登入的會話，直接進入主介面。")
-        start_page = 'index.html'
-    else:
-        logger.info("需要登入，顯示登入頁面。")
-        start_page = 'login.html'
-    
+    myappid = 'tdrive.client.v1' 
     try:
-        # 6. 啟動 eel
-        chrome_cmd = ["--disable-cache", "--new-window", "--start-maximized", "--disable-features=Translate", "--disable-infobars", "--disable-extensions", "--disable-notifications", "--disable-component-update", "--disable-popup-blocking", "--disable-sync", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-default-apps"]
-        eel.start(
-            start_page,
-            mode='chrome',
-            cmdline_args=chrome_cmd,
-        )
-    except (SystemExit, MemoryError, KeyboardInterrupt):
-        logger.info("偵測到退出訊號。")
-    finally:
-        # 7. 關閉後端服務
-        logger.info("正在關閉 TDriveService...")
-        tdrive_service.close()
-        
-        # 8. 結束時再次清理
-        cleanup_temp_folders()
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception as e:
+        logger.warning(f"設定 AppUserModelID 失敗: {e}")
 
-    logger.info("TDrive GUI 已成功關閉。")
+    app = QApplication(sys.argv)
+    
+    # 使用 qasync 的 Event Loop
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    
+    tdrive_service = TDriveService(loop=loop)
+
+    # 這裡可以直接用 loop.run_until_complete
+    is_logged_in = loop.run_until_complete(tdrive_service.check_startup_login())
+    start_page_name = "index.html" if is_logged_in else "login.html"
+    start_page_path = Path("web").joinpath(start_page_name).resolve()
+    start_url = QUrl.fromLocalFile(str(start_page_path))
+
+    main_window = TDriveMainWindow(tdrive_service, loop, start_url)
+    
+    tdrive_service._shared_state.connection_emitter = main_window.bridge.connection_status_changed.emit
+    
+    main_window.show()
+
+    with loop:
+        loop.run_forever()
+
+if __name__ == "__main__":
+    main()

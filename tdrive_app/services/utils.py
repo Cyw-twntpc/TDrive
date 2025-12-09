@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import threading
 from telethon import TelegramClient
 from typing import TYPE_CHECKING, Optional
 import os
@@ -46,12 +45,9 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
 
     logger.warning("偵測到連線中斷，鎖定 UI 並開始重試 Telegram 連線...")
     
-    if shared_state.eel_instance:
-        try:
-            # 呼叫前端函式以顯示連線中斷的遮罩
-            shared_state.eel_instance.show_connection_lost()()
-        except Exception as e:
-            logger.error(f"呼叫 show_connection_lost 失敗: {e}")
+    # 使用新的信號機制通知前端
+    if shared_state.connection_emitter:
+        shared_state.connection_emitter.emit('lost')
 
     api_id = shared_state.api_id
     api_hash = shared_state.api_hash
@@ -59,8 +55,8 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
 
     if not (api_id and api_hash):
         logger.error("錯誤：在 SharedState 中找不到 API 憑證，無法重新連線。")
-        if shared_state.eel_instance:
-            shared_state.eel_instance.hide_connection_lost()()
+        if shared_state.connection_emitter:
+            shared_state.connection_emitter.emit('restored')
         return None
 
     while True:
@@ -78,8 +74,8 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
                 logger.info("Telegram 重新連線成功！")
                 shared_state.client = new_client
                 
-                if shared_state.eel_instance:
-                    shared_state.eel_instance.hide_connection_lost()()
+                if shared_state.connection_emitter:
+                    shared_state.connection_emitter.emit('restored')
                 return new_client
             else:
                 logger.warning("重新連線失敗：使用者授權無效。可能需要重新登入。")
@@ -89,8 +85,8 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
             logger.error(f"Telegram 重新連線嘗試失敗: {e}")
             await asyncio.sleep(5)
     
-    if shared_state.eel_instance:
-        shared_state.eel_instance.hide_connection_lost()()
+    if shared_state.connection_emitter:
+        shared_state.connection_emitter.emit('restored')
     return None
 
 async def trigger_db_upload_in_background(shared_state: 'SharedState'):
@@ -127,6 +123,9 @@ async def trigger_db_upload_in_background(shared_state: 'SharedState'):
         logger.debug("取消了先前的資料庫上傳計時器。")
 
     # 建立並啟動一個新的計時器，延遲 2 秒執行
+    # 注意：這裡的 threading.Timer 仍然是必要的，因為我們需要一個脫離 asyncio 事件迴圈的延遲機制。
+    # 它在自己的執行緒中等待，然後安全地將任務排程回 asyncio 迴圈。
+    import threading
     shared_state.db_upload_timer = threading.Timer(2.0, schedule_async_task)
     shared_state.db_upload_timer.start()
     logger.debug("已排程一個新的資料庫上傳任務在 2 秒後執行。")

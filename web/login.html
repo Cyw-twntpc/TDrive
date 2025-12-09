@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
     <title>TDrive - 登入</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script type="text/javascript" src="/eel.js"></script>
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <script type="text/javascript" src="js/qwebchannel.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto:wght@400;500&display=swap');
         :root {
@@ -175,7 +175,46 @@
     </div>
 
     <script>
+        // Global variable to hold the bridge object
+        var tdrive_bridge;
+
+        // Initialize the QWebChannel
+        window.addEventListener('load', function() {
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    window.tdrive_bridge = channel.objects.tdrive_bridge;
+                    console.log("QWebChannel bridge initialized on login page.");
+                    
+                    // 將後端信號連接到前端的 on_login_event 函式
+                    if (window.tdrive_bridge && window.tdrive_bridge.login_event) {
+                        window.tdrive_bridge.login_event.connect(on_login_event);
+                        console.log("Connected to backend login_event signal.");
+                    }
+                });
+            } else {
+                console.error("qt object not found. Are you running in QWebEngineView?");
+            }
+        });
+        
         let selectedMethod = 'qr';
+
+        // --- Mock UIHandler for login page ---
+        const UIHandler = {
+            showInlineError: (inputId, message) => {
+                const errorEl = document.getElementById(`${inputId}Error`);
+                const inputEl = document.getElementById(inputId);
+                if (errorEl) {
+                    errorEl.textContent = message ? `⚠ ${message}` : '';
+                    errorEl.classList.toggle('show', !!message);
+                }
+                if (inputEl) {
+                    inputEl.classList.toggle('error', !!message);
+                }
+            },
+            handleBackendError: (response) => {
+                alert(response.message || 'An unknown error occurred.');
+            }
+        };
 
         function showScreen(screenId) {
             document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
@@ -187,39 +226,35 @@
             if (btn) btn.classList.toggle('loading', loading);
         }
 
-        // The old showError function is removed from here. We will use UIHandler.showInlineError
-
         function selectMethod(method) {
             selectedMethod = method;
             document.querySelectorAll('.method-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById(method + 'Method')?.classList.add('active');
         }
 
-        async function submitApiCredentials() {
+        function submitApiCredentials() {
             ['apiId', 'apiHash'].forEach(id => UIHandler.showInlineError(id, ''));
             const apiId = document.getElementById('apiId').value.trim();
             const apiHash = document.getElementById('apiHash').value.trim();
             let hasError = false;
 
-            if (!apiId) { UIHandler.showInlineError('apiId', '請輸入 API ID'); hasError = true; }
-            if (!/^\d+$/.test(apiId)) { UIHandler.showInlineError('apiId', 'API ID 必須是數字'); hasError = true; }
+            if (!apiId || !/^\d+$/.test(apiId)) { UIHandler.showInlineError('apiId', '請輸入有效的 API ID'); hasError = true; }
             if (!apiHash) { UIHandler.showInlineError('apiHash', '請輸入 API Hash'); hasError = true; }
             if (hasError) return;
 
             setLoading('submitApiBtn', true);
-            const result = await eel.verify_api_credentials(Number(apiId), apiHash)();
-            setLoading('submitApiBtn', false);
-            
-            if (result.success) {
-                if (result.authorized) {
-                    await loginSuccess();
+            tdrive_bridge.verify_api_credentials(Number(apiId), apiHash, function(result) {
+                setLoading('submitApiBtn', false);
+                if (result.success) {
+                    if (result.authorized) {
+                        loginSuccess();
+                    } else {
+                        showScreen('methodScreen');
+                    }
                 } else {
-                    showScreen('methodScreen');
+                    UIHandler.showInlineError('apiId', result.message);
                 }
-            } else {
-                // Use the new centralized handler and correct property
-                UIHandler.showInlineError('apiId', result.message);
-            }
+            });
         }
         
         function proceedWithMethod() {
@@ -229,7 +264,7 @@
             }
         }
 
-        async function startQrLogin() {
+        function startQrLogin() {
             const qrContainer = document.getElementById('qrCodeContainer');
             const refreshBtn = document.getElementById('refreshQrBtn');
             
@@ -237,141 +272,97 @@
             refreshBtn.disabled = true;
             refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 產生中';
             
-            try {
-                const result = await eel.start_qr_login()();
-                
+            tdrive_bridge.start_qr_login(function(result) {
                 if (result.success) {
                     qrContainer.innerHTML = `<img src="${result.qr_url}" alt="QR Code" style="width: 100%; height: 100%; object-fit: contain;">`;
-                    refreshBtn.disabled = false;
-                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重新產生';
                 } else {
                     qrContainer.innerHTML = `<div class="qr-loading"><i class="fas fa-times-circle" style="color: var(--danger-color);"></i><span>${result.message}</span></div>`;
-                    refreshBtn.disabled = false;
-                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重試';
                 }
-            } catch (error) {
-                console.error('QR Login Error:', error);
-                qrContainer.innerHTML = '<div class="qr-loading"><i class="fas fa-times-circle" style="color: var(--danger-color);"></i><span>網路錯誤，請重試</span></div>';
                 refreshBtn.disabled = false;
                 refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 重試';
-            }
+            });
         }
 
-        eel.expose(on_login_event, 'on_login_event');
+        // The backend will need to be updated to emit signals for this to work with QWebChannel
+        // For now, this function won't be called automatically.
         function on_login_event(event) {
-            console.log('QR Login Event:', event);
-            
-            try {
-                switch (event.status) {
-                    case 'completed':
-                        loginSuccess();
-                        break;
-                    case 'password_needed':
-                        showScreen('passwordScreen');
-                        break;
-                    case 'expired':
-                    case 'cancelled':
-                    case 'failed':
-                    default:
-                        document.getElementById('qrCodeContainer').innerHTML = 
-                            `<div class="qr-loading">
-                                <i class="fas fa-times-circle" style="color: var(--warning-color);"></i>
-                                <span>${event.error || '登入失敗'}</span>
-                                <button onclick="startQrLogin()" style="margin-top: 8px; padding: 4px 8px; font-size: 12px;">重試</button>
-                            </div>`;
-                        break;
-                }
-            } catch (error) {
-                console.error('處理登入事件時發生錯誤:', error);
+            console.log('Login Event Received:', event);
+            switch (event.status) {
+                case 'completed': loginSuccess(); break;
+                case 'password_needed': showScreen('passwordScreen'); break;
+                default:
+                    document.getElementById('qrCodeContainer').innerHTML = 
+                        `<div class="qr-loading"><i class="fas fa-times-circle" style="color: var(--warning-color);"></i><span>${event.error || '登入失敗'}</span></div>`;
+                    break;
             }
         }        
 
-        async function submitPhoneNumber() {
+        function submitPhoneNumber() {
             UIHandler.showInlineError('phoneNumber', '');
             const phone = document.getElementById('phoneNumber').value.trim();
             if (!phone) { UIHandler.showInlineError('phoneNumber', '請輸入手機號碼'); return; }
 
             setLoading('submitPhoneBtn', true);
-            const result = await eel.send_code_request(phone)();
-            setLoading('submitPhoneBtn', false);
-
-            if (result.success) {
-                document.getElementById('verificationMessage').textContent = `驗證碼已發送到 ${phone}`;
-                showScreen('verificationScreen');
-            } else {
-                UIHandler.showInlineError('phoneNumber', result.message);
-            }
+            tdrive_bridge.send_code_request(phone, function(result) {
+                setLoading('submitPhoneBtn', false);
+                if (result.success) {
+                    document.getElementById('verificationMessage').textContent = `驗證碼已發送到 ${phone}`;
+                    showScreen('verificationScreen');
+                } else {
+                    UIHandler.showInlineError('phoneNumber', result.message);
+                }
+            });
         }
 
-        async function submitVerificationCode() {
+        function submitVerificationCode() {
             UIHandler.showInlineError('verificationCode', '');
             const code = document.getElementById('verificationCode').value.trim();
             if (!code) { UIHandler.showInlineError('verificationCode', '請輸入驗證碼'); return; }
 
             setLoading('submitCodeBtn', true);
-            const result = await eel.submit_verification_code(code)();
-            setLoading('submitCodeBtn', false);
-
-            if (result.success) {
-                if (result.password_needed) {
-                    showScreen('passwordScreen');
+            tdrive_bridge.submit_verification_code(code, function(result) {
+                setLoading('submitCodeBtn', false);
+                if (result.success) {
+                    if (result.password_needed) {
+                        showScreen('passwordScreen');
+                    } else {
+                        loginSuccess();
+                    }
                 } else {
-                    await loginSuccess();
+                    UIHandler.showInlineError('verificationCode', result.message);
                 }
-            } else {
-                UIHandler.showInlineError('verificationCode', result.message);
-            }
+            });
         }
         
-        async function submitPassword() {
+        function submitPassword() {
             UIHandler.showInlineError('password', '');
             const password = document.getElementById('password').value.trim();
             if (!password) { UIHandler.showInlineError('password', '請輸入密碼'); return; }
             
             setLoading('submitPasswordBtn', true);
-            const result = await eel.submit_password(password)();
-            setLoading('submitPasswordBtn', false);
-
-            if (result.success) {
-                await loginSuccess();
-            } else {
-                UIHandler.showInlineError('password', result.message);
-            }
-        }
-
-        async function loginSuccess() {
-            console.log('開始登入成功流程');
-            
-            try {
-                showScreen('successScreen');
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                console.log('正在初始化 TDrive...');
-                const result = await eel.perform_post_login_initialization()();
-                
+            tdrive_bridge.submit_password(password, function(result) {
+                setLoading('submitPasswordBtn', false);
                 if (result.success) {
-                    console.log('初始化成功，跳轉到主頁面');
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
+                    loginSuccess();
                 } else {
-                    console.error('初始化失敗:', result.message);
-                    // Use the new handler for a consistent alert
-                    await UIHandler.handleBackendError(result); 
-                    showScreen('methodScreen');
+                    UIHandler.showInlineError('password', result.message);
                 }
-            } catch (error) {
-                console.error('登入成功流程中發生錯誤:', error);
-                await UIHandler.showAlert('嚴重錯誤', '發生未預期的錯誤，請重新登入');
-                showScreen('methodScreen');
-            }
+            });
         }
 
-        // Need to load ui_handler.js to use its functions
-        const uiHandlerScript = document.createElement('script');
-        uiHandlerScript.src = 'ui_handler.js';
-        document.head.appendChild(uiHandlerScript);
-
+        function loginSuccess() {
+            showScreen('successScreen');
+            setTimeout(() => {
+                tdrive_bridge.perform_post_login_initialization(function(result) {
+                    if (result.success) {
+                        window.location.href = 'index.html';
+                    } else {
+                        UIHandler.handleBackendError(result);
+                        showScreen('methodScreen');
+                    }
+                });
+            }, 500);
+        }
     </script>
 </body>
 </html>

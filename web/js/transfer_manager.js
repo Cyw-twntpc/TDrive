@@ -8,18 +8,23 @@ const TransferManager = {
     concurrencyLimit: 3,
     currentDownloadDestination: '',
     AppState: null,
-    eel: null,
+    ApiService: null,
     UIHandler: null,
     refreshCallback: null,
 
     // --- 初始化 ---
-    initialize(AppState, eel, UIHandler, refreshCallback) {
+    initialize(AppState, ApiService, UIHandler, refreshCallback) {
         this.AppState = AppState;
-        this.eel = eel;
+        this.ApiService = ApiService;
         this.UIHandler = UIHandler;
         this.refreshCallback = refreshCallback;
         this.setupEventListeners();
-        this.eel.expose(this.updateTask.bind(this), 'update_transfer_progress');
+        
+        // Connect to the backend signal for progress updates
+        if (window.tdrive_bridge && window.tdrive_bridge.transfer_progress_updated) {
+            window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
+            console.log("TransferManager connected to backend transfer_progress_updated signal.");
+        }
     },
 
     // --- 任務管理 (支援樹狀結構) ---
@@ -559,11 +564,15 @@ const TransferManager = {
         const result = this.findTask(id);
         if (result) {
             if (['transferring', 'queued'].includes(result.task.status)) {
-                this.eel.cancel_transfer(id)();
+                // Use the ApiService to send the cancel request
+                this.ApiService.cancelTransfer(id).then(res => {
+                    if (!res.success) {
+                        console.warn(`Failed to cancel task ${id}:`, res.message);
+                    }
+                });
             }
             const map = result.parent ? result.parent.children : result.map;
             
-            // [FIXED] Always use the task's unique ID as the key for deletion
             const key = result.task.id;
 
             if (map.has(key)) {

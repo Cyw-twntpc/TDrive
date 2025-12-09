@@ -1,4 +1,21 @@
 const UIManager = {
+    // --- Global Indicators & Locks ---
+    startProgress() {
+        document.getElementById('global-progress-bar')?.classList.add('visible');
+    },
+
+    stopProgress() {
+        document.getElementById('global-progress-bar')?.classList.remove('visible');
+    },
+
+    setInteractionLock(isLocked) {
+        document.getElementById('interaction-lock-overlay')?.classList.toggle('visible', isLocked);
+    },
+
+    toggleSearchSpinner(show) {
+        document.getElementById('search-spinner')?.classList.toggle('visible', show);
+    },
+    
     // --- UI Helpers ---
     getFileTypeIcon(fileName) {
         const extension = fileName.split('.').pop().toLowerCase();
@@ -146,5 +163,10 @@ const UIManager = {
                 break;
         }
         UIModals.showAlert(title, message, 'btn-primary');
+    },
+
+    handleConnectionStatus(status) {
+        console.log(`Connection status changed: ${status}`);
+        this.toggleModal('connection-lost-overlay', status === 'lost');
     }
 };

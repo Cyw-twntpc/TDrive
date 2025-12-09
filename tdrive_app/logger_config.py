@@ -68,6 +68,7 @@ def setup_logging():
     logging.getLogger('telethon').setLevel(logging.ERROR)
     logging.getLogger('asyncio').setLevel(logging.ERROR)
     logging.getLogger('geventwebsocket').setLevel(logging.ERROR)
+    logging.getLogger('qasync').setLevel(logging.ERROR)
 
     root_logger.info("日誌系統初始化完成。日誌將儲存到 %s", log_filename)
 

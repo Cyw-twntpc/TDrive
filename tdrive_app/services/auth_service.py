@@ -137,7 +137,7 @@ class AuthService:
             if client and client.is_connected(): await client.disconnect()
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"連線失敗: {e}"}
 
-    async def start_qr_login(self) -> Dict[str, Any]:
+    async def start_qr_login(self, event_callback) -> Dict[str, Any]:
         client = self.shared_state.client
         if not client or not client.is_connected():
             logger.warning("請求啟動 QR 登入，但客戶端未連線。")
@@ -153,29 +153,29 @@ class AuthService:
             img.save(buffer, format='PNG')
             img_str = base64.b64encode(buffer.getvalue()).decode()
 
-            self.shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(self._wait_for_qr_login(qr_login)))
+            # 在背景中等待 QR 登入完成，並使用回呼函式發送事件
+            self.shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(self._wait_for_qr_login(qr_login, event_callback)))
 
             return {"success": True, "qr_url": f"data:image/png;base64,{img_str}"}
         except Exception as e:
             logger.error(f"QR 碼產生失敗: {e}", exc_info=True)
             return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR 碼產生失敗: {e}"}
 
-    async def _wait_for_qr_login(self, qr_login):
-        eel = self.shared_state.eel_instance
+    async def _wait_for_qr_login(self, qr_login, event_callback):
         try:
             await qr_login.wait()
             self.shared_state.is_logged_in = True
             self._save_api_credentials()
-            eel.on_login_event({"status": "completed"})()
+            event_callback({"status": "completed"})
         except SessionPasswordNeededError:
-            eel.on_login_event({"status": "password_needed"})()
+            event_callback({"status": "password_needed"})
         except Exception as e:
             error_message = str(e)
             logger.warning(f"QR 登入等待過程中發生錯誤: {error_message}")
             if "QR code expired" in error_message or "code expired" in error_message.lower():
-                eel.on_login_event({"status": "expired", "error": "QR 碼已過期"})()
+                event_callback({"status": "expired", "error": "QR 碼已過期"})
             else:
-                eel.on_login_event({"status": "failed", "error": f"登入失敗: {error_message}"})()
+                event_callback({"status": "failed", "error": f"登入失敗: {error_message}"})
 
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
         client = self.shared_state.client
