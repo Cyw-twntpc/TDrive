@@ -1,0 +1,268 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+
+/* --- 1. 全域設定 --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-app-region: no-drag;
+}
+
+img, .no-drag, svg {
+    -webkit-user-drag: none;
+    pointer-events: none;
+}
+
+input {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+}
+
+/* --- 2. 視窗基礎設定 (修正灰色外框) --- */
+html, body {
+    width: 100%;
+    height: 100%;
+    background: transparent !important;
+    overflow: hidden;
+    -webkit-app-region: no-drag;
+}
+
+body {
+    font-family: 'Noto Sans TC', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* [重要] Padding 歸零，不留任何產生灰色空隙的空間 */
+    padding: 0; 
+}
+
+/* --- 3. 主卡片 (Login Card) --- */
+.login-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 20px;
+    backdrop-filter: blur(20px);
+    
+    box-shadow: none; 
+    
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; 
+    
+    border: 1px solid rgba(255, 255, 255, 0.4); /* 內部亮框 (玻璃感) */
+
+    background-color: #F2E8F5;
+}
+
+/* 玻璃質感疊加層 */
+.login-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.1) 25%, rgba(139,92,246,0.1) 50%, rgba(255,255,255,0.1) 75%, rgba(255,255,255,0.4) 100%);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.login-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 40%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.violet-stars {
+    background: linear-gradient(135deg, #E8D5F2 0%, #F5E6FF 25%, #E6F0FF 50%, #FFE6F0 75%, #F2E8F5 100%);
+    background-size: 400% 400%;
+    animation: gradient-shift 15s ease infinite;
+}
+
+@keyframes gradient-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* --- 4. 背景裝飾 --- */
+.starfield {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.geometric-circle {
+    position: absolute;
+    border-radius: 50%;
+    border: 2px solid rgba(139, 92, 246, 0.2);
+}
+.geometric-circle:nth-child(2) { width: 300px; height: 300px; top: -100px; right: -100px; background: radial-gradient(circle, rgba(139,92,246,0.15) 0%, transparent 70%); }
+.geometric-circle:nth-child(3) { width: 200px; height: 200px; bottom: -50px; left: -50px; background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%); }
+.geometric-circle:nth-child(4) { width: 150px; height: 150px; top: 40%; left: -30px; background: radial-gradient(circle, rgba(236,72,153,0.1) 0%, transparent 70%); }
+
+.grid-overlay {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(139,92,246,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.4;
+}
+
+/* --- 5. 視窗拖曳與控制 (解決辦法：z-index 與高度) --- */
+.window-drag-area {
+    position: absolute;
+    top: 0; 
+    left: 0;
+    width: 100%;
+    height: 50px;
+    z-index: 900;
+}
+
+.window-controls {
+    position: absolute;
+    top: 0; right: 0;
+    display: flex;
+    z-index: 1000; /* 最高層級，確保按鈕可點擊 */
+    -webkit-app-region: no-drag;
+}
+
+.control-btn {
+    width: 40px;
+    height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-top: none;
+    border-right: none;
+    color: rgba(139, 92, 246, 0.7);
+    backdrop-filter: blur(10px);
+    transition: all 0.2s;
+    border-radius: 0;
+}
+
+.control-btn.minimize {
+    border-right: none; 
+}
+
+.control-btn:hover {
+    background: rgba(139, 92, 246, 0.15);
+    color: rgba(139, 92, 246, 1);
+}
+
+.control-btn.close:hover {
+    background: rgba(236, 72, 153, 0.2);
+    color: #EC4899;
+}
+
+/* --- 6. 內容捲動區域 --- */
+.content-scroll-area {
+    flex: 1;
+    padding: 50px 40px 30px; 
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.3) transparent;
+    position: relative;
+    /* [重要] 內容層級不能高於拖曳區，否則捲動到頂部時會遮擋拖曳 */
+    z-index: 10; 
+    pointer-events: auto;
+}
+
+.content-scroll-area::-webkit-scrollbar { width: 4px; }
+.content-scroll-area::-webkit-scrollbar-thumb { background-color: rgba(139, 92, 246, 0.3); border-radius: 2px; }
+.content-scroll-area::-webkit-scrollbar-track { background: transparent; }
+
+/* --- 7. 元件樣式 --- */
+.logo-section { text-align: center; margin-bottom: 25px; }
+.logo-container { width: 72px; height: 72px; margin: 0 auto 15px; position: relative; animation: float-logo 6s infinite ease-in-out; }
+@keyframes float-logo { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
+.logo-container img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 8px 16px rgba(139, 92, 246, 0.4)); }
+.logo-glow { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100px; height: 100px; background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%); border-radius: 50%; animation: pulse-glow 3s infinite ease-in-out; }
+@keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); } 50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); } }
+
+.app-title { font-size: 28px; font-weight: 700; margin-bottom: 6px; background: linear-gradient(135deg, #8B5CF6 0%, #6366F1 50%, #EC4899 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; }
+.app-subtitle { font-size: 13px; color: rgba(139, 92, 246, 0.8); }
+
+.form-section { display: flex; flex-direction: column; }
+.screen { display: none; animation: fadeIn 0.3s ease-out; flex-direction: column; width: 100%; }
+.screen.active { display: flex; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+.info-box { background: rgba(255, 255, 255, 0.4); border-left: 3px solid #8B5CF6; padding: 12px; border-radius: 6px; margin-bottom: 20px; font-size: 13px; color: #4C1D95; line-height: 1.4; }
+.info-box a { color: #6366F1; text-decoration: none; font-weight: 600; }
+
+.form-group { margin-bottom: 24px; position: relative; }
+
+/* [解決辦法 3] 輸入框點擊範圍 */
+.form-label { 
+    display: block; 
+    font-size: 13px; 
+    font-weight: 600; 
+    color: rgba(139, 92, 246, 0.8); 
+    margin-bottom: 8px; 
+    margin-left: 2px;
+    /* 關鍵：禁止標籤接收滑鼠事件，點擊它不會觸發任何動作 (包括聚焦輸入框) */
+    pointer-events: none; 
+}
+
+.form-input {
+    width: 100%; padding: 14px 18px; border-radius: 12px; font-size: 14px; outline: none; transition: all 0.3s;
+    font-family: 'Noto Sans TC', sans-serif;
+    background: rgba(255, 255, 255, 0.6); 
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(139, 92, 246, 0.25); 
+    color: #4C1D95;
+    -webkit-app-region: no-drag;
+    position: relative; 
+    z-index: 20; /* 提升層級，確保它浮在裝飾層之上 */
+}
+.form-input:focus { border-color: #8B5CF6; background: rgba(255, 255, 255, 0.95); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15), 0 4px 12px rgba(139, 92, 246, 0.2); }
+.form-input.error { border-color: #dc3545; background-color: rgba(220, 53, 69, 0.05); }
+
+.error-message { color: #dc3545; font-size: 12px; position: absolute; bottom: -20px; left: 4px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+.error-message.show { opacity: 1; }
+
+.btn {
+    width: 100%; padding: 16px; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: all 0.3s; font-family: 'Noto Sans TC', sans-serif;
+    background: rgba(56, 189, 248, 0.25);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3); color: #4F46E5;
+    box-shadow: 0 4px 16px rgba(56, 189, 248, 0.15); position: relative; overflow: hidden;
+    margin-top: 5px;
+    -webkit-app-region: no-drag;
+    z-index: 20;
+}
+.btn:hover { transform: translateY(-2px); background: rgba(56, 189, 248, 0.35); box-shadow: 0 6px 20px rgba(56, 189, 248, 0.25); }
+.btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); transition: left 0.5s; }
+.btn:hover::before { left: 100%; }
+
+.login-method-selector { display: flex; gap: 12px; margin-bottom: 24px; }
+.method-btn { flex: 1; padding: 12px; border: 1px solid rgba(139, 92, 246, 0.2); background: rgba(255, 255, 255, 0.5); border-radius: 12px; cursor: pointer; transition: all 0.2s; text-align: center; -webkit-app-region: no-drag; z-index: 20; }
+.method-btn:hover { background: rgba(255, 255, 255, 0.8); border-color: #8B5CF6; transform: translateY(-2px); }
+.method-btn.active { background: rgba(139, 92, 246, 0.1); border-color: #8B5CF6; box-shadow: inset 0 0 0 1px #8B5CF6; }
+.method-btn i { font-size: 20px; color: #7c3aed; margin-bottom: 6px; display: block; }
+.method-btn h4 { font-size: 13px; font-weight: 600; color: #4C1D95; margin-bottom: 2px; }
+.method-btn p { font-size: 11px; color: rgba(109, 40, 217, 0.7); }
+
+.qr-container { text-align: center; margin: 15px 0; }
+.qr-code { width: 180px; height: 180px; margin: 0 auto 12px; border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.8); }
+.qr-refresh { background: rgba(255, 255, 255, 0.5); border: 1px solid #8B5CF6; color: #7c3aed; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s; -webkit-app-region: no-drag; z-index: 20; }
+.qr-refresh:hover { background: #8B5CF6; color: white; }
+
+.section-title { margin-bottom: 12px; color: #4C1D95; font-size: 15px; font-weight: 600; }
+.header-group { margin-bottom: 15px; }
+.text-center { text-align: center; }
+.text-muted { color: rgba(109, 40, 217, 0.7); font-size: 13px; }
+.method-switch { margin-top: 15px; }
+.method-switch button { background: none; border: none; color: #7c3aed; cursor: pointer; font-size: 13px; text-decoration: underline; font-family: inherit; -webkit-app-region: no-drag; z-index: 20; }
+.method-switch button:hover { color: #5b21b6; }
+
+.success-icon { width: 60px; height: 60px; background: #10b981; border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; animation: bounceIn 0.5s ease-out; color: white; font-size: 24px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
+@keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.05); } 70% { transform: scale(0.9); } 100% { transform: scale(1); opacity: 1; } }

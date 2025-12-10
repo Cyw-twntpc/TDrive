@@ -11,7 +11,6 @@ class Bridge(QObject):
     """
     負責作為 Python 後端與 QWebEngineView 中 JavaScript 之間通訊的橋樑。
     """
-    # --- 新增：給事件驅動模式使用的 Signals ---
     folderContentsReady = Signal(dict)
     searchResultsReady = Signal(dict)
 
@@ -19,11 +18,17 @@ class Bridge(QObject):
     transfer_progress_updated = Signal(dict)
     connection_status_changed = Signal(str)
 
+    drag_window = Signal(int, int)
+    drag_start = Signal(int, int)
+    drag_end = Signal()
+
+    window_action = Signal(str)
+
     def __init__(self, tdrive_service: TDriveService, loop: asyncio.AbstractEventLoop, parent=None):
         super().__init__(parent)
         self._service = tdrive_service
         self._loop = loop
-        self._is_busy = False # 用於關鍵操作的互斥鎖
+        self._is_busy = False
 
     def _run_background_task(self, coro, result_signal, request_id):
         """
@@ -79,6 +84,32 @@ class Bridge(QObject):
         except Exception as e:
             logger.error(f"非同步呼叫時發生錯誤: {e}", exc_info=True)
             return {"success": False, "error_code": "ASYNC_CALL_FAILED", "message": str(e)}
+
+    # --- 視窗控制方法 ---
+    @Slot()
+    def minimize_window(self):
+        """發送最小化視窗的請求"""
+        self.window_action.emit("minimize")
+
+    @Slot()
+    def close_window(self):
+        """發送關閉視窗的請求"""
+        self.window_action.emit("close")
+
+    @Slot(int, int)
+    def handle_drag_start(self, global_x, global_y):
+        """開始拖曳"""
+        self.drag_start.emit(global_x, global_y)
+
+    @Slot(int, int)
+    def handle_drag_move(self, global_x, global_y):
+        """處理拖曳移動"""
+        self.drag_window.emit(global_x, global_y)
+
+    @Slot()
+    def handle_drag_end(self):
+        """結束拖曳"""
+        self.drag_end.emit()
 
     # --- 原生對話方塊 (同步) ---
     @Slot(bool, str, result=list)
