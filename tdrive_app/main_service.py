@@ -162,6 +162,9 @@ class TDriveService:
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         return await self._file_service.delete_items(items)
 
+    async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
+        return await self._file_service.move_items(items, target_folder_id)
+
     # --- Transfer Service ---
     def upload_files(self, parent_id: int, local_paths: List[Dict], concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
         """

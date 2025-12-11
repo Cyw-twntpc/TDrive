@@ -235,6 +235,10 @@ class Bridge(QObject):
     def delete_items(self, items):
         return self._async_call(self._service.delete_items(items))
 
+    @Slot(list, int, result=dict)
+    def move_items(self, items, target_folder_id):
+        return self._async_call(self._service.move_items(items, target_folder_id))
+
     # --- Transfer Service Slots ---
     @Slot(int, list, int, result=dict)
     def upload_files(self, parent_id, local_paths, concurrency_limit):

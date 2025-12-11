@@ -163,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('logout-btn').addEventListener('click', () => ActionHandler.handleLogout());
         document.getElementById('upload-btn').addEventListener('click', () => ActionHandler.handleUpload());
         document.getElementById('download-btn').addEventListener('click', () => ActionHandler.handleDownload());
+        document.getElementById('move-btn').addEventListener('click', () => ActionHandler.handleMove());
         document.getElementById('new-folder-btn').addEventListener('click', () => ActionHandler.handleNewFolder());
         document.getElementById('delete-btn').addEventListener('click', () => ActionHandler.handleDelete());
         
@@ -181,6 +182,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Use event delegation to handle actions on dynamically created file list items.
         fileListBodyEl.addEventListener('item-rename', e => ActionHandler.handleRename(e.detail));
+        fileListBodyEl.addEventListener('item-move', e => {
+            // Select only the clicked item for a direct move action.
+            document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+            e.target.closest('.file-item')?.classList.add('selected');
+            AppState.selectedItems = [e.detail];
+            ActionHandler.handleMove();
+        });
         fileListBodyEl.addEventListener('item-download', e => {
             // Select only the clicked item for a direct download action.
             document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));

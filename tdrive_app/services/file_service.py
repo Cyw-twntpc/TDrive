@@ -185,3 +185,37 @@ class FileService:
         except Exception as e:
             logger.error(f"An unknown error occurred while deleting items: {items}", exc_info=True)
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "刪除過程中發生未知的錯誤。"}
+
+    async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
+        """
+        Moves a list of items (files/folders) to a new destination folder.
+        items: [{'id': 1, 'type': 'file'}, ...]
+        """
+        client = await utils.ensure_client_connected(self.shared_state)
+        if not client:
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+
+        try:
+            db = DatabaseHandler()
+            moved_count = 0
+            
+            for item in items:
+                item_id, item_type = item['id'], item['type']
+                if item_type == 'folder':
+                    db.move_folder(item_id, target_folder_id)
+                else:
+                    db.move_file(item_id, target_folder_id)
+                moved_count += 1
+                
+            await utils.trigger_db_upload_in_background(self.shared_state)
+            return {"success": True, "message": f"成功移動 {moved_count} 個項目。"}
+
+        except errors.PathNotFoundError as e:
+            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
+        except errors.ItemAlreadyExistsError as e:
+            return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
+        except errors.InvalidNameError as e: # Catch circular dependency error
+            return {"success": False, "error_code": "INVALID_OPERATION", "message": str(e)}
+        except Exception as e:
+            logger.error(f"Unknown error moving items: {e}", exc_info=True)
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "移動過程中發生未知的錯誤。"}

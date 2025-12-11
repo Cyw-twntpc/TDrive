@@ -56,6 +56,7 @@
 .file-item.is-uploading .item-action-btn { display: none; } /* 上傳中隱藏操作按鈕 */
 .item-action-btn:hover { background-color: #e9eef5; }
 .item-action-btn.rename-btn:hover { color: var(--text-color); }
+.item-action-btn.move-btn:hover { color: var(--primary-color); }
 .item-action-btn.download-btn:hover { color: var(--primary-color); }
 .item-action-btn.delete-btn:hover { color: var(--danger-color); }
 

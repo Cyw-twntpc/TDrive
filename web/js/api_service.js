@@ -58,7 +58,27 @@ const ApiService = {
 
     // --- File & Folder Actions ---
     renameItem: (id, newName, type) => ApiService._callBridge('rename_item', id, newName, type),
-    deleteItems: (items) => ApiService._callBridge('delete_items', items),
+    /**
+     * Deletes a batch of items.
+     * @param {Array} items - Array of {id, type} objects.
+     */
+    async deleteItems(items) {
+        if (!window.tdrive_bridge) return { success: false, message: "Bridge not available" };
+        return await window.tdrive_bridge.delete_items(items);
+    },
+
+    /**
+     * Moves a batch of items to a new folder.
+     * @param {Array} items - Array of {id, type} objects.
+     * @param {number} targetFolderId - The destination folder ID.
+     */
+    async moveItems(items, targetFolderId) {
+        if (!window.tdrive_bridge) return { success: false, message: "Bridge not available" };
+        return await window.tdrive_bridge.move_items(items, targetFolderId);
+    },
+
+    // --- Transfer Service Wrappers ---
+
     createFolder: (parentId, folderName) => ApiService._callBridge('create_folder', parentId, folderName),
 
     // --- Native OS Dialogs ---

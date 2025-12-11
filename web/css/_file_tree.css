@@ -12,3 +12,31 @@
 .folder-toggle.open { transform: rotate(90deg); }
 .tree-item .folder-icon { margin-right: 8px; color: var(--primary-color); }
 .collapsed { display: none; }
+
+/* [新增] 移動視窗中的樹狀節點樣式 */
+#move-tree-container .tree-node { margin-bottom: 2px; user-select: none; }
+#move-tree-container .tree-content {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.15s;
+    color: var(--text-color);
+}
+#move-tree-container .tree-content:hover { background-color: #f5f7fa; }
+#move-tree-container .tree-content.selected { background-color: var(--selected-bg-color); color: var(--primary-color); font-weight: 500; }
+#move-tree-container .tree-content i.fa-folder { margin-right: 8px; color: var(--primary-color); font-size: 16px; }
+#move-tree-container .tree-toggle { width: 20px; text-align: center; color: #888; margin-right: 4px; font-size: 12px; transition: transform 0.2s; }
+#move-tree-container .tree-toggle:hover { color: #555; }
+#move-tree-container .tree-toggle-placeholder { width: 24px; display: inline-block; }
+
+/* 目前位置樣式 - 禁用狀態 */
+#move-tree-container .tree-content.current-location {
+    opacity: 0.6;
+    background-color: #f8f9fa;
+    cursor: default;
+    color: #6c757d;
+}
+#move-tree-container .tree-content.current-location:hover { background-color: #f8f9fa; }
+#move-tree-container .tree-content.current-location i.fa-folder { color: #adb5bd; }

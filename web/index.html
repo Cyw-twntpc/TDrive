@@ -53,6 +53,7 @@
                     <div class="action-buttons">
                         <button id="upload-btn" class="btn"><i class="fas fa-upload"></i> 上傳</button>
                         <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
+                        <button id="move-btn" class="btn"><i class="fas fa-arrow-right-to-bracket"></i> 移動</button>
                         <button id="new-folder-btn" class="btn"><i class="fas fa-folder-plus"></i> 新增資料夾</button>
                         <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
                     </div>
@@ -210,6 +211,25 @@
             <div class="modal-footer">
                 <button id="confirm-cancel-btn" class="btn btn-secondary">取消</button>
                 <button id="confirm-ok-btn" class="btn btn-danger">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="move-modal" class="modal-overlay hidden unselectable">
+        <div class="modal-content medium-modal">
+            <div class="modal-header">
+                <h2>移動項目</h2>
+                <button id="move-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p>請選擇目的地資料夾：</p>
+                <div id="move-tree-container" class="folder-tree-container">
+                    <!-- Folder tree will be injected here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="move-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="move-confirm-btn" class="btn">移動到此處</button>
             </div>
         </div>
     </div>

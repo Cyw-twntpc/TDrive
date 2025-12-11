@@ -136,6 +136,7 @@ const FileListHandler = {
                 </div>
                 <div class="name-col-actions">
                     <button class="item-action-btn rename-btn" title="Rename"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="item-action-btn move-btn" title="Move"><i class="fas fa-arrow-right-to-bracket"></i></button>
                     <button class="item-action-btn download-btn" title="Download"><i class="fas fa-download"></i></button>
                     <button class="item-action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
                 </div>
@@ -155,6 +156,7 @@ const FileListHandler = {
         // Dispatch custom events for actions to be handled by a central listener in main.js.
         const itemDetail = { ...item, type: isFolder ? 'folder' : 'file' };
         itemEl.querySelector('.rename-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-rename', { detail: itemDetail, bubbles: true })); });
+        itemEl.querySelector('.move-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-move', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.download-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-download', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-delete', { detail: itemDetail, bubbles: true })); });
         
@@ -168,6 +170,13 @@ const FileListHandler = {
         itemEl.addEventListener('mouseleave', () => {
             actionsEl.style.visibility = 'hidden';
             actionsEl.style.opacity = '0';
+        });
+        // [Fix] Add mousemove as a fallback to ensure buttons appear if mouseenter is missed
+        itemEl.addEventListener('mousemove', () => {
+            if (actionsEl.style.visibility !== 'visible') {
+                actionsEl.style.visibility = 'visible';
+                actionsEl.style.opacity = '1';
+            }
         });
 
         return itemEl;

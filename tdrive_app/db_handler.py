@@ -475,6 +475,105 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
+    def move_file(self, file_id: int, new_parent_id: int):
+        """Moves a file to a new folder."""
+        conn = self._get_conn()
+        try:
+            with conn:
+                cursor = conn.cursor()
+                
+                # Get file info
+                cursor.execute("SELECT parent_id, name, size FROM files WHERE id = ?", (file_id,))
+                file_info = cursor.fetchone()
+                if not file_info:
+                    raise errors.PathNotFoundError(f"File with ID '{file_id}' not found.")
+                
+                old_parent_id = file_info['parent_id']
+                file_name = file_info['name']
+                file_size = file_info['size']
+                
+                if old_parent_id == new_parent_id:
+                    return # No change needed
+
+                # Verify destination
+                if new_parent_id is not None:
+                    cursor.execute("SELECT id FROM folders WHERE id = ?", (new_parent_id,))
+                    if not cursor.fetchone():
+                        raise errors.PathNotFoundError(f"Destination folder with ID '{new_parent_id}' not found.")
+
+                # Check for name collision in destination
+                cursor.execute("SELECT id FROM files WHERE parent_id = ? AND name = ?", (new_parent_id, file_name))
+                if cursor.fetchone():
+                    raise errors.ItemAlreadyExistsError(f"A file named '{file_name}' already exists in the destination folder.")
+
+                # Update parent_id
+                cursor.execute("UPDATE files SET parent_id = ?, modif_date = ? WHERE id = ?", 
+                               (new_parent_id, time.time(), file_id))
+                
+                # Update sizes
+                self._update_folder_size_recursively(cursor, old_parent_id, -file_size)
+                self._update_folder_size_recursively(cursor, new_parent_id, file_size)
+                
+                self._increment_db_version(cursor)
+        finally:
+            if conn:
+                conn.close()
+
+    def move_folder(self, folder_id: int, new_parent_id: int):
+        """Moves a folder to a new parent folder."""
+        conn = self._get_conn()
+        try:
+            with conn:
+                cursor = conn.cursor()
+                
+                # Get folder info
+                cursor.execute("SELECT parent_id, name, total_size FROM folders WHERE id = ?", (folder_id,))
+                folder_info = cursor.fetchone()
+                if not folder_info:
+                    raise errors.PathNotFoundError(f"Folder with ID '{folder_id}' not found.")
+                
+                old_parent_id = folder_info['parent_id']
+                folder_name = folder_info['name']
+                folder_size = folder_info['total_size']
+
+                if old_parent_id == new_parent_id:
+                    return
+
+                # Verify destination exists (if not root)
+                if new_parent_id is not None:
+                    cursor.execute("SELECT id FROM folders WHERE id = ?", (new_parent_id,))
+                    if not cursor.fetchone():
+                        raise errors.PathNotFoundError(f"Destination folder with ID '{new_parent_id}' not found.")
+
+                    # Circular dependency check: Cannot move a folder into its own subtree
+                    # Traverse up from new_parent_id to see if we hit folder_id
+                    current_check_id = new_parent_id
+                    while current_check_id is not None:
+                        if current_check_id == folder_id:
+                            raise errors.InvalidNameError("Cannot move a folder into itself or its subfolders.")
+                        
+                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (current_check_id,))
+                        res = cursor.fetchone()
+                        current_check_id = res['parent_id'] if res else None
+
+                # Check for name collision
+                cursor.execute("SELECT id FROM folders WHERE parent_id = ? AND name = ?", (new_parent_id, folder_name))
+                if cursor.fetchone():
+                    raise errors.ItemAlreadyExistsError(f"A folder named '{folder_name}' already exists in the destination folder.")
+
+                # Update parent_id
+                cursor.execute("UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
+                               (new_parent_id, time.time(), folder_id))
+                
+                # Update sizes
+                self._update_folder_size_recursively(cursor, old_parent_id, -folder_size)
+                self._update_folder_size_recursively(cursor, new_parent_id, folder_size)
+                
+                self._increment_db_version(cursor)
+        finally:
+            if conn:
+                conn.close()
+
     def get_file_details(self, file_id: int) -> dict | None:
         """
         Retrieves all necessary details for a single file to begin a download,

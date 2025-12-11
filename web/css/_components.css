@@ -1,5 +1,6 @@
 .btn { padding: 8px 16px; border: 1px solid var(--primary-color); background-color: var(--primary-color); color: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: 8px; }
 .btn:hover { background-color: var(--primary-hover-color); border-color: var(--primary-hover-color); }
+.btn:disabled { background-color: #e9ecef; border-color: #dee2e6; color: #6c757d; cursor: not-allowed; opacity: 0.8; } /* [新增] 通用禁用按鈕樣式 */
 .btn.btn-danger { background-color: var(--danger-color); border-color: var(--danger-color); }
 .btn.btn-danger:hover { background-color: var(--danger-hover-color); border-color: var(--danger-hover-color); }
 .btn.btn-secondary { background-color: #6c757d; border-color: #6c757d; color: white; }
@@ -84,6 +85,29 @@ input:checked + .slider:before { transform: translateX(20px); }
 .modal-input:focus { border-color: var(--primary-color); outline: none; box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15); }
 .modal-error { color: var(--danger-color); font-size: 14px; margin-top: 8px; }
 .small-modal .modal-footer { justify-content: flex-end; background-color: #f7f9fc; }
+
+/* [新增] 中型 Modal 與移動視窗樣式 */
+.modal-content.medium-modal { max-width: 600px; height: 80vh; max-height: 700px; }
+.medium-modal .modal-body { padding: 20px 24px; display: flex; flex-direction: column; }
+.medium-modal .modal-body p { margin-bottom: 12px; color: var(--text-light-color); font-weight: 500; }
+.medium-modal .modal-footer { justify-content: flex-end; }
+
+/* [新增] 資料夾樹狀容器樣式 */
+.folder-tree-container {
+    flex-grow: 1;
+    border: 1px solid #e0e4e9;
+    border-radius: 8px;
+    background-color: #fff;
+    padding: 12px;
+    overflow-y: auto;
+    /* 自訂捲軸樣式 */
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f1f1f1;
+}
+.folder-tree-container::-webkit-scrollbar { width: 8px; }
+.folder-tree-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 8px; }
+.folder-tree-container::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 8px; }
+.folder-tree-container::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
 
 /* [新增] 載入與嚴重錯誤遮罩 */
 #loading-overlay .loading-content {
