@@ -1,51 +1,57 @@
 import logging
 import asyncio
-from telethon import TelegramClient
-from typing import TYPE_CHECKING, Optional
+import threading
 import os
 import glob
 import shutil
-from ..shared_state import TEMP_DIR
+from typing import TYPE_CHECKING, Optional
+from telethon import TelegramClient
 
 from .. import telegram_comms
+from ..shared_state import TEMP_DIR
 
-# 為了避免循環匯入問題，只在類型檢查時匯入 SharedState
+# Use a forward reference for type hinting to avoid circular imports.
 if TYPE_CHECKING:
     from ..shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
 def cleanup_temp_folders():
-    """清理所有符合 'temp_*' 模式的暫存資料夾。"""
-    logger.info("正在執行暫存檔案清理...")
+    """
+    Removes all temporary directories created during previous application runs.
+    This is typically called at startup to ensure a clean state.
+    """
+    logger.info("Performing cleanup of temporary files...")
     try:
-        # 確保基礎暫存目錄存在，如果不存在則建立
         os.makedirs(TEMP_DIR, exist_ok=True)
-        
         temp_dirs_pattern = os.path.join(TEMP_DIR, 'temp_*')
         for temp_dir in glob.glob(temp_dirs_pattern):
             if os.path.isdir(temp_dir):
                 try:
                     shutil.rmtree(temp_dir)
-                    logger.info(f"已清理暫存目錄: {temp_dir}")
+                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
                 except OSError as e:
-                    logger.error(f"清理暫存目錄失敗 {temp_dir}: {e}")
-        logger.info("暫存檔案清理完成。")
+                    logger.error(f"Failed to clean up temporary directory {temp_dir}: {e}")
+        logger.info("Temporary file cleanup complete.")
     except Exception as e:
-        logger.error(f"執行暫存檔案清理時發生未知錯誤: {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred during temp file cleanup: {e}", exc_info=True)
 
 
 async def ensure_client_connected(shared_state: 'SharedState') -> Optional[TelegramClient]:
     """
-    確保 Telegram 客戶端已連線。如果未連線，則鎖定 UI 並嘗試重新連線。
-    返回一個已連線的 client 物件，如果失敗則返回 None。
+    Ensures the Telegram client is connected.
+
+    If the client is disconnected, it attempts to reconnect in a loop, emitting
+    signals to the UI to indicate the connection status ('lost' and 'restored').
+    
+    Returns:
+        An active and authorized TelegramClient instance, or None if reconnection fails.
     """
     if shared_state.client and shared_state.client.is_connected():
         return shared_state.client
 
-    logger.warning("偵測到連線中斷，鎖定 UI 並開始重試 Telegram 連線...")
+    logger.warning("Connection lost. Locking UI and attempting to reconnect to Telegram...")
     
-    # 使用新的信號機制通知前端
     if shared_state.connection_emitter:
         shared_state.connection_emitter.emit('lost')
 
@@ -54,9 +60,9 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
     session_file = f'./file/user_{api_id}.session'
 
     if not (api_id and api_hash):
-        logger.error("錯誤：在 SharedState 中找不到 API 憑證，無法重新連線。")
+        logger.error("Cannot reconnect: API credentials not found in SharedState.")
         if shared_state.connection_emitter:
-            shared_state.connection_emitter.emit('restored')
+            shared_state.connection_emitter.emit('restored') # Restore UI interaction
         return None
 
     while True:
@@ -64,69 +70,74 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
             if shared_state.client:
                 try:
                     await shared_state.client.disconnect()
-                except Exception as e:
-                    logger.debug(f"舊客戶端斷開連線時發生錯誤: {e}")
+                except Exception:
+                    pass # Ignore errors on disconnecting a faulty client
 
             new_client = TelegramClient(session_file, api_id, api_hash)
             await new_client.connect()
             
             if await new_client.is_user_authorized():
-                logger.info("Telegram 重新連線成功！")
+                logger.info("Successfully reconnected to Telegram.")
                 shared_state.client = new_client
                 
                 if shared_state.connection_emitter:
                     shared_state.connection_emitter.emit('restored')
                 return new_client
             else:
-                logger.warning("重新連線失敗：使用者授權無效。可能需要重新登入。")
+                logger.error("Reconnection failed: user authorization is invalid. Re-login is required.")
                 break
 
         except Exception as e:
-            logger.error(f"Telegram 重新連線嘗試失敗: {e}")
+            logger.error(f"Telegram reconnection attempt failed: {e}. Retrying in 5 seconds...")
             await asyncio.sleep(5)
     
     if shared_state.connection_emitter:
         shared_state.connection_emitter.emit('restored')
     return None
 
-async def trigger_db_upload_in_background(shared_state: 'SharedState'):
+def _upload_db(shared_state: 'SharedState'):
     """
-    使用防抖 (debounce) 機制，在背景觸發資料庫上傳。
-    這可以將短時間內的多個修改合併為一次上傳。
+    The actual workhorse function that performs the database upload.
+    This function is scheduled to run in the main asyncio event loop.
     """
-    
-    # 建立要在 asyncio 事件迴圈中執行的任務
     async def upload_task():
         try:
-            logger.info("執行延遲的資料庫上傳任務...")
+            logger.info("Executing delayed database upload task...")
             client = await ensure_client_connected(shared_state)
             if not client or not shared_state.api_id:
-                logger.error("背景資料庫上傳任務中止，因為無法確保客戶端連線或 api_id 不存在。")
+                logger.error("Aborting DB upload task: client connection or api_id is missing.")
                 return
 
             group_id = await telegram_comms.get_group(client, shared_state.api_id)
             await telegram_comms.sync_database_file(client, group_id, mode='upload')
-            logger.info("背景資料庫上傳任務已完成。")
+            logger.info("Background database upload task completed.")
         except Exception as e:
-            logger.error(f"背景資料庫上傳任務失敗: {e}", exc_info=True)
+            logger.error(f"Background database upload task failed: {e}", exc_info=True)
 
-    # 這個函式將被 Timer 呼叫
-    def schedule_async_task():
-        if shared_state.loop.is_running():
-            shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(upload_task()))
-        else:
-            logger.warning("事件迴圈未執行，無法排程資料庫上傳。")
+    if shared_state.loop and shared_state.loop.is_running():
+        # Safely schedule the async task from a potentially different thread.
+        shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(upload_task()))
+    else:
+        logger.warning("Event loop is not running. Cannot schedule database upload.")
 
-    # 如果存在計時器，取消它
+async def trigger_db_upload_in_background(shared_state: 'SharedState'):
+    """
+    Triggers a debounced database upload in the background.
+
+    This function uses a threading.Timer to delay the upload. If called
+    multiple times within a short period (2 seconds), it cancels the previous
+    timer and starts a new one, effectively coalescing multiple database
+    modifications into a single upload operation.
+    """
+    # Cancel any previously scheduled timer.
     if shared_state.db_upload_timer:
         shared_state.db_upload_timer.cancel()
-        logger.debug("取消了先前的資料庫上傳計時器。")
+        logger.debug("Cancelled previous database upload timer.")
 
-    # 建立並啟動一個新的計時器，延遲 2 秒執行
-    # 注意：這裡的 threading.Timer 仍然是必要的，因為我們需要一個脫離 asyncio 事件迴圈的延遲機制。
-    # 它在自己的執行緒中等待，然後安全地將任務排程回 asyncio 迴圈。
-    import threading
-    shared_state.db_upload_timer = threading.Timer(2.0, schedule_async_task)
+    # Schedule the upload to run after a delay.
+    # A threading.Timer is used here to provide a simple, out-of-band delay
+    # mechanism that then schedules the real async work back on the main loop.
+    shared_state.db_upload_timer = threading.Timer(2.0, lambda: _upload_db(shared_state))
     shared_state.db_upload_timer.start()
-    logger.debug("已排程一個新的資料庫上傳任務在 2 秒後執行。")
+    logger.debug("Scheduled a new database upload in 2 seconds.")
 

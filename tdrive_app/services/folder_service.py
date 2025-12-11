@@ -7,26 +7,36 @@ if TYPE_CHECKING:
 from ..db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
-db = DatabaseHandler()
 
 class FolderService:
     """
-    處理所有與資料夾結構讀取和遍歷相關的服務。
+    Provides services related to reading and traversing the folder structure.
     """
     def __init__(self, shared_state: 'SharedState'):
         """
-        雖然此服務目前不直接使用 shared_state，但為了架構一致性依然傳入。
+        Initializes the FolderService.
+
+        Args:
+            shared_state: The shared state object. Although not directly used
+                          in this service currently, it's passed for architectural
+                          consistency.
         """
         self.shared_state = shared_state
+        # Note: A single, module-level db handler instance might cause issues
+        # in a multi-threaded context. For this service, it's acceptable as
+        # it's only performing read operations.
+        self.db = DatabaseHandler()
 
     def get_folder_tree_data(self) -> List[Dict[str, Any]]:
         """
-        獲取資料庫中所有資料夾的扁平化列表，供前端建構樹狀結構。
-        這是對 db_handler.get_folder_tree 的一個簡單封裝。
+        Retrieves a flat list of all folders from the database, which is
+        used by the frontend to construct a tree view.
+        
+        This method is a simple wrapper around the corresponding db_handler call.
         """
-        logger.info("正在從資料庫獲取扁平化資料夾樹。")
+        logger.info("Fetching flat folder tree from the database.")
         try:
-            return db.get_folder_tree()
+            return self.db.get_folder_tree()
         except Exception as e:
-            logger.error(f"獲取資料夾樹時發生錯誤: {e}", exc_info=True)
-            return [] # 發生錯誤時返回空列表
+            logger.error(f"An error occurred while fetching the folder tree: {e}", exc_info=True)
+            return [] # Return an empty list on error to prevent UI crashes.

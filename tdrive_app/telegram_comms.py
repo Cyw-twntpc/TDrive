@@ -1,3 +1,10 @@
+"""
+Handles all low-level communication with the Telegram API using Telethon.
+
+This module encapsulates the logic for finding or creating the storage group,
+streaming file uploads and downloads, and synchronizing the local database with
+a remote backup stored in the group's pinned messages.
+"""
 from telethon.tl.types import InputMessagesFilterPinned
 from telethon.tl.functions.channels import CreateChannelRequest
 import os
@@ -6,8 +13,9 @@ import zipfile
 import time
 import asyncio
 import json
-
 import logging
+from typing import Callable
+
 from . import crypto_handler as cr
 from . import file_processor as fp
 from .db_handler import DatabaseHandler
@@ -15,10 +23,15 @@ from .shared_state import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
+# An asyncio lock to prevent concurrent executions of `sync_database_file`,
+# which could lead to race conditions when accessing the database file.
 update_lock = asyncio.Lock()
 
-def _save_group_id(api_id, group_id):
-    """將 group_id 儲存到加密的 info.json 中。"""
+def _save_group_id(api_id: int, group_id: int):
+    """
+    Saves the TDrive storage group ID into the encrypted info.json file.
+    This caches the group_id to avoid searching for it on every startup.
+    """
     try:
         info_path = './file/info.json'
         current_info = {}
@@ -26,12 +39,14 @@ def _save_group_id(api_id, group_id):
             with open(info_path, 'r') as f:
                 current_info = json.load(f)
         
-        api_hash = cr.decrypt_secure_data(current_info.get("secure_data_blob"), str(api_id)).get('api_hash')
-        if not api_hash:
-            logger.error("錯誤：無法解密現有資料以儲存 group_id。")
+        # The api_hash is required to re-encrypt the data blob.
+        decrypted_blob = cr.decrypt_secure_data(current_info.get("secure_data_blob"), str(api_id))
+        if not decrypted_blob or 'api_hash' not in decrypted_blob:
+            logger.error("Failed to save group_id: Could not decrypt existing data to retrieve api_hash.")
             return
 
-        secure_data = {"api_hash": api_hash, "group_id": group_id}
+        # Add the group_id to the dictionary and re-encrypt.
+        secure_data = {"api_hash": decrypted_blob['api_hash'], "group_id": group_id}
         encrypted_blob = cr.encrypt_secure_data(secure_data, str(api_id))
         
         final_info = {
@@ -40,15 +55,23 @@ def _save_group_id(api_id, group_id):
         }
         with open(info_path, 'w') as f:
             json.dump(final_info, f)
-        logger.info(f"Group ID {group_id} 已成功儲存到本地。")
+        logger.info(f"Group ID {group_id} has been successfully saved to local cache.")
 
     except Exception as e:
-        logger.error(f"儲存 group_id 失敗: {e}", exc_info=True)
+        logger.error(f"Failed to save group_id: {e}", exc_info=True)
 
-async def get_group(client, app_api_id):
+async def get_group(client, app_api_id: int) -> int | None:
+    """
+    Finds or creates the dedicated 'TDrive' storage group.
+
+    The logic follows a three-step process:
+    1.  Check the local `info.json` cache for a saved group_id.
+    2.  If not found, iterate through the user's dialogs to find the group by name.
+    3.  If still not found, create a new private megagroup named 'TDrive'.
+    """
     name = "TDrive"
 
-    # 1. 嘗試從本地讀取 group_id
+    # 1. Try to read the group_id from the local cache first.
     try:
         info_path = './file/info.json'
         if os.path.exists(info_path):
@@ -57,39 +80,41 @@ async def get_group(client, app_api_id):
             if info.get("api_id") == app_api_id:
                 decrypted_data = cr.decrypt_secure_data(info.get("secure_data_blob"), str(app_api_id))
                 if decrypted_data and decrypted_data.get('group_id'):
-                    logger.info(f"從快取中找到 Group ID: {decrypted_data['group_id']}")
+                    logger.info(f"Found Group ID in cache: {decrypted_data['group_id']}")
                     return decrypted_data['group_id']
     except Exception as e:
-        logger.warning(f"讀取快取的 group_id 失敗: {e}", exc_info=True)
+        logger.warning(f"Failed to read cached group_id: {e}", exc_info=True)
 
-    # 2. 如果本地沒有，則遍歷對話
-    logger.info("正在從伺服器搜尋 TDrive 群組...")
+    # 2. If not cached, search through dialogs on the server.
+    logger.info("Searching for 'TDrive' group on the server...")
     dialogs = await client.get_dialogs()
     for dialog in dialogs:
         if dialog.is_group and dialog.name == name:
-            _save_group_id(app_api_id, dialog.entity.id)
-            logger.info(f"從伺服器找到 Group ID: {dialog.entity.id}")
-            return dialog.entity.id
+            logger.info(f"Found Group ID on server: {dialog.id}. Caching it locally.")
+            _save_group_id(app_api_id, dialog.id)
+            return dialog.id
 
-    # 3. 如果都找不到，則建立新群組
-    logger.info("找不到 TDrive 群組，正在建立新的...")
+    # 3. If not found anywhere, create a new group.
+    logger.info("TDrive group not found, creating a new one...")
     try:
         result = await client(CreateChannelRequest(
             title=name,
-            about="This is TDrive storage group, don't delete.",
+            about="This is the TDrive storage group. Do not delete or leave.",
             megagroup=True
         ))
-        group_id = result.chats[0].id
+        channel = result.chats[0]
+        # Convert the channel ID to a marked ID for use in Telethon's API
+        group_id = int(f"-100{channel.id}")
+        _save_group_id(app_api_id, group_id)
+        logger.info(f"Successfully created new group with ID: {group_id}")
+        return group_id
     except Exception as e:
-        logger.error(f"建立群組時發生嚴重錯誤: {e}", exc_info=True)
+        logger.error(f"Fatal error while creating group: {e}", exc_info=True)
         return None
 
-    _save_group_id(app_api_id, group_id)
-    return group_id
-
-async def upload_file_with_info(client, group_id, file_path, task_id, progress_callback=None):
+async def upload_file_with_info(client, group_id: int, file_path: str, task_id: str, progress_callback: Callable | None = None) -> list:
     """
-    【串流式】上傳檔案，並返回所有分塊的資訊（ID, hash 等）。
+    Streams, encrypts, and uploads a file, returning metadata for all its chunks.
     """
     temp_dir = os.path.join(TEMP_DIR, f"temp_upload_{os.path.basename(file_path)}_{task_id}")
     file_name = os.path.basename(file_path)
@@ -103,12 +128,13 @@ async def upload_file_with_info(client, group_id, file_path, task_id, progress_c
         
         total_size = os.path.getsize(file_path)
         uploaded_bytes = 0
-
         last_update_time = 0
         last_call_bytes = 0
+
         def callback(current, total):
             nonlocal uploaded_bytes, last_update_time, last_call_bytes
             now = time.time()
+            # Throttle progress updates to about twice a second to avoid UI lag.
             if now - last_update_time > 0.5 or current == total:
                 elapsed = now - last_update_time
                 speed = (current - last_call_bytes) / elapsed if elapsed > 0 else 0
@@ -117,11 +143,11 @@ async def upload_file_with_info(client, group_id, file_path, task_id, progress_c
                 if progress_callback:
                     progress_callback(task_id, file_name, uploaded_bytes + current, total_size, 'transferring', speed)
 
-        # 新的串流模式迴圈
+        # Stream the file, encrypting and uploading one chunk at a time.
         for part_num, part_path in fp.stream_split_and_encrypt(file_path, key, original_file_hash, temp_dir):
             try:
                 part_hash = cr.hash_data(part_path)
-                last_call_bytes = 0
+                last_call_bytes = 0 # Reset for each new part's progress callback.
                 
                 message = await client.send_file(
                     group_id,
@@ -131,32 +157,34 @@ async def upload_file_with_info(client, group_id, file_path, task_id, progress_c
                 
                 split_files_info.append([part_num, message.id, part_hash])
                 uploaded_bytes += os.path.getsize(part_path)
-            
             finally:
-                # 確保無論上傳成功或失敗，暫存分塊都會被刪除
+                # Ensure temporary encrypted chunks are deleted immediately after use.
                 if os.path.exists(part_path):
                     os.remove(part_path)
 
         if progress_callback:
             progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
         
-        logger.info(f"檔案 '{file_name}' (task_id: {task_id}) 所有分塊上傳完成。")
+        logger.info(f"File '{file_name}' (task_id: {task_id}) uploaded successfully.")
         return split_files_info
 
     except Exception as e:
-        logger.error(f"上傳檔案 '{file_name}' (task_id: {task_id}) 失敗: {e}", exc_info=True)
+        logger.error(f"Upload failed for file '{file_name}' (task_id: {task_id}): {e}", exc_info=True)
         if progress_callback:
             progress_callback(task_id, file_name, 0, 0, 'failed', 0)
-        raise e
+        raise
     finally:
-        # 在流程結束時，清理最外層的暫存目錄
+        # Final cleanup of the main temporary directory for the upload.
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            logger.info(f"清理上傳主暫存目錄: {temp_dir}")
+            logger.debug(f"Cleaned up main upload temp directory: {temp_dir}")
 
-async def download_file(client, group_id, file_details, download_dir, task_id, progress_callback=None):
+async def download_file(client, group_id: int, file_details: dict, download_dir: str, task_id: str, progress_callback: Callable | None = None):
     """
-    【串流式】根據分塊資訊列表，下載所有分割檔，校驗並寫入最終檔案。
+    Downloads, decrypts, and reassembles a file from its chunks.
+    
+    This function pre-allocates the final file on disk and writes decrypted
+    chunks directly to their correct positions, avoiding high memory usage.
     """
     file_name = file_details['name']
     part_info_map = {part['message_id']: {"num": part['part_num'], "hash": part['part_hash']} for part in file_details['chunks']}
@@ -168,31 +196,27 @@ async def download_file(client, group_id, file_details, download_dir, task_id, p
 
     try:
         os.makedirs(temp_dir, exist_ok=True)
-        logger.info(f"開始串流式下載檔案 '{file_name}' (task_id: {task_id})。")
+        logger.info(f"Starting stream download for '{file_name}' (task_id: {task_id}).")
 
         messages_to_download = await client.get_messages(group_id, ids=message_ids)
         messages_to_download = [m for m in messages_to_download if m]
         
         if len(messages_to_download) != len(file_details['chunks']):
-            raise FileNotFoundError(f"檔案 '{file_name}' 的部分分塊在雲端遺失。")
+            raise FileNotFoundError(f"Could not retrieve all parts for '{file_name}'. Some parts may be missing from the cloud.")
 
         total_size = int(file_details['size'])
         
-        # --- 1. 空間檢查與檔案佔位 ---
+        # 1. Check disk space and pre-allocate the file.
         free_space = shutil.disk_usage(download_dir).free
-        temp_free_space = shutil.disk_usage(temp_dir).free
         if free_space < total_size:
-            raise IOError(f"磁碟空間不足。需要 {total_size / 1024**2:.2f} MB，可用 {free_space / 1024**2:.2f} MB。")
+            raise IOError(f"Not enough disk space. Required: {total_size / 1024**2:.2f} MB, Available: {free_space / 1024**2:.2f} MB.")
         
-        if temp_free_space < fp.CHUNK_SIZE:
-            raise IOError(f"暫存空間不足。需要 {fp.CHUNK_SIZE / 1024**2:.2f} MB，可用 {free_space / 1024**2:.2f} MB。")
-
         with open(final_path, 'wb') as f:
             f.seek(total_size - 1)
             f.write(b'\0')
-        logger.info(f"已在 '{final_path}' 建立大小為 {total_size} 的佔位檔案。")
+        logger.debug(f"Pre-allocated file of size {total_size} at '{final_path}'.")
 
-        # --- 2. 串流式下載與寫入 ---
+        # 2. Stream download, decrypt, and write chunks.
         downloaded_bytes = 0
         last_update_time = 0
         last_call_bytes = 0
@@ -214,128 +238,119 @@ async def download_file(client, group_id, file_details, download_dir, task_id, p
             part_num = part_info_map[message.id]["num"]
             expected_part_hash = part_info_map[message.id]["hash"]
             last_call_bytes = 0
-            retry_count = 0
             
-            while retry_count < MAX_DOWNLOAD_PART_RETRIES:
+            for retry_count in range(MAX_DOWNLOAD_PART_RETRIES):
                 downloaded_part_path = await message.download_media(file=temp_dir, progress_callback=callback)
                 
                 if not downloaded_part_path or not os.path.exists(downloaded_part_path):
-                    retry_count += 1
-                    logger.warning(f"分塊 {part_num} 下載失敗或檔案不存在，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    logger.warning(f"Download of part {part_num} failed or file not found. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
                     await asyncio.sleep(1)
                     continue
 
                 actual_part_hash = cr.hash_data(downloaded_part_path)
                 if actual_part_hash == expected_part_hash:
-                    logger.debug(f"分塊 {part_num} 校驗成功。")
+                    logger.debug(f"Part {part_num} checksum verified.")
                     try:
                         offset = (part_num - 1) * fp.CHUNK_SIZE
                         fp.decrypt_and_write_chunk(downloaded_part_path, final_path, key, offset)
-                        logger.debug(f"分塊 {part_num} 已成功解密並寫入至偏移量 {offset}。")
+                        logger.debug(f"Part {part_num} decrypted and written to offset {offset}.")
                         os.remove(downloaded_part_path)
-                        break
+                        break # Success, break retry loop
                     except Exception as e:
-                        logger.error(f"處理分塊 {part_num} 時發生錯誤: {e}", exc_info=True)
-                        raise e # 將內部錯誤向上拋出
+                        logger.error(f"Error processing part {part_num}: {e}", exc_info=True)
+                        raise # Re-raise critical internal errors
                 else:
-                    retry_count += 1
-                    logger.warning(f"分塊 {part_num} 校驗失敗，正在重試... ({retry_count}/{MAX_DOWNLOAD_PART_RETRIES})")
-                    os.remove(downloaded_part_path) # 刪除錯誤的檔案
+                    logger.warning(f"Part {part_num} checksum mismatch. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
+                    os.remove(downloaded_part_path)
                     await asyncio.sleep(1)
-            
-            if retry_count == MAX_DOWNLOAD_PART_RETRIES:
-                raise ValueError(f"分塊 {part_num} 在 {MAX_DOWNLOAD_PART_RETRIES} 次重試後仍校驗失敗。")
+            else: # This 'else' belongs to the 'for' loop, executed if the loop completes without a 'break'.
+                raise ValueError(f"Part {part_num} failed checksum verification after {MAX_DOWNLOAD_PART_RETRIES} retries.")
             
             downloaded_bytes += message.document.size
 
-        # --- 3. 最終校驗 ---
-        logger.info(f"檔案 '{file_name}' 所有分塊處理完成，開始最終校驗。")
+        # 3. Final integrity check on the reassembled file.
+        logger.info(f"All parts of '{file_name}' processed. Performing final integrity check.")
         final_hash = cr.hash_data(final_path)
         if final_hash != file_details['hash']:
-            raise ValueError(f"檔案 '{file_name}' 合併後最終校驗失敗！")
+            raise ValueError(f"Final checksum for '{file_name}' does not match. The file may be corrupt.")
         
-        logger.info(f"檔案 '{file_name}' 最終校驗成功。")
+        logger.info(f"'{file_name}' successfully downloaded and verified.")
         if progress_callback:
             progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
 
     except asyncio.CancelledError:
-        logger.warning(f"下載任務 '{file_name}' (ID: {task_id}) 已被使用者取消。")
+        logger.warning(f"Download task for '{file_name}' (ID: {task_id}) was cancelled.")
         if progress_callback:
             progress_callback(task_id, file_name, 0, 0, 'cancelled', 0)
-        # 如果最終檔案已建立，刪除不完整的檔案
         if 'final_path' in locals() and os.path.exists(final_path):
             os.remove(final_path)
-            logger.info(f"已刪除因取消而未完成的檔案: {final_path}")
         raise
 
     except Exception as e:
-        logger.error(f"下載檔案 '{file_name}' (task_id: {task_id}) 失敗: {e}", exc_info=True)
+        logger.error(f"Download failed for '{file_name}' (task_id: {task_id}): {e}", exc_info=True)
         if progress_callback:
-            # 根據錯誤類型傳遞更具體的訊息
-            msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "下載時發生未預期錯誤。"
+            msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "An unexpected error occurred during download."
             progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
-        # 如果最終檔案已建立，刪除可能已損壞的檔案
         if 'final_path' in locals() and os.path.exists(final_path):
             os.remove(final_path)
-            logger.info(f"已刪除因錯誤而可能損壞的檔案: {final_path}")
         raise
     
     finally:
-        # 清理暫存目錄
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            logger.info(f"清理下載後暫存目錄: {temp_dir}")
+            logger.debug(f"Cleaned up download temp directory: {temp_dir}")
 
-async def _perform_db_upload(client, group_id, db_path, remote_db_message):
-    """執行資料庫的上傳、置頂和清理操作。"""
-    logger.info("正在執行強制上傳資料庫模式...")
+async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_message):
+    """
+    Handles the actual process of uploading, pinning, and cleaning up old database backups.
+    """
+    logger.info("Uploading local database to the cloud...")
     if not os.path.exists(db_path):
-        logger.error(f"資料庫檔案 '{db_path}' 不存在，無法上傳。")
+        logger.error(f"Database file '{db_path}' not found. Cannot upload.")
         return
 
     temp_zip_path = db_path + ".zip"
     
     try:
-        # 壓縮資料庫
         with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(db_path, os.path.basename(db_path))
-        logger.info(f"資料庫已成功壓縮到 '{temp_zip_path}'。")
-
-        # 獲取版本號
+        
         db = DatabaseHandler(db_path)
         version = db.get_db_version()
         caption = f"db_version:{version}"
 
-        # 刪除舊的備份
         if remote_db_message:
-            logger.info("正在刪除舊的置頂資料庫備份...")
+            logger.info("Removing old pinned database backup...")
             try:
                 await client.unpin_message(group_id, remote_db_message.id)
-            except Exception as e:
-                logger.warning(f"取消置頂舊訊息失敗，但不影響流程: {e}")
-            try:
                 await client.delete_messages(group_id, [remote_db_message.id])
             except Exception as e:
-                logger.warning(f"刪除舊訊息失敗: {e}")
+                logger.warning(f"Could not remove old database backup, proceeding anyway: {e}")
 
-        # 上傳新備份並置頂
+        logger.info(f"Uploading new database backup (Version: {version})...")
         new_message = await client.send_file(group_id, file=temp_zip_path, caption=caption)
         await client.pin_message(group_id, new_message.id, notify=False)
-        logger.info(f"已上傳並置頂新的資料庫備份 (版本: {version})。")
+        logger.info(f"New database backup (Version: {version}) has been uploaded and pinned.")
 
     except Exception as e:
-        logger.error(f"上傳資料庫時發生錯誤: {e}", exc_info=True)
+        logger.error(f"An error occurred during database upload: {e}", exc_info=True)
     finally:
         if os.path.exists(temp_zip_path):
             os.remove(temp_zip_path)
 
-async def sync_database_file(client, group_id, mode='sync', db_path='./file/tdrive.db'):
+async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path: str = './file/tdrive.db'):
     """
-    同步本地與雲端的 tdrive.db 資料庫檔案。
+    Synchronizes the local database with the remote backup in the pinned messages.
+
+    Modes:
+    - 'sync': Compares local and remote versions and syncs the newer one.
+    - 'upload': Forces an upload of the local database.
     """
     async with update_lock:
-        # 尋找雲端置頂的資料庫備份訊息
-        messages = await client.get_messages(group_id, limit=1, filter=InputMessagesFilterPinned)
+        # Telethon 要求頻道 ID 在 get_messages 等方法中需要是負數 (-100xxxxxxxxx)
+        telethon_group_id = int(f"-100{group_id}") if group_id > 0 else group_id
+        # Find the pinned database message in the group
+        messages = await client.get_messages(telethon_group_id, limit=1, filter=InputMessagesFilterPinned)
         remote_db_message = messages[0] if messages else None
 
         if mode == 'upload':
@@ -343,59 +358,53 @@ async def sync_database_file(client, group_id, mode='sync', db_path='./file/tdri
             return
 
         if mode == 'sync':
-            logger.info("正在執行同步資料庫模式...")
+            logger.info("Starting database synchronization...")
             
-            # 確保本地資料庫存在
             if not os.path.exists(db_path):
-                # 如果本地沒有資料庫，但雲端有，則下載
                 if remote_db_message:
-                    logger.warning(f"本地資料庫 '{db_path}' 不存在，將從雲端下載。")
+                    logger.warning(f"Local database '{db_path}' not found. Attempting to restore from cloud.")
                     await client.download_media(remote_db_message, file=db_path + ".zip")
                     with zipfile.ZipFile(db_path + ".zip", 'r') as z:
                         z.extractall(os.path.dirname(db_path))
                     os.remove(db_path + ".zip")
-                    logger.info("已成功從雲端恢復資料庫。")
+                    logger.info("Successfully restored database from cloud backup.")
                 else:
-                    logger.error(f"本地資料庫 '{db_path}' 不存在，且雲端沒有備份，無法同步。")
+                    logger.error(f"Local database '{db_path}' not found and no remote backup exists. Cannot sync.")
                 return
 
             db = DatabaseHandler(db_path)
             local_version = db.get_db_version()
+            remote_version = -1
             
-            remote_version = -1 # 預設為一個無效的舊版本
-            
-            # 檢查雲端是否有資料庫備份
             if remote_db_message and remote_db_message.text and "db_version:" in remote_db_message.text:
                 try:
-                    # 從 caption 中解析版本號
                     remote_version = int(remote_db_message.text.split("db_version:", 1)[1].split(',')[0].strip())
                 except (ValueError, IndexError):
-                    logger.warning("無法從雲端資料庫備份的 caption 中解析版本號。")
+                    logger.warning("Could not parse version from remote database backup caption.")
             else:
-                logger.warning("雲端找不到資料庫備份或備份版本資訊不完整。")
+                logger.info("No remote database backup found.")
 
-            # 比較版本號
-            logger.info(f"本地資料庫版本: {local_version}，雲端資料庫版本: {remote_version}")
+            logger.info(f"Local DB version: {local_version}, Remote DB version: {remote_version}")
+            
             if local_version > remote_version:
-                logger.info("本地版本較新，將上傳至雲端。")
+                logger.info("Local database is newer. Uploading to cloud...")
                 await _perform_db_upload(client, group_id, db_path, remote_db_message)
             
             elif remote_version > local_version:
-                logger.info("雲端版本較新，將從雲端下載並覆蓋本地版本。")
+                logger.info("Remote database is newer. Downloading from cloud...")
                 temp_zip_path = db_path + ".zip"
                 try:
                     await client.download_media(remote_db_message, file=temp_zip_path)
-                    # 先刪除舊的 db，避免解壓縮失敗時殘留
                     if os.path.exists(db_path): os.remove(db_path)
                     with zipfile.ZipFile(temp_zip_path, 'r') as z:
                         z.extractall(os.path.dirname(db_path))
-                    logger.info("本地資料庫已成功更新為雲端版本。")
+                    logger.info("Local database has been updated from the cloud.")
                 except Exception as e:
-                    logger.error(f"從雲端下載或解壓縮資料庫失敗: {e}", exc_info=True)
+                    logger.error(f"Failed to download or extract remote database: {e}", exc_info=True)
                 finally:
                     if os.path.exists(temp_zip_path):
                         os.remove(temp_zip_path)
 
-            else: # local_version == remote_version
-                logger.info("本地與雲端資料庫版本一致，無需同步。")
+            else:
+                logger.info("Local and remote database versions are identical. No sync needed.")
                 return

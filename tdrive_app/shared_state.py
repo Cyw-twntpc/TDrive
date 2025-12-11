@@ -1,34 +1,42 @@
+"""
+Centralized state management for the TDrive application.
+
+An instance of this class is created by the main service and passed down to
+all sub-services. It acts as a shared container for application-wide state,
+such as the Telegram client instance, authentication details, and active tasks.
+"""
 import asyncio
 import os
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Optional, Callable
 from telethon import TelegramClient
 
+# Define the base directory for temporary files.
 TEMP_DIR = os.path.join('file', 'temp')
 
 
 class SharedState:
     """
-    一個用來集中管理所有服務共享狀態的類別。
-    其實例會被傳遞給所有需要存取或修改共享狀態的子服務。
+    A class to hold and manage state shared across various services.
     """
     def __init__(self):
-        # 認證與連線相關
+        # --- Authentication & Client ---
         self.client: Optional[TelegramClient] = None
         self.api_id: Optional[int] = None
         self.api_hash: Optional[str] = None
         self.is_logged_in: bool = False
 
-        # 登入流程中暫存的資訊
+        # --- Temporary data for login flow ---
         self.phone: Optional[str] = None
         self.phone_code_hash: Optional[str] = None
 
-        # 非同步與回呼相關
+        # --- Async & UI Callbacks ---
         self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
-        self.connection_emitter: Optional[callable] = None
+        # Emitter for sending connection status updates to the UI.
+        self.connection_emitter: Optional[Callable] = None
 
-        # 傳輸任務管理
+        # --- Task Management ---
+        # Stores references to active background tasks to prevent garbage collection.
         self.active_tasks: Dict[str, asyncio.Task] = {}
-        
-        # 資料庫上傳防抖計時器
+        # Timer for debouncing database uploads after modifications.
         self.db_upload_timer: Optional[threading.Timer] = None

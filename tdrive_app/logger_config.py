@@ -1,12 +1,21 @@
+"""
+Configures the logging system for the TDrive application.
+
+This module sets up a dual-logging system:
+1.  A rotating JSON log file for structured, machine-readable logs.
+2.  A human-readable console output for real-time monitoring during development.
+
+It also filters out excessive noise from third-party libraries.
+"""
 import logging
-import logging.handlers
 import os
 import datetime
 import glob
-import json # 匯入 json 模組
+import json
 
 LOG_DIR = './file/log'
-MAX_LOG_FILES = 5 # 最多保留 5 份日誌
+# Maximum number of log files to keep. Older files will be deleted.
+MAX_LOG_FILES = 5 
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -16,65 +25,63 @@ class JSONFormatter(logging.Formatter):
             "name": record.name,
             "message": record.getMessage()
         }
+        # Use ensure_ascii=False to correctly handle non-ASCII characters in logs.
         return json.dumps(log_object, ensure_ascii=False)
 
 def setup_logging():
-    """配置應用程式的日誌系統。"""
-    # 確保日誌目錄存在
+    """
+    Sets up the application's root logger and handlers.
+    """
+    # Ensure the log directory exists.
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # 日誌輪替邏輯：刪除最舊的日誌檔
-    existing_logs = sorted(glob.glob(os.path.join(LOG_DIR, 'tdrive_*.log')))
-    if len(existing_logs) >= MAX_LOG_FILES:
-        for old_log in existing_logs[:len(existing_logs) - MAX_LOG_FILES + 1]:
-            try:
+    # --- Log Rotation Logic ---
+    # Clean up the oldest log files if the number of logs exceeds the maximum.
+    try:
+        existing_logs = sorted(glob.glob(os.path.join(LOG_DIR, 'tdrive_*.log')))
+        if len(existing_logs) >= MAX_LOG_FILES:
+            logs_to_delete = existing_logs[:len(existing_logs) - MAX_LOG_FILES + 1]
+            for old_log in logs_to_delete:
                 os.remove(old_log)
-                # print(f"已刪除舊日誌檔: {old_log}") # 避免在設定日誌前有 print
-            except OSError as e:
-                # print(f"刪除舊日誌檔 {old_log} 失敗: {e}")
-                pass
+    except OSError as e:
+        # Use a simple print here as logging might not be fully configured yet.
+        print(f"Warning: Failed to remove old log file {e}")
 
-    # 產生帶時間戳的日誌檔名
+    # Generate a new log filename with a timestamp.
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}.json.log') # 修改副檔名
+    log_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}.json.log')
 
-    # 配置根 logger
+    # Configure the root logger.
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG) # 設定最低日誌級別為 INFO
+    root_logger.setLevel(logging.DEBUG) # Set the lowest level to capture all logs.
 
-    # --- 兩種日誌格式 ---
-    # 檔案格式：JSON
+    # --- Formatter Definitions ---
+    # JSON formatter for file output.
     json_formatter = JSONFormatter()
-
-    # 終端格式：人類可讀的純文字 (保留原先格式，方便閱讀)
+    # Human-readable text formatter for console output.
     console_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
         datefmt='%m-%d %H:%M:%S'
     )
 
-    # --- 處理器設定 ---
-    # 檔案處理器 (寫入到新日誌檔，使用 JSON 格式)
+    # --- Handler Setup ---
+    # 1. File Handler (writes to the new log file with JSON format).
     file_handler = logging.FileHandler(log_filename, encoding='utf-8')
     file_handler.setFormatter(json_formatter)
     root_logger.addHandler(file_handler)
 
-    # 終端處理器 (輸出到控制台，使用純文字格式)
+    # 2. Console Handler (writes to the console with plain text format).
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 
-    # --- 過濾第三方套件的日誌 ---
-    # 將吵雜的第三方套件日誌等級設定為 ERROR，只在發生嚴重錯誤時才記錄
+    # --- Filter noisy third-party libraries ---
+    # Set the log level for noisy libraries to ERROR to only record critical issues.
     logging.getLogger('telethon').setLevel(logging.ERROR)
     logging.getLogger('asyncio').setLevel(logging.ERROR)
     logging.getLogger('geventwebsocket').setLevel(logging.ERROR)
     logging.getLogger('qasync').setLevel(logging.ERROR)
 
-    root_logger.info("日誌系統初始化完成。日誌將儲存到 %s", log_filename)
+    root_logger.info("Logging initialized. Logs will be saved to %s", log_filename)
 
-if __name__ == '__main__':
-    setup_logging()
-    logger = logging.getLogger(__name__)
-    logger.info("這是日誌模組的測試訊息。")
-    logger.warning("這是一條警告訊息。")
-    logger.error("這是一條錯誤訊息。")
+

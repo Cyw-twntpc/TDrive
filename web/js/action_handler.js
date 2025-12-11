@@ -1,14 +1,22 @@
+/**
+ * @fileoverview Central dispatcher for handling user actions from the UI,
+ * such as button clicks for rename, download, delete, etc.
+ */
+
 const ActionHandler = {
-    // --- Dependencies ---
+    // --- Dependencies (injected via init) ---
     _appState: null,
     _apiService: null,
     _uiModals: null,
     _transferManager: null,
     _refreshAllCallback: null,
     _navigateToCallback: null,
-    _uiManager: null, // 新增 UIManager 依賴
+    _uiManager: null,
 
-    // --- Initialization ---
+    /**
+     * Initializes the handler with all necessary dependencies.
+     * @param {object} dependencies - An object containing all required service and state modules.
+     */
     init(dependencies) {
         this._appState = dependencies.appState;
         this._apiService = dependencies.apiService;
@@ -16,14 +24,17 @@ const ActionHandler = {
         this._transferManager = dependencies.transferManager;
         this._refreshAllCallback = dependencies.refreshAllCallback;
         this._navigateToCallback = dependencies.navigateToCallback;
-        this._uiManager = dependencies.uiManager; // 賦值 UIManager
+        this._uiManager = dependencies.uiManager;
     },
 
-    // --- Action Handlers ---
+    /**
+     * Handles the rename action for a single file or folder.
+     * @param {object} item - The file or folder item to rename.
+     */
     async handleRename(item) {
         const { id, name, type } = item;
-        const newName = await this._uiModals.showPrompt('重新命名', `請為 "${name}" 輸入新的名稱：`, name);
-        if (newName === null || newName === name) return;
+        const newName = await this._uiModals.showPrompt('Rename', `Enter a new name for "${name}":`, name);
+        if (newName === null || newName === name) return; // User cancelled or entered the same name
 
         this._uiManager.startProgress();
         this._uiManager.setInteractionLock(true);
@@ -36,16 +47,20 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Rename operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
         }
     },
 
+    /**
+     * Handles the download action for all selected items.
+     * It either uses the default download path or prompts the user to select one.
+     */
     async handleDownload() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要下載的項目。", 'btn-primary');
+            return await this._uiModals.showAlert("Notice", "Please select items to download first.", 'btn-primary');
         }
         
         let destinationDir = null;
@@ -54,17 +69,17 @@ const ActionHandler = {
         if (useDefault) {
             destinationDir = localStorage.getItem('defaultDownloadPath');
             if (!destinationDir) {
-                await this._uiModals.showAlert("錯誤", "您已啟用預設下載路徑，但尚未設定路徑。", 'btn-primary');
+                await this._uiModals.showAlert("Error", "Default download path is enabled but not set.", 'btn-primary');
                 return;
             }
         } else {
             UIManager.toggleModal('blocking-overlay', true);
             try {
-                destinationDir = await this._apiService.selectDirectory("選取下載資料夾");
+                destinationDir = await this._apiService.selectDirectory("Select Download Folder");
             } finally {
                 UIManager.toggleModal('blocking-overlay', false);
             }
-            if (!destinationDir) return; // User cancelled dialog
+            if (!destinationDir) return; // User cancelled the dialog
         }
 
         this._transferManager.setDownloadDestination(destinationDir);
@@ -82,11 +97,14 @@ const ActionHandler = {
         }
     },
 
+    /**
+     * Handles the delete action for all selected items after user confirmation.
+     */
     async handleDelete() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要刪除的項目。", 'btn-primary');
+            return await this._uiModals.showAlert("Notice", "Please select items to delete first.", 'btn-primary');
         }
-        const confirmation = await this._uiModals.showConfirm('確認刪除', `您確定要刪除這 ${this._appState.selectedItems.length} 個項目嗎？<br><b>此操作無法復原。</b>`);
+        const confirmation = await this._uiModals.showConfirm('Confirm Deletion', `Are you sure you want to delete these ${this._appState.selectedItems.length} items?<br><b>This action cannot be undone.</b>`);
         if (!confirmation) return;
 
         this._uiManager.startProgress();
@@ -101,15 +119,18 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Delete operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
         }
     },
 
+    /**
+     * Handles the creation of a new folder.
+     */
     async handleNewFolder() {
-        const newFolderName = await this._uiModals.showPrompt("新增資料夾", "請輸入新資料夾的名稱：", "未命名資料夾");
+        const newFolderName = await this._uiModals.showPrompt("New Folder", "Enter the new folder's name:", "Untitled Folder");
         if (newFolderName === null) return;
 
         this._uiManager.startProgress();
@@ -123,17 +144,20 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Create folder operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
         }
     },
 
+    /**
+     * Handles the file upload action. Prompts the user to select files and initiates the upload process.
+     */
     async handleUpload() {
         UIManager.toggleModal('blocking-overlay', true);
         try {
-            const localPaths = await this._apiService.selectFiles(true, "選取要上傳的檔案");
+            const localPaths = await this._apiService.selectFiles(true, "Select Files to Upload");
             if (!localPaths || localPaths.length === 0) return;
 
             const parentId = this._appState.currentFolderId;
@@ -145,7 +169,7 @@ const ActionHandler = {
                                     this._appState.currentFolderContents.folders.some(f => f.name === fileName);
                 
                 if (isDuplicate) {
-                    this._uiModals.showAlert('上傳失敗', `檔案夾中已存在同名項目 "${fileName}"。`);
+                    this._uiModals.showAlert('Upload Failed', `An item named "${fileName}" already exists in this folder.`);
                     return;
                 }
 
@@ -158,22 +182,19 @@ const ActionHandler = {
                 this._transferManager.addUpload(fileToUploadData);
                 filesToUpload.push(fileToUploadData);
 
-                // Add a placeholder to UI
+                // Add a placeholder to the UI immediately for better responsiveness.
                 const placeholderItem = {
-                    id: fileToUploadData.task_id,
-                    name: fileName,
+                    id: fileToUploadData.task_id, name: fileName,
                     modif_date: new Date().toISOString().slice(0, 10),
-                    size: '---',
-                    raw_size: 0,
-                    isUploading: true,
-                    type: 'file'
+                    size: '---', raw_size: 0, isUploading: true, type: 'file'
                 };
                 this._appState.currentFolderContents.files.push(placeholderItem);
             });
 
             if (filesToUpload.length > 0) {
-                // Re-render the file list with the placeholder
+                // Re-render the file list with the new placeholder items.
                 FileListHandler.sortAndRender(this._appState); 
+                // Start the actual upload in the background.
                 this._apiService.uploadFiles(parentId, filesToUpload.map(f => ({ local_path: f.localPath, task_id: f.task_id })), this._transferManager.getConcurrencyLimit());
             }
         } finally {
@@ -181,6 +202,10 @@ const ActionHandler = {
         }
     },
 
+    /**
+     * Initiates a search operation.
+     * @param {string} term - The search term.
+     */
     handleSearch(term) {
         if (!term || term.trim() === '') {
             this.exitSearchMode();
@@ -193,21 +218,24 @@ const ActionHandler = {
         this._appState.isSearching = true;
         this._appState.searchTerm = term.trim();
 
-        // --- Visual Feedback & State Reset ---
+        // Provide immediate visual feedback.
         this._uiManager.startProgress();
         this._uiManager.toggleSearchSpinner(true);
         this._appState.currentFolderContents = { folders: [], files: [] }; // Clear previous results
         FileListHandler.sortAndRender(this._appState); // Render the empty state
         FileListHandler.updateBreadcrumb(this._appState, this._navigateToCallback);
         
-        // --- Fire-and-forget API call ---
+        // This is a fire-and-forget API call; results will be streamed back.
         const rootFolder = this._appState.folderTreeData.find(f => f.parent_id === null);
         const baseFolderId = (this._appState.searchScope === 'all' && rootFolder) ? rootFolder.id : this._appState.currentFolderId;
         this._apiService.searchDbItems(baseFolderId, this._appState.searchTerm, requestId);
     },
 
+    /**
+     * Handles the user logout process after confirmation.
+     */
     async handleLogout() {
-        const confirmed = await this._uiModals.showConfirm('確認登出', '您確定要登出嗎？這將清除所有本地資料和設定。');
+        const confirmed = await this._uiModals.showConfirm('Confirm Logout', 'Are you sure you want to log out? This will clear all local data and settings.');
         if (confirmed) {
             this._uiManager.startProgress();
             this._uiManager.setInteractionLock(true);
@@ -217,14 +245,17 @@ const ActionHandler = {
                 window.location.href = 'login.html';
             } catch (error) {
                 console.error("Logout operation failed:", error);
-                this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+                this._uiManager.handleBackendError({ message: "An error occurred during logout. Please try again." });
                 this._uiManager.stopProgress();
                 this._uiManager.setInteractionLock(false);
             }
-            // On success, we navigate away, so no need to stop progress/unlock.
+            // On success, we navigate away, so no need to stop progress or unlock UI.
         }
     },
 
+    /**
+     * Resets the application's state from search mode back to normal browsing.
+     */
     exitSearchMode() {
         this._appState.isSearching = false;
         this._appState.searchTerm = '';

@@ -1,15 +1,15 @@
 class TDriveError(Exception):
-    """專案的基礎錯誤類別"""
+    """Base exception class for all custom exceptions in this project."""
     pass
 
 class PathNotFoundError(TDriveError):
-    """當操作的路徑不存在時拋出"""
+    """Raised when an operation targets a file or folder path that does not exist."""
     pass
 
 class ItemAlreadyExistsError(TDriveError):
-    """當試圖建立的檔案/資料夾名稱已存在時拋出"""
+    """Raised when attempting to create a file or folder with a name that already exists at the target location."""
     pass
 
 class InvalidNameError(TDriveError):
-    """當試圖使用無效的名稱時拋出"""
+    """Raised when an invalid name (e.g., containing illegal characters) is used for a file or folder."""
     pass

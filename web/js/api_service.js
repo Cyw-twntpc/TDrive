@@ -1,38 +1,57 @@
+/**
+ * @fileoverview API Service module for communicating with the Python backend.
+ *
+ * This object encapsulates all calls to the `tdrive_bridge` QWebChannel object,
+ * providing a clean, Promise-based interface for the rest of the frontend application.
+ */
 const ApiService = {
-    // The 'expose' function is no longer needed as QWebChannel doesn't use it.
-    
-    // Helper for calls that expect a return value via a callback (wrapped in a Promise)
+    /**
+     * A private helper function to wrap QWebChannel's callback-based functions
+     * into modern Promises, allowing for async/await syntax.
+     * @param {string} functionName - The name of the function to call on the bridge.
+     * @param {...any} args - The arguments to pass to the bridge function.
+     * @returns {Promise<any>} A promise that resolves with the result from the backend.
+     * @private
+     */
     _callBridge(functionName, ...args) {
         return new Promise((resolve, reject) => {
-            if (window.tdrive_bridge) {
-                // The actual function call, with a callback as the last argument
+            if (window.tdrive_bridge && typeof window.tdrive_bridge[functionName] === 'function') {
+                // The Qt bridge function expects a callback as its final argument.
                 window.tdrive_bridge[functionName](...args, function(result) {
                     if (result && result.success === false) {
-                        console.warn(`Bridge call '${functionName}' returned an error:`, result.message);
+                        // Log a warning for backend-reported failures but still resolve the promise.
+                        // The caller is responsible for handling the failure case based on the result object.
+                        console.warn(`Bridge call '${functionName}' reported a failure:`, result.message);
                     }
                     resolve(result);
                 });
             } else {
-                reject(new Error("Bridge is not available."));
+                console.error(`Bridge function '${functionName}' is not available.`);
+                reject(new Error("Bridge is not available or function does not exist."));
             }
         });
     },
 
-    // Helper for fire-and-forget calls that do not have a direct return value
+    /**
+     * A private helper for "fire-and-forget" calls that do not require a response.
+     * @param {string} functionName - The name of the function to call on the bridge.
+     * @param {...any} args - The arguments to pass to the bridge function.
+     * @private
+     */
     _fireAndForget(functionName, ...args) {
         if (window.tdrive_bridge && typeof window.tdrive_bridge[functionName] === 'function') {
             window.tdrive_bridge[functionName](...args);
         } else {
-            console.error(`Bridge function '${functionName}' is not available for fire-and-forget call.`);
+            console.error(`Bridge function '${functionName}' is not available for a fire-and-forget call.`);
         }
     },
 
-    // --- User and Auth ---
+    // --- User and Authentication ---
     getUserInfo: () => ApiService._callBridge('get_user_info'),
     getUserAvatar: () => ApiService._callBridge('get_user_avatar'),
     logout: () => ApiService._callBridge('logout'),
 
-    // --- File & Folder Data ---
+    // --- File & Folder Data Retrieval ---
     getFolderTreeData: () => ApiService._callBridge('get_folder_tree_data'),
     getFolderContents: (folderId, requestId) => ApiService._fireAndForget('get_folder_contents', folderId, requestId),
     searchDbItems: (baseFolderId, term, requestId) => ApiService._fireAndForget('search_db_items', baseFolderId, term, requestId),
@@ -42,11 +61,11 @@ const ApiService = {
     deleteItems: (items) => ApiService._callBridge('delete_items', items),
     createFolder: (parentId, folderName) => ApiService._callBridge('create_folder', parentId, folderName),
 
-    // --- Native Dialogs ---
+    // --- Native OS Dialogs ---
     selectDirectory: (title) => ApiService._callBridge('select_directory', title),
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),
 
-    // --- Transfers ---
+    // --- File Transfers ---
     uploadFiles: (parentId, files, concurrency) => ApiService._callBridge('upload_files', parentId, files, concurrency),
     downloadItems: (items, destination, concurrency) => ApiService._callBridge('download_items', items, destination, concurrency),
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),

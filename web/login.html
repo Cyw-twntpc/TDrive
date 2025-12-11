@@ -88,7 +88,7 @@
                         <span class="btn-text">繼續</span><span class="spinner"></span>
                     </button>
                     <div class="text-center method-switch">
-                        <button data-target="apiScreen">返回 API 設定</button>
+                        <button class="btn-link" data-target="apiScreen">返回 API 設定</button>
                     </div>
                 </div>
 
@@ -103,13 +103,15 @@
                                 <i class="fas fa-spinner"></i>
                                 <span>產生中...</span>
                             </div>
+                            <div class="qr-overlay" id="qrOverlay">
+                                <button id="centerRefreshQrBtn" class="center-refresh-btn" title="重新產生">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
                         </div>
-                        <button class="qr-refresh" id="refreshQrBtn">
-                            <i class="fas fa-sync-alt"></i> 重新產生
-                        </button>
                     </div>
                     <div class="text-center method-switch">
-                        <button data-target="methodScreen">使用其他登入方式</button>
+                        <button class="btn-link" data-target="methodScreen">使用其他登入方式</button>
                     </div>
                 </div>
 
@@ -127,7 +129,7 @@
                         <span class="btn-text">發送驗證碼</span><span class="spinner"></span>
                     </button>
                     <div class="text-center method-switch">
-                        <button data-target="methodScreen">使用其他登入方式</button>
+                        <button class="btn-link" data-target="methodScreen">使用其他登入方式</button>
                     </div>
                 </div>
 
@@ -163,14 +165,29 @@
                     </button>
                 </div>
 
+                <div class="screen" id="errorScreen">
+                    <div class="text-center header-group">
+                        <i class="fas fa-exclamation-triangle icon-large error-icon"></i>
+                        <h3 class="section-title" id="errorTitle">發生錯誤</h3>
+                        <p class="text-muted" id="errorMessage" style="margin-bottom: 28px;">錯誤詳情將顯示於此</p>
+                    </div>
+                    <button class="btn" id="errorReturnBtn" data-target="apiScreen">
+                        <span class="btn-text">返回 API 設定</span><span class="spinner"></span>
+                    </button>
+                </div>
+
                 <div class="screen" id="successScreen">
                     <div class="text-center">
-                        <div class="success-icon"><i class="fas fa-check"></i></div>
-                        <h3 class="section-title success-title">登入成功！</h3>
-                        <p class="text-muted" style="margin-bottom: 28px;">正在初始化您的 TDrive，請稍候...</p>
-                        <div class="btn loading" id="initializingIndicator">
-                            <span class="btn-text"></span><span class="spinner"></span>
+                        <div class="success-content-top">
+                            <div class="success-icon-container">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="success-text-container">
+                                <h3 class="section-title success-title">登入成功！</h3>
+                                <p class="text-muted">正在初始化檔案介面...</p>
+                            </div>
                         </div>
+                        <div class="notched-spinner"></div>
                     </div>
                 </div>
             </div>

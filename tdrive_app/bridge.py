@@ -9,31 +9,44 @@ logger = logging.getLogger(__name__)
 
 class Bridge(QObject):
     """
-    負責作為 Python 後端與 QWebEngineView 中 JavaScript 之間通訊的橋樑。
+    Acts as a communication bridge between the Python backend and the JavaScript
+    frontend running in a QWebEngineView.
+
+    It exposes backend functionalities to the frontend as invokable slots and
+    emits signals to notify the frontend of backend events.
     """
-    folderContentsReady = Signal(dict)
-    searchResultsReady = Signal(dict)
+    # --- UI Update Signals ---
+    folderContentsReady = Signal(dict)  # Emitted when folder contents are fetched.
+    searchResultsReady = Signal(dict)   # Emitted when search results are available.
+    
+    # --- Authentication and State Signals ---
+    login_event = Signal(dict)  # Reports progress/status during the QR login flow.
+    transfer_progress_updated = Signal(dict)  # Updates transfer progress for uploads/downloads.
+    connection_status_changed = Signal(str)  # Notifies of changes in the Telegram client's connection state.
+    login_and_initialization_complete = Signal()  # Emitted after successful login and initialization.
 
-    login_event = Signal(dict)
-    transfer_progress_updated = Signal(dict)
-    connection_status_changed = Signal(str)
-
+    # --- Window Dragging Signals (for frameless window) ---
     drag_window = Signal(int, int)
     drag_start = Signal(int, int)
     drag_end = Signal()
-
-    window_action = Signal(str)
+    
+    # --- Window Action Signals ---
+    window_action = Signal(str)  # Emits actions like 'minimize' or 'close'.
 
     def __init__(self, tdrive_service: TDriveService, loop: asyncio.AbstractEventLoop, parent=None):
         super().__init__(parent)
         self._service = tdrive_service
         self._loop = loop
-        self._is_busy = False
+        self._is_busy = False # A simple mutex to prevent re-entrant critical async operations.
+        logger.debug("Bridge initialized.")
 
     def _run_background_task(self, coro, result_signal, request_id):
         """
-        執行一個非同步任務，並在完成時透過指定的 signal 發送帶有 request_id 的結果。
-        這是一個發後不理 (fire-and-forget) 的任務。
+        Executes a coroutine in a fire-and-forget manner.
+
+        The result of the coroutine is emitted via the provided signal along with
+        the request_id to allow the frontend to match responses to requests.
+        Handles both success and failure cases.
         """
         async def task_wrapper():
             try:
@@ -41,7 +54,7 @@ class Bridge(QObject):
                 payload = {'data': result, 'request_id': request_id}
                 result_signal.emit(payload)
             except Exception as e:
-                logger.error(f"背景讀取任務失敗 (request_id: {request_id}): {e}", exc_info=True)
+                logger.error(f"Background task failed (request_id: {request_id}): {e}", exc_info=True)
                 error_payload = {
                     'data': {"success": False, "error_code": "TASK_FAILED", "message": str(e)},
                     'request_id': request_id
@@ -52,13 +65,20 @@ class Bridge(QObject):
 
     def _wait_for_async(self, coro):
         """
-        為關鍵操作同步等待一個非同步任務。
-        [新增] 加入 _is_busy 互斥鎖，防止重入。
+        Synchronously waits for an async coroutine to complete.
+
+        This is a crucial helper for bridging the synchronous world of Qt's JS
+        calls with the asynchronous nature of the backend services. It uses a
+        local QtEventLoop to block execution until the asyncio task is done.
+
+        A mutex (`_is_busy`) is used to prevent re-entrancy for critical operations,
+        ensuring that only one such operation can be active at a time.
         """
         if self._is_busy:
-            logger.warning("BUSY: 關鍵操作被拒絕，因為前一項操作仍在進行中。")
-            return {"success": False, "error_code": "BUSY", "message": "另一項關鍵操作正在進行中，請稍候。"}
+            logger.warning("BUSY: A critical operation was rejected because a previous one is still in progress.")
+            return {"success": False, "error_code": "BUSY", "message": "Another critical operation is in progress. Please wait."}
 
+        # If the main asyncio loop isn't running, we can run the coroutine directly.
         if not self._loop.is_running():
             return self._loop.run_until_complete(coro)
 
@@ -68,69 +88,69 @@ class Bridge(QObject):
             local_qt_loop = QtEventLoop()
 
             def on_done(future):
+                # This callback will run in the asyncio thread, quitting the local Qt loop.
                 local_qt_loop.quit()
             
             task.add_done_callback(on_done)
+            # This executes the local loop, blocking until quit() is called.
             local_qt_loop.exec()
 
             return task.result()
         finally:
-            self._is_busy = False # 確保鎖總能被釋放
+            self._is_busy = False # Always release the lock
 
     def _async_call(self, coro):
-        """包裝器：處理錯誤與呼叫 _wait_for_async"""
+        """
+        Wrapper for `_wait_for_async` to centralize error handling.
+        """
         try:
             return self._wait_for_async(coro)
         except Exception as e:
-            logger.error(f"非同步呼叫時發生錯誤: {e}", exc_info=True)
+            logger.error(f"Error during async call: {e}", exc_info=True)
             return {"success": False, "error_code": "ASYNC_CALL_FAILED", "message": str(e)}
 
-    # --- 視窗控制方法 ---
+    # --- Window Control Slots ---
     @Slot()
     def minimize_window(self):
-        """發送最小化視窗的請求"""
         self.window_action.emit("minimize")
 
     @Slot()
     def close_window(self):
-        """發送關閉視窗的請求"""
         self.window_action.emit("close")
 
     @Slot(int, int)
     def handle_drag_start(self, global_x, global_y):
-        """開始拖曳"""
         self.drag_start.emit(global_x, global_y)
 
     @Slot(int, int)
     def handle_drag_move(self, global_x, global_y):
-        """處理拖曳移動"""
         self.drag_window.emit(global_x, global_y)
 
     @Slot()
     def handle_drag_end(self):
-        """結束拖曳"""
         self.drag_end.emit()
 
-    # --- 原生對話方塊 (同步) ---
+    # --- Native Dialog Slots ---
     @Slot(bool, str, result=list)
-    def select_files(self, multiple=False, title="選取檔案"):
+    def select_files(self, multiple=False, title="Select Files"):
         return core_select_files(multiple, title, None)
 
     @Slot(str, result=str)
-    def select_directory(self, title="選取資料夾"):
+    def select_directory(self, title="Select Folder"):
         return core_select_directory(title, None)
 
     @Slot(result=str)
     def get_os_sep(self):
         return os.sep
 
-    # --- 認證服務 (非同步) ---
+    # --- Authentication Service Slots ---
     @Slot(int, str, result=dict)
     def verify_api_credentials(self, api_id, api_hash):
         return self._async_call(self._service.verify_api_credentials(api_id, api_hash))
     
     @Slot(result=dict)
     def start_qr_login(self):
+        # The login_event signal is passed as a callback for real-time updates
         return self._async_call(self._service.start_qr_login(self.login_event.emit))
 
     @Slot(str, result=dict)
@@ -158,33 +178,51 @@ class Bridge(QObject):
         return self._async_call(self._service.get_user_avatar())
 
     @Slot(result=dict)
+    def reset_client_for_new_login_method(self):
+        return self._async_call(self._service.reset_client_for_new_login_method())
+
+    @Slot(result=dict)
     def logout(self):
         return self._async_call(self._service.logout())
 
-    # --- 資料夾與檔案服務 (事件驅動) ---
+    @Slot()
+    def notify_login_complete(self):
+        """
+        Called by the frontend after the entire login and initialization
+        process is confirmed to be successful on the client side.
+        """
+        logger.info("Frontend has confirmed login completion. Emitting signal to switch window.")
+        self.login_and_initialization_complete.emit()
+
+    # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
     def get_folder_contents(self, folder_id, request_id):
+        """
+        Asynchronously fetches folder contents and emits the result via a signal.
+        This is a non-blocking, fire-and-forget operation from the frontend's perspective.
+        """
         coro = self._service.get_folder_contents(folder_id)
         self._run_background_task(coro, self.folderContentsReady, request_id)
 
-    # --- 資料夾與檔案服務 (同步/舊版) ---
-    @Slot(result=list)
-    def get_folder_tree_data(self):
-        return self._service.get_folder_tree_data()
-
-    @Slot(int, result=dict)
-    def get_folder_contents_recursive(self, folder_id):
-        # This is currently not used by the UI in an async way, keeping it sync for now
-        return self._async_call(self._service.get_folder_contents_recursive(folder_id))
-
     @Slot(int, str, str)
     def search_db_items(self, base_folder_id, search_term, request_id):
-        # The service method will handle threading and emitting signals
+        """
+        Asynchronously searches for items and emits results via a signal.
+        """
         emitter = self.searchResultsReady.emit
         coro = self._service.search_db_items(base_folder_id, search_term, emitter, request_id)
         asyncio.create_task(coro)
 
-    # --- 資料夾與檔案服務 (非同步) ---
+    # --- File and Folder Service Slots (Async with return) ---
+    @Slot(result=list)
+    def get_folder_tree_data(self):
+        # Note: This is a synchronous call in the service layer.
+        return self._service.get_folder_tree_data()
+
+    @Slot(int, result=dict)
+    def get_folder_contents_recursive(self, folder_id):
+        return self._async_call(self._service.get_folder_contents_recursive(folder_id))
+
     @Slot(int, str, result=dict)
     def create_folder(self, parent_id, folder_name):
         return self._async_call(self._service.create_folder(parent_id, folder_name))
@@ -197,9 +235,11 @@ class Bridge(QObject):
     def delete_items(self, items):
         return self._async_call(self._service.delete_items(items))
 
-    # --- 傳輸服務 (Fire and Forget - 同步呼叫) ---
+    # --- Transfer Service Slots ---
     @Slot(int, list, int, result=dict)
     def upload_files(self, parent_id, local_paths, concurrency_limit):
+        # The service method starts background tasks and returns immediately.
+        # Progress is reported via the `transfer_progress_updated` signal.
         return self._service.upload_files(parent_id, local_paths, concurrency_limit, self.transfer_progress_updated.emit)
 
     @Slot(list, str, int, result=dict)

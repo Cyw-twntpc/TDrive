@@ -1,4 +1,14 @@
+/**
+ * @fileoverview Provides a simple, Promise-based API for showing standard modal dialogs.
+ */
 const UIModals = {
+    /**
+     * Shows a confirmation dialog with OK and Cancel buttons.
+     * @param {string} title - The title of the modal.
+     * @param {string} message - The message content (can be HTML).
+     * @param {string} [okClass='btn-danger'] - The CSS class for the OK button.
+     * @returns {Promise<boolean>} A promise that resolves to true if OK is clicked, false otherwise.
+     */
     showConfirm(title, message, okClass = 'btn-danger') {
         return new Promise(resolve => {
             const modalId = 'confirm-modal';
@@ -11,6 +21,7 @@ const UIModals = {
             const onOk = () => { cleanup(); resolve(true); };
             const onClose = () => { cleanup(); resolve(false); };
             
+            // Removes event listeners to prevent memory leaks.
             const cleanup = () => {
                 UIManager.toggleModal(modalId, false);
                 okBtn.removeEventListener('click', onOk);
@@ -26,6 +37,13 @@ const UIModals = {
         });
     },
     
+    /**
+     * Shows an alert dialog with a single OK button.
+     * @param {string} title - The title of the modal.
+     * @param {string} message - The message content (can be HTML).
+     * @param {string} [okClass='btn-primary'] - The CSS class for the OK button.
+     * @returns {Promise<boolean>} A promise that resolves to true when the dialog is closed.
+     */
     showAlert(title, message, okClass = 'btn-primary') {
         return new Promise(resolve => {
             const modalId = 'alert-modal';
@@ -50,6 +68,14 @@ const UIModals = {
         });
     },
     
+    /**
+     * Shows a prompt dialog with a text input field.
+     * @param {string} title - The title of the modal.
+     * @param {string} message - The message displayed above the input.
+     * @param {string} [defaultValue=''] - The default value for the input field.
+     * @param {Function|null} [asyncValidator=null] - An optional async function to validate the input value.
+     * @returns {Promise<string|null>} A promise that resolves with the input value, or null if cancelled.
+     */
     async showPrompt(title, message, defaultValue = '', asyncValidator = null) {
         return new Promise(resolve => {
             const modalId = 'prompt-modal';
@@ -62,18 +88,16 @@ const UIModals = {
             modal.querySelector('#prompt-message').textContent = message;
             input.value = defaultValue;
             errorEl.classList.add('hidden');
-            errorEl.textContent = ''; // 每次開啟時就清除
+            errorEl.textContent = '';
             okBtn.disabled = false;
             okBtn.classList.remove('loading');
 
             const onOk = async () => {
                 const value = input.value.trim();
                 errorEl.classList.add('hidden');
-                errorEl.textContent = '';
 
                 if (!value) {
-                    errorEl.textContent = '名稱不可為空。';
-                    errorEl.style.color = 'var(--danger-color)'; // 強制設定顏色
+                    errorEl.textContent = 'The name cannot be empty.';
                     errorEl.classList.remove('hidden');
                     return;
                 }
@@ -86,10 +110,9 @@ const UIModals = {
                     okBtn.disabled = false;
 
                     if (result && !result.success) {
-                        errorEl.textContent = result.message || '發生未知驗證錯誤。';
-                        errorEl.style.color = 'var(--danger-color)'; // 強制設定顏色
+                        errorEl.textContent = result.message || 'An unknown validation error occurred.';
                         errorEl.classList.remove('hidden');
-                        return; // 保持彈窗開啟
+                        return; // Keep the prompt open
                     }
                 }
                 
@@ -98,19 +121,11 @@ const UIModals = {
             };
 
             const onClose = () => { cleanup(); resolve(null); };
-            
-            const onKeyPress = (e) => {
-                if (e.key === 'Enter') onOk();
-            };
-
-            const onInput = () => {
-                errorEl.classList.add('hidden');
-                errorEl.textContent = '';
-            };
+            const onKeyPress = (e) => { if (e.key === 'Enter') onOk(); };
+            const onInput = () => errorEl.classList.add('hidden');
 
             const cleanup = () => {
                 UIManager.toggleModal(modalId, false);
-                errorEl.textContent = ''; // 關閉時也清除
                 input.removeEventListener('keydown', onKeyPress);
                 input.removeEventListener('input', onInput);
                 okBtn.removeEventListener('click', onOk);

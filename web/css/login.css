@@ -141,6 +141,7 @@ body {
     border: 1px solid rgba(139, 92, 246, 0.2);
     border-top: none;
     border-right: none;
+    outline: none; /* 移除預設輪廓 */
     color: rgba(139, 92, 246, 0.7);
     backdrop-filter: blur(10px);
     transition: all 0.2s;
@@ -186,7 +187,7 @@ body {
 .logo-glow { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100px; height: 100px; background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%); border-radius: 50%; animation: pulse-glow 3s infinite ease-in-out; }
 @keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); } 50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); } }
 
-.app-title { font-size: 28px; font-weight: 700; margin-bottom: 6px; background: linear-gradient(135deg, #8B5CF6 0%, #6366F1 50%, #EC4899 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; }
+.app-title { font-size: 28px; font-weight: 700; margin-bottom: 6px; background: linear-gradient(135deg, #8B5CF6 0%, #6366F1 50%, #EC4899 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; }
 .app-subtitle { font-size: 13px; color: rgba(139, 92, 246, 0.8); }
 
 .form-section { display: flex; flex-direction: column; }
@@ -225,6 +226,10 @@ body {
 .form-input:focus { border-color: #8B5CF6; background: rgba(255, 255, 255, 0.95); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15), 0 4px 12px rgba(139, 92, 246, 0.2); }
 .form-input.error { border-color: #dc3545; background-color: rgba(220, 53, 69, 0.05); }
 
+#phoneScreen .form-group {
+    margin-bottom: 32px; /* 增加底部空間以顯示錯誤訊息 */
+}
+
 .error-message { color: #dc3545; font-size: 12px; position: absolute; bottom: -20px; left: 4px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
 .error-message.show { opacity: 1; }
 
@@ -243,6 +248,38 @@ body {
 .btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); transition: left 0.5s; }
 .btn:hover::before { left: 100%; }
 
+.btn.loading {
+    pointer-events: none; /* 禁用點擊 */
+    cursor: default; /* 更改鼠標樣式 */
+    opacity: 0.95; /* 稍微變暗 */
+    /* 添加脈衝光暈效果 */
+    border-color: transparent; /* 隱藏原本的邊框 */
+    animation: pulse-border 2.0s infinite ease-in-out; /* 速度降低 */
+}
+
+/* 確保按鈕文本在載入時依然可見 */
+.btn.loading .btn-text {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* 隱藏 spinner，因為我們使用脈衝邊框 */
+.spinner {
+    display: none;
+}
+
+@keyframes pulse-border {
+    0% {
+        box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.6); /* 粉色系 */
+    }
+    50% {
+        box-shadow: 0 0 0 5px rgba(236, 72, 153, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.6);
+    }
+}
+
 .login-method-selector { display: flex; gap: 12px; margin-bottom: 24px; }
 .method-btn { flex: 1; padding: 12px; border: 1px solid rgba(139, 92, 246, 0.2); background: rgba(255, 255, 255, 0.5); border-radius: 12px; cursor: pointer; transition: all 0.2s; text-align: center; -webkit-app-region: no-drag; z-index: 20; }
 .method-btn:hover { background: rgba(255, 255, 255, 0.8); border-color: #8B5CF6; transform: translateY(-2px); }
@@ -252,7 +289,61 @@ body {
 .method-btn p { font-size: 11px; color: rgba(109, 40, 217, 0.7); }
 
 .qr-container { text-align: center; margin: 15px 0; }
-.qr-code { width: 180px; height: 180px; margin: 0 auto 12px; border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.8); }
+.qr-code { 
+    width: 180px; height: 180px; margin: 0 auto; 
+    border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 12px; 
+    display: flex; align-items: center; justify-content: center; 
+    background: rgba(255, 255, 255, 0.8);
+    position: relative;
+    overflow: hidden;
+}
+.qr-code img { transition: filter 0.3s ease; }
+
+.qr-code.expired img {
+    filter: blur(4px);
+}
+.qr-code.expired .qr-overlay {
+    opacity: 1;
+    pointer-events: all;
+}
+
+.qr-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.center-refresh-btn {
+    width: 32px; 
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    outline: none; 
+    background: transparent;
+    color: #6366F1;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-app-region: no-drag;
+    text-shadow: none;
+}
+.center-refresh-btn:hover {
+    transform: rotate(90deg);
+    background: transparent;
+    color: #7a7eff;
+    text-shadow: 0 0 7px rgba(99, 102, 241, 0.8), 0 0 12px rgba(99, 102, 241, 0.6);
+}
+
 .qr-refresh { background: rgba(255, 255, 255, 0.5); border: 1px solid #8B5CF6; color: #7c3aed; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s; -webkit-app-region: no-drag; z-index: 20; }
 .qr-refresh:hover { background: #8B5CF6; color: white; }
 
@@ -260,9 +351,118 @@ body {
 .header-group { margin-bottom: 15px; }
 .text-center { text-align: center; }
 .text-muted { color: rgba(109, 40, 217, 0.7); font-size: 13px; }
-.method-switch { margin-top: 15px; }
-.method-switch button { background: none; border: none; color: #7c3aed; cursor: pointer; font-size: 13px; text-decoration: underline; font-family: inherit; -webkit-app-region: no-drag; z-index: 20; }
-.method-switch button:hover { color: #5b21b6; }
+.method-switch { margin-top: 20px; }
 
-.success-icon { width: 60px; height: 60px; background: #10b981; border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; animation: bounceIn 0.5s ease-out; color: white; font-size: 24px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
-@keyframes bounceIn { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.05); } 70% { transform: scale(0.9); } 100% { transform: scale(1); opacity: 1; } }
+.btn-link {
+    display: inline-block;
+    width: auto;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #8B5CF6;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    -webkit-app-region: no-drag;
+    transition: all 0.2s ease-in-out;
+}
+.btn-link:hover {
+    background: #8B5CF6;
+    color: white;
+}
+
+.icon-large {
+    font-size: 32px;
+    margin-bottom: 12px;
+    display: block;
+    color: #a78bfa;
+}
+
+.error-icon {
+    color: #ef4444;
+}
+
+#errorScreen .section-title {
+    color: #ef4444;
+}
+
+#errorScreen .text-muted {
+    color: #f87171;
+}
+
+#successScreen {
+    flex-direction: column;
+    min-height: 300px;
+    position: relative; 
+}
+
+#successScreen .text-center {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    width: 100%;
+    align-items: center;
+    position: static;
+}
+
+.success-content-top {
+    position: absolute;
+    top: 25%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+.success-icon-container {
+    margin-bottom: 20px;
+}
+.success-icon-container i {
+    font-size: 48px;
+    color: #10b981;
+    animation: pop-in 0.5s ease-out;
+}
+.success-text-container {
+    padding-left: 10px;
+}
+
+@keyframes pop-in {
+    0% { transform: scale(0.5); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.notched-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #bf00ff;
+    border-bottom-color: transparent;
+    border-radius: 50%;
+    display: block;
+    box-sizing: border-box;
+    
+    position: absolute;
+    bottom: 8%;
+    left: 50%;
+    margin-left: -16px;
+    margin-top: 0;
+    margin-right: 0;
+    margin-bottom: 0;
+    padding: 0;
+
+    box-shadow: none;
+    filter: drop-shadow(0 0 6px #bf00ff);
+    
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}

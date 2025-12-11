@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+icon.png
 venv/
 file/
 old_ver/

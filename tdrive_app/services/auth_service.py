@@ -6,11 +6,10 @@ import base64
 import qrcode
 import io
 import shutil
-import time
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, ApiIdInvalidError, PasswordHashInvalidError
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, ApiIdInvalidError, PasswordHashInvalidError, PhoneNumberInvalidError
 
-from typing import TYPE_CHECKING, Dict, Any, Optional
+from typing import TYPE_CHECKING, Dict, Any, Optional, Callable
 if TYPE_CHECKING:
     from ..shared_state import SharedState
 
@@ -19,102 +18,138 @@ from .. import crypto_handler, telegram_comms, errors
 from ..db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
-db = DatabaseHandler()
 
 class AuthService:
     """
-    處理所有與使用者認證、授權和會話管理相關的服務。
+    Handles all services related to user authentication, authorization,
+    and session management.
     """
     def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
 
-    # --- 憑證管理 ---
-    def _get_saved_api_credentials(self) -> (Optional[int], Optional[str]):
+    # --- Credential Management ---
+
+    def _get_saved_api_credentials(self) -> Optional[tuple[int, str]]:
+        """
+        Retrieves and decrypts API credentials from the local `info.json` file.
+        """
         try:
-            if not os.path.exists('./file/info.json'):
-                logger.info("本地 info.json 檔案不存在。")
+            info_path = './file/info.json'
+            if not os.path.exists(info_path):
+                logger.info("Local credentials file 'info.json' not found.")
                 return None, None
             
-            with open('./file/info.json', 'r') as f:
+            with open(info_path, 'r') as f:
                 info = json.load(f)
+            
             api_id = info.get("api_id")
             encrypted_blob = info.get("secure_data_blob")
-            
             if not (api_id and encrypted_blob):
-                logger.warning("info.json 檔案不完整，缺少 api_id 或 secure_data_blob。")
+                logger.warning("Credentials file 'info.json' is incomplete.")
                 return None, None
 
             decrypted_data = crypto_handler.decrypt_secure_data(encrypted_blob, str(api_id))
             if decrypted_data:
-                logger.info("成功從本地載入並解密 API 憑證。")
+                logger.info("Successfully loaded and decrypted API credentials from local storage.")
                 return int(api_id), decrypted_data.get("api_hash")
             else:
-                logger.warning("解密本地 API 憑證失敗。")
+                logger.warning("Failed to decrypt local API credentials.")
                 return None, None
         except Exception as e:
-            logger.error(f"讀取憑證時發生未預期錯誤: {e}", exc_info=True)
+            logger.error(f"An unexpected error occurred while reading credentials: {e}", exc_info=True)
             return None, None
 
     def _save_api_credentials(self):
+        """
+        Encrypts and saves the current session's API credentials to `info.json`.
+        """
         try:
             os.makedirs('./file', exist_ok=True)
-            current_info = {}
+            
+            api_id_str = str(self.shared_state.api_id)
+            secure_data = {"api_hash": self.shared_state.api_hash}
+            
+            # Preserve existing group_id if it exists
             if os.path.exists('./file/info.json'):
                 try:
                     with open('./file/info.json', 'r') as f:
                         current_info = json.load(f)
-                except json.JSONDecodeError:
-                    logger.warning("本地 info.json 檔案損壞或為空，將重新創建。")
-            
-            secure_data = {"api_hash": self.shared_state.api_hash}
-            if 'group_id' in current_info:
-                secure_data['group_id'] = current_info['group_id']
+                    decrypted_blob = crypto_handler.decrypt_secure_data(current_info.get("secure_data_blob"), api_id_str)
+                    if decrypted_blob and 'group_id' in decrypted_blob:
+                        secure_data['group_id'] = decrypted_blob['group_id']
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Could not read existing info.json, it will be overwritten.")
 
-            encrypted_blob = crypto_handler.encrypt_secure_data(secure_data, str(self.shared_state.api_id))
+            encrypted_blob = crypto_handler.encrypt_secure_data(secure_data, api_id_str)
             final_info = { "api_id": self.shared_state.api_id, "secure_data_blob": encrypted_blob }
 
             with open('./file/info.json', 'w') as f:
                 json.dump(final_info, f)
-            logger.info("API 憑證已成功加密並儲存到本地。")
+            logger.info("API credentials have been successfully encrypted and saved.")
         except Exception as e:
-            logger.error(f"儲存憑證失敗: {e}", exc_info=True)
+            logger.error(f"Failed to save credentials: {e}", exc_info=True)
 
-    # --- 核心認證邏輯 ---
+    # --- Core Authentication Logic ---
     
-    async def check_startup_login(self) -> bool:
+    async def check_startup_login(self) -> Dict[str, Any]:
+        """
+        Checks for a valid, saved session on application startup.
+
+        Returns:
+            A dictionary indicating the login status.
+            - {"logged_in": True}: If a valid session is found and drive initialization succeeds.
+            - {"logged_in": False, "expired_session": True, ...}: If a session file exists but is invalid.
+            - {"logged_in": False}: If no credentials are found.
+        """
         api_id, api_hash = self._get_saved_api_credentials()
         if not (api_id and api_hash):
-            logger.info("未找到本地儲存的 API 憑證，需要登入。")
-            return False
+            logger.info("No saved API credentials found. Login required.")
+            return {"logged_in": False}
             
         session_file = f'./file/user_{api_id}.session'
         client = TelegramClient(session_file, api_id, api_hash)
         try:
             await client.connect()
             if await client.is_user_authorized():
+                logger.info("Valid session detected. Proceeding with startup initialization.")
                 self.shared_state.client = client
                 self.shared_state.api_id = api_id
                 self.shared_state.api_hash = api_hash
                 self.shared_state.is_logged_in = True
                 
-                logger.info("檢測到有效會話，正在執行啟動時初始化...")
-                await self.initialize_drive()
-                logger.info("啟動時初始化完成。")
-                return True
+                init_result = await self.initialize_drive()
+                if init_result.get("success"):
+                    logger.info("Startup initialization complete.")
+                    return {"logged_in": True}
+                else:
+                    logger.warning("Session is valid but drive initialization failed. Redirecting to login.")
+                    await client.disconnect()
+                    return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
             else:
-                logger.info("會話無效，需要重新登入。")
+                logger.info("Session is invalid or expired. Re-login required.")
                 await client.disconnect()
-                return False
+                return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
         except Exception as e:
-            logger.error(f"啟動檢查或初始化時發生錯誤: {e}", exc_info=True)
+            logger.error(f"Error during startup check: {e}", exc_info=True)
             if client and client.is_connected(): await client.disconnect()
-            return False
+            if api_id and api_hash:
+                return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
+            return {"logged_in": False}
 
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
+        """
+        Verifies API credentials by attempting to connect to Telegram.
+        Deletes any old session file to ensure a clean login attempt.
+        """
         client = None
         try:
             os.makedirs('./file', exist_ok=True)
             session_file = f'./file/user_{api_id}.session'
+
+            if os.path.exists(session_file):
+                logger.info(f"Removing old session file to ensure a clean login: {session_file}")
+                os.remove(session_file)
+
             client = TelegramClient(session_file, api_id, api_hash)
             await client.connect()
             
@@ -122,46 +157,50 @@ class AuthService:
             self.shared_state.api_id = api_id
             self.shared_state.api_hash = api_hash
             
-            if await client.is_user_authorized():
-                self.shared_state.is_logged_in = True
-                self._save_api_credentials()
-                return {"success": True, "authorized": True}
-            else:
-                return {"success": True, "authorized": False}
-        except ApiIdInvalidError as e:
-            logger.warning(f"API 憑證驗證失敗: {e}")
+            return {"success": True, "authorized": False}
+        except ApiIdInvalidError:
+            logger.warning(f"API credential verification failed for api_id: {api_id}")
             if client and client.is_connected(): await client.disconnect()
-            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "無效的 API ID 或 API Hash。"}
+            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "Invalid API ID or API Hash."}
         except Exception as e:
-            logger.error(f"驗證 API 憑證時連線失敗: {e}", exc_info=True)
+            logger.error(f"Connection failed during API credential verification: {e}", exc_info=True)
             if client and client.is_connected(): await client.disconnect()
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"連線失敗: {e}"}
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"Connection failed: {e}"}
 
-    async def start_qr_login(self, event_callback) -> Dict[str, Any]:
+    async def start_qr_login(self, event_callback: Callable) -> Dict[str, Any]:
+        """
+        Starts the QR code login flow and returns a data URI for the QR image.
+        """
         client = self.shared_state.client
         if not client or not client.is_connected():
-            logger.warning("請求啟動 QR 登入，但客戶端未連線。")
-            return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "客戶端未連線。"}
+            logger.warning("QR login requested, but client is not connected.")
+            return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client is not connected."}
             
         try:
             qr_login = await client.qr_login()
+            
             qr = qrcode.QRCode(version=1, box_size=10, border=5)
             qr.add_data(qr_login.url)
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
+            
             buffer = io.BytesIO()
             img.save(buffer, format='PNG')
             img_str = base64.b64encode(buffer.getvalue()).decode()
 
-            # 在背景中等待 QR 登入完成，並使用回呼函式發送事件
-            self.shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(self._wait_for_qr_login(qr_login, event_callback)))
+            # Wait for the login to complete in a background task.
+            self.shared_state.loop.create_task(self._wait_for_qr_login(qr_login, event_callback))
 
             return {"success": True, "qr_url": f"data:image/png;base64,{img_str}"}
+        except ApiIdInvalidError:
+            logger.warning(f"QR code generation failed due to invalid API credentials.")
+            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "Invalid API ID or API Hash. Please go back and re-enter."}
         except Exception as e:
-            logger.error(f"QR 碼產生失敗: {e}", exc_info=True)
-            return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR 碼產生失敗: {e}"}
+            logger.error(f"QR code generation failed: {e}", exc_info=True)
+            return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR code generation failed: {e}"}
 
-    async def _wait_for_qr_login(self, qr_login, event_callback):
+    async def _wait_for_qr_login(self, qr_login, event_callback: Callable):
+        """Helper to wait for QR login and dispatch events."""
         try:
             await qr_login.wait()
             self.shared_state.is_logged_in = True
@@ -170,77 +209,117 @@ class AuthService:
         except SessionPasswordNeededError:
             event_callback({"status": "password_needed"})
         except Exception as e:
-            error_message = str(e)
-            logger.warning(f"QR 登入等待過程中發生錯誤: {error_message}")
-            if "QR code expired" in error_message or "code expired" in error_message.lower():
-                event_callback({"status": "expired", "error": "QR 碼已過期"})
-            else:
-                event_callback({"status": "failed", "error": f"登入失敗: {error_message}"})
+            logger.warning(f"Error during QR login wait: {e}")
+            event_callback({"status": "failed", "error": str(e)})
 
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
+        """Requests a verification code to be sent to the user's phone."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "客戶端未初始化"}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
         try:
             sent_code = await client.send_code_request(phone_number)
             self.shared_state.phone = phone_number
             self.shared_state.phone_code_hash = sent_code.phone_code_hash
             return {"success": True}
+        except PhoneNumberInvalidError:
+            logger.warning(f"Invalid phone number provided: {phone_number}")
+            return {"success": False, "error_code": "PHONE_NUMBER_INVALID", "message": "The phone number is invalid. Please check and re-enter."}
         except Exception as e:
-            logger.error(f"發送驗證碼到 {phone_number} 失敗: {e}", exc_info=True)
-            return {"success": False, "error_code": "SEND_CODE_FAILED", "message": f"發送驗證碼失敗: {e}"}
+            logger.error(f"Failed to send code to {phone_number}: {e}", exc_info=True)
+            return {"success": False, "error_code": "SEND_CODE_FAILED", "message": f"Failed to send code: {e}"}
 
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
+        """Submits the verification code received by the user."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "客戶端未初始化"}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
             self.shared_state.is_logged_in = True
             self._save_api_credentials()
             return {"success": True}
-        except PhoneCodeInvalidError as e:
-            logger.warning(f"提交了無效的驗證碼: {e}")
-            return {"success": False, "error_code": "INVALID_VERIFICATION_CODE", "message": "驗證碼不正確。"}
+        except PhoneCodeInvalidError:
+            logger.warning("An invalid verification code was submitted.")
+            return {"success": False, "error_code": "INVALID_VERIFICATION_CODE", "message": "The verification code is incorrect."}
         except SessionPasswordNeededError:
             return {"success": True, "password_needed": True}
         except Exception as e:
-            logger.error(f"提交驗證碼時發生未知錯誤: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"驗證失敗: {e}"}
+            logger.error(f"Unknown error while submitting verification code: {e}", exc_info=True)
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"Verification failed: {e}"}
 
     async def submit_password(self, password: str) -> Dict[str, Any]:
+        """Submits the two-factor authentication password."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "客戶端未初始化"}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
         try:
             await client.sign_in(password=password)
             self.shared_state.is_logged_in = True
             self._save_api_credentials()
             return {"success": True}
-        except PasswordHashInvalidError as e:
-            logger.warning(f"提交了無效的兩步驟驗證密碼: {e}")
-            return {"success": False, "error_code": "INVALID_PASSWORD", "message": "密碼不正確。"}
+        except PasswordHashInvalidError:
+            logger.warning("An invalid 2FA password was submitted.")
+            return {"success": False, "error_code": "INVALID_PASSWORD", "message": "The password is incorrect."}
         except Exception as e:
-            logger.error(f"提交密碼時發生未知錯誤: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"登入失敗: {e}"}
+            logger.error(f"Unknown error while submitting password: {e}", exc_info=True)
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"Login failed: {e}"}
+
+    async def reset_client_for_new_login_method(self) -> Dict[str, bool]:
+        """
+        Creates a new, clean client instance when switching between login methods.
+        """
+        try:
+            if self.shared_state.client and self.shared_state.client.is_connected():
+                await self.shared_state.client.disconnect()
+            
+            api_id = self.shared_state.api_id
+            api_hash = self.shared_state.api_hash
+            if not (api_id and api_hash):
+                 logger.warning("Cannot reset client: api_id or api_hash is missing.")
+                 return {"success": False}
+
+            session_file = f'./file/user_{api_id}.session'
+            if os.path.exists(session_file):
+                os.remove(session_file)
+
+            new_client = TelegramClient(session_file, api_id, api_hash)
+            await new_client.connect()
+            self.shared_state.client = new_client
+            logger.info("Client has been reset for a new login method.")
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"An error occurred while resetting the client: {e}", exc_info=True)
+            return {"success": False}
 
     async def initialize_drive(self) -> Dict[str, Any]:
+        """
+        Initializes the drive by ensuring the storage group exists and syncing the database.
+        Includes a timeout to prevent the application from hanging indefinitely.
+        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client or not self.shared_state.api_id:
-            msg = "無法初始化：Client 或 App API ID 不存在。"
+            msg = "Cannot initialize drive: Client or App API ID is missing."
             logger.error(msg)
             return {"success": False, "error_code": "INITIALIZATION_FAILED", "message": msg}
 
         try:
-            logger.info("正在初始化 TDrive...")
-            group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
-            await telegram_comms.sync_database_file(client, group_id, mode='sync')
+            logger.info("Initializing TDrive...")
+            # Set a 30-second timeout for the entire initialization process.
+            async with asyncio.timeout(30):
+                group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
+                await telegram_comms.sync_database_file(client, group_id, mode='sync')
+            
+            logger.info("TDrive initialization successful.")
             return {"success": True}
+        except asyncio.TimeoutError:
+            logger.error("Drive initialization timed out after 30 seconds.")
+            return {"success": False, "error_code": "DRIVE_INITIALIZATION_TIMEOUT", "message": "Initialization timed out. Please check your network connection and try again."}
         except Exception as e:
-            logger.error(f"磁碟初始化過程中發生錯誤: {e}", exc_info=True)
-            return {"success": False, "error_code": "DRIVE_INITIALIZATION_FAILED", "message": "初始化失敗，無法同步遠端資料庫。"}
-
+            logger.error(f"An error occurred during drive initialization: {e}", exc_info=True)
+            return {"success": False, "error_code": "DRIVE_INITIALIZATION_FAILED", "message": f"Initialization failed: {e}"}
 
     async def get_user_info(self) -> Dict[str, Any]:
+        """Fetches basic information about the currently logged-in user."""
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
+        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed"}
         try:
             me = await client.get_me()
             return {
@@ -248,48 +327,56 @@ class AuthService:
                 "name": f"{me.first_name} {me.last_name or ''}".strip(),
                 "phone": f"+{me.phone}" if me.phone else "unknown",
                 "username": me.username or "unknown",
-                "storage_group": "TDrive"
             }
         except Exception as e:
-            logger.error(f"獲取使用者資訊時發生未知錯誤: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "獲取使用者資訊失敗"}
+            logger.error(f"Failed to get user info: {e}", exc_info=True)
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "Failed to retrieve user information"}
 
     async def get_user_avatar(self) -> Dict[str, Any]:
+        """
+        Fetches the user's profile picture and returns it as a base64 data URI.
+        """
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
+        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed"}
         
         avatar_path = './file/user_avatar.jpg'
         try:
             path = await client.download_profile_photo('me', file=avatar_path)
             if not path: 
-                logger.info("使用者沒有設定頭像。")
-                return {"success": False, "error_code": "AVATAR_NOT_FOUND", "message": "沒有設定頭像"}
+                logger.info("User has no profile picture set.")
+                return {"success": False, "error_code": "AVATAR_NOT_FOUND", "message": "No profile picture found"}
+            
             with open(path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
             os.remove(path)
             return {"success": True, "avatar_base64": f"data:image/jpeg;base64,{encoded_string}"}
         except Exception as e:
-            logger.error(f"獲取使用者頭像時發生未知錯誤: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "獲取使用者頭像失敗"}
+            logger.error(f"Failed to get user avatar: {e}", exc_info=True)
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "Failed to retrieve user avatar"}
 
     async def perform_logout(self) -> Dict[str, Any]:
-        logger.info("開始執行登出程序...")
+        """
+        Logs the user out by disconnecting the client and clearing all local session data.
+        """
+        logger.info("Performing logout...")
         client = self.shared_state.client
         if client and client.is_connected():
             await client.disconnect()
-            logger.info("已成功斷開連線。")
+            logger.info("Successfully disconnected the client.")
+        
+        # Clean up all local session files, credentials, and logs.
         try:
             if os.path.exists('./file'):
                 shutil.rmtree('./file')
+                logger.info("Successfully cleaned up local file cache.")
         except Exception as e:
-            logger.error(f"登出時清理本機檔案失敗: {e}", exc_info=True)
-            # Log the error but don't block the rest of the logout process
-            # Let the frontend know something went wrong but logout can still proceed
-            return {"success": True, "warning": "登出完成，但部分本地檔案清理失敗。"}
+            logger.error(f"Error during local file cleanup on logout: {e}", exc_info=True)
+            return {"success": True, "warning": "Logout completed, but failed to clean up some local files."}
         
+        # Reset all in-memory state.
         self.shared_state.client = None
         self.shared_state.api_id = None
         self.shared_state.api_hash = None
         self.shared_state.is_logged_in = False
-        logger.info("已清除記憶體中的登入狀態。")
+        logger.info("In-memory session state has been cleared.")
         return {"success": True}

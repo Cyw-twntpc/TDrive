@@ -13,22 +13,27 @@ from .. import telegram_comms, crypto_handler, errors
 from ..db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
-db = DatabaseHandler()
 
 class TransferService:
     """
-    處理所有耗時的檔案上傳與下載任務。
+    Manages all time-consuming file upload and download tasks.
+
+    This service handles queuing, concurrent execution using a semaphore,
+    progress reporting, and cancellation of transfer tasks.
     """
     def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
+        self.db = DatabaseHandler()
 
-    # --- 上傳邏輯 ---
     async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], concurrency_limit: int, progress_callback: Callable):
+        """
+        Entry point for file uploads. Creates and manages a pool of upload workers.
+        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("上傳無法啟動：連線無效。")
+            logger.error("Upload cannot start: client is not connected.")
             for item in upload_items:
-                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法啟動上傳。")
+                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="Connection failed, cannot start upload.")
             return
         
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
@@ -40,178 +45,184 @@ class TransferService:
         ]
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
 
-    async def _upload_single_file(self, client, group_id, parent_id, file_path, task_id: str, semaphore, progress_callback):
+    async def _upload_single_file(self, client, group_id: int, parent_id: int, file_path: str, task_id: str, semaphore: asyncio.Semaphore, progress_callback: Callable):
+        """
+        The core worker coroutine for uploading a single file.
+        """
         file_name = os.path.basename(file_path)
         
         async with semaphore:
+            # Register the task for cancellation handling.
             try:
-                # 取得由 asyncio.gather() 建立的當前任務，並註冊以便取消
                 current_task = asyncio.current_task()
                 self.shared_state.active_tasks[task_id] = current_task
             except RuntimeError:
-                logger.warning(f"無法取得當前任務 (Task ID: {task_id})。此任務可能無法被取消。")
+                logger.warning(f"Could not get current task for task_id: {task_id}. Cancellation may not be possible.")
 
             client = await utils.ensure_client_connected(self.shared_state)
             if not client or not os.path.exists(file_path):
-                msg = "連線無效或本地檔案不存在。"
-                logger.warning(f"上傳任務 '{file_name}' 失敗：{msg}")
+                msg = "Client disconnected or local file does not exist."
+                logger.warning(f"Upload task '{file_name}' failed: {msg}")
                 progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
                 return
 
             total_size = os.path.getsize(file_path)
             
             try:
-                if any(f['name'] == file_name for f in db.get_folder_contents(parent_id)['files']) or \
-                   any(f['name'] == file_name for f in db.get_folder_contents(parent_id)['folders']):
-                    raise errors.ItemAlreadyExistsError(f"目標資料夾中已存在同名項目。")
+                # Check for existing item with the same name.
+                folder_contents = self.db.get_folder_contents(parent_id)
+                if any(f['name'] == file_name for f in folder_contents['files']) or \
+                   any(f['name'] == file_name for f in folder_contents['folders']):
+                    raise errors.ItemAlreadyExistsError(f"An item named '{file_name}' already exists in the destination.")
 
+                # Check for content hash collision (for "instant" upload).
                 original_file_hash = crypto_handler.hash_data(file_path)
-                if existing_file_obj := db.find_file_by_hash(original_file_hash):
-                    logger.info(f"上傳檔案 '{file_name}' 時發現重複內容，將複製元資料。")
-                    db.add_file(parent_id, file_name, existing_file_obj["size"], existing_file_obj["hash"], time.time(), existing_file_obj["split_files"])
-                    progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
+                if existing_file_obj := self.db.find_file_by_hash(original_file_hash):
+                    logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
+                    self.db.add_file(parent_id, file_name, existing_file_obj["size"], existing_file_obj["hash"], time.time(), existing_file_obj["split_files"])
+                    progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="Instant upload")
                     await utils.trigger_db_upload_in_background(self.shared_state)
                     return
 
                 progress_callback(task_id, file_name, 0, total_size, 'transferring', 0)
                 split_files_info = await telegram_comms.upload_file_with_info(client, group_id, file_path, task_id, progress_callback)
                 
-                db.add_file(parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info)
+                self.db.add_file(parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info)
                 await utils.trigger_db_upload_in_background(self.shared_state)
 
             except asyncio.CancelledError:
-                logger.warning(f"上傳任務 '{file_name}' (ID: {task_id}) 已被使用者取消。")
+                logger.warning(f"Upload task '{file_name}' (ID: {task_id}) was cancelled by the user.")
                 progress_callback(task_id, file_name, 0, total_size, 'cancelled', 0)
             except errors.ItemAlreadyExistsError as e:
-                logger.warning(f"上傳檔案 '{file_name}' 失敗: {e}")
+                logger.warning(f"Upload for '{file_name}' failed: {e}")
                 progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e))
             except Exception as e:
-                logger.error(f"上傳檔案 '{file_name}' 時發生未預期錯誤。", exc_info=True)
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未預期的內部錯誤。")
+                logger.error(f"An unexpected error occurred while uploading '{file_name}'.", exc_info=True)
+                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="An unexpected internal error occurred.")
             finally:
                 if task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[task_id]
 
-    # --- 下載邏輯 (重構後) ---
     async def download_items(self, items: List[Dict], destination_dir: str, concurrency_limit: int, progress_callback: Callable):
+        """
+        Entry point for downloads. Creates and manages a pool of download workers.
+        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("下載無法啟動：連線無效。")
+            logger.error("Download cannot start: client is not connected.")
             for item in items:
-                # 即使啟動失敗，也為每個項目發送失敗狀態
                 temp_task_id = f"dl_{uuid.uuid4()}"
-                progress_callback(temp_task_id, item.get('name', "未知名稱"), 0, 0, 'failed', 0, message="連線失敗，無法啟動下載。")
+                progress_callback(temp_task_id, item.get('name', "Unknown"), 0, 0, 'failed', 0, message="Connection failed.")
             return
 
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
 
-        tasks = []
-        for item in items:
-            coro = self._download_single_item(client, group_id, item['task_id'], item, destination_dir, semaphore, progress_callback)
-            task = asyncio.create_task(coro)
-            # Register the main task (for both files and folders) to make it cancellable
-            self.shared_state.active_tasks[item['task_id']] = task
-            tasks.append(task)
-            
+        tasks = [
+            self._download_single_item(client, group_id, item['task_id'], item, destination_dir, semaphore, progress_callback)
+            for item in items
+        ]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _download_single_item(self, client, group_id, main_task_id: str, item: Dict, dest_path: str, semaphore, progress_callback):
-        # 使用 db_id 查詢資料庫，而不是舊的 id
+    async def _download_single_item(self, client, group_id: int, main_task_id: str, item: Dict, dest_path: str, semaphore: asyncio.Semaphore, progress_callback: Callable):
+        """
+        The core worker coroutine for downloading a single item, which can be
+        either a file or a folder.
+        """
         item_db_id, item_type, item_name = item['db_id'], item['type'], item['name']
         
+        # Register the main task for cancellation.
+        try:
+            self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
+        except RuntimeError:
+             logger.warning(f"Could not get current task for folder download (ID: {main_task_id}). Cancellation may not work.")
+
         try:
             async with semaphore:
                 client = await utils.ensure_client_connected(self.shared_state)
                 if not client:
-                    progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="連線無效。")
+                    progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="Connection failed.")
                     return
                 
-                # 後端主動發送初始的 'queued' 狀態
                 progress_callback(main_task_id, item_name, 0, item.get('size',0), 'queued', 0)
 
                 if item_type == 'file':
-                    file_details = db.get_file_details(item_db_id)
-                    if not file_details: raise errors.PathNotFoundError(f"在資料庫中找不到檔案 ID {item_db_id}")
+                    file_details = self.db.get_file_details(item_db_id)
+                    if not file_details: raise errors.PathNotFoundError(f"File with ID {item_db_id} not found in database.")
                     await self._download_file_from_details(client, group_id, main_task_id, file_details, dest_path, progress_callback)
                 
                 elif item_type == 'folder':
-                    folder_contents = db.get_folder_contents_recursive(item_db_id)
-                    if not folder_contents: raise errors.PathNotFoundError(f"在資料庫中找不到資料夾 ID {item_db_id}")
-                    
-                    actual_folder_name = folder_contents.get('folder_name', item_name)
-                    local_root_path = os.path.join(dest_path, actual_folder_name)
-                    os.makedirs(local_root_path, exist_ok=True)
-                    
-                    files_in_folder = []
-                    child_info_for_frontend = []
-                    for f in folder_contents['items']:
-                        # Assign a unique ID for each item in the transfer UI
-                        item_task_id = f"dl_{uuid.uuid4()}"
-                        
-                        child_info = {
-                            'id': item_task_id,
-                            'db_id': f['id'],
-                            'name': f['name'],
-                            'size': f.get('size', 0),
-                            'relative_path': f['relative_path'],
-                            'type': f['type']
-                        }
-                        child_info_for_frontend.append(child_info)
-
-                        if f['type'] == 'file':
-                            files_in_folder.append(child_info) # Use the enriched dict
-                        elif f['type'] == 'folder':
-                            # Create local directory for the subfolder
-                            os.makedirs(os.path.join(local_root_path, f['relative_path']), exist_ok=True)
-                    
-                    total_size = sum(f['size'] for f in files_in_folder)
-                    total_files = len(files_in_folder)
-
-                    progress_callback(main_task_id, actual_folder_name, 0, total_size, 'starting_folder', 0, 
-                                      total_files=total_files, children=child_info_for_frontend)
-
-                    download_tasks = []
-                    for f_details in files_in_folder:
-                        file_dest_path = os.path.join(local_root_path, os.path.dirname(f_details['relative_path']))
-                        download_tasks.append(
-                            self._download_file_from_details(client, group_id, f_details['id'], db.get_file_details(f_details['db_id']), file_dest_path, progress_callback, parent_task_id=main_task_id)
-                        )
-                    
-                    results = await asyncio.gather(*download_tasks, return_exceptions=True)
-                    
-                    # Check for failures and cancellations
-                    has_failures = any(isinstance(res, Exception) and not isinstance(res, asyncio.CancelledError) for res in results)
-                    was_cancelled = any(isinstance(res, asyncio.CancelledError) for res in results)
-
-                    if was_cancelled:
-                        logger.warning(f"資料夾 '{item_name}' (ID: {main_task_id}) 的部分或全部下載已被取消。")
-                        progress_callback(main_task_id, actual_folder_name, 0, total_size, 'cancelled', 0, message="下載已取消。")
-                    elif has_failures:
-                        logger.error(f"資料夾 '{item_name}' (ID: {main_task_id}) 的部分檔案下載失敗。")
-                        progress_callback(main_task_id, actual_folder_name, 0, total_size, 'failed', 0, message="部分檔案下載失敗。")
-                    else:
-                        progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
+                    await self._download_folder(client, group_id, main_task_id, item, dest_path, progress_callback)
 
         except asyncio.CancelledError:
-            logger.warning(f"資料夾下載任務 '{item_name}' (ID: {main_task_id}) 已被取消。")
-            progress_callback(main_task_id, item_name, 0, 0, 'cancelled', 0, message="下載已取消。")
+            logger.warning(f"Download task for '{item_name}' (ID: {main_task_id}) was cancelled.")
+            progress_callback(main_task_id, item_name, 0, 0, 'cancelled', 0)
         except errors.PathNotFoundError as e:
-            logger.warning(f"下載項目 '{item_name}' 失敗: {e}")
+            logger.warning(f"Failed to download '{item_name}': {e}")
             progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message=str(e))
         except Exception as e:
-            logger.error(f"處理下載項目 '{item_name}' 時發生未預期錯誤。", exc_info=True)
-            progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="處理下載時發生未預期錯誤。")
+            logger.error(f"Unexpected error while processing download for '{item_name}'.", exc_info=True)
+            progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="An unexpected internal error occurred.")
         finally:
-            # Always ensure the main task is deregistered when it's finished
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
 
-    async def _download_file_from_details(self, client, group_id, task_id: str, file_details: Dict, destination: str, progress_callback: Callable, parent_task_id: str = None):
+    async def _download_folder(self, client, group_id: int, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
+        """Helper method to handle the logic for downloading a folder."""
+        folder_contents = self.db.get_folder_contents_recursive(folder_item['db_id'])
+        if not folder_contents:
+            raise errors.PathNotFoundError(f"Folder with ID {folder_item['db_id']} not found in database.")
+        
+        actual_folder_name = folder_contents.get('folder_name', folder_item['name'])
+        local_root_path = os.path.join(dest_path, actual_folder_name)
+        os.makedirs(local_root_path, exist_ok=True)
+        
+        files_in_folder = [f for f in folder_contents['items'] if f['type'] == 'file']
+        
+        # Create subdirectories and prepare child item info for the UI.
+        child_info_for_frontend = []
+        for f_or_d in folder_contents['items']:
+            item_task_id = f"dl_{uuid.uuid4()}"
+            child_info = {**f_or_d, 'id': item_task_id}
+            child_info_for_frontend.append(child_info)
+            if f_or_d['type'] == 'folder':
+                os.makedirs(os.path.join(local_root_path, f_or_d['relative_path']), exist_ok=True)
+
+        total_size = sum(f['size'] for f in files_in_folder)
+        progress_callback(main_task_id, actual_folder_name, 0, total_size, 'starting_folder', 0, 
+                          total_files=len(files_in_folder), children=child_info_for_frontend)
+
+        # Create download tasks for all files within the folder.
+        download_tasks = [
+            self._download_file_from_details(
+                client, group_id, child['id'], self.db.get_file_details(child['db_id']), 
+                os.path.join(local_root_path, os.path.dirname(child['relative_path'])), 
+                progress_callback, parent_task_id=main_task_id
+            ) for child in child_info_for_frontend if child['type'] == 'file'
+        ]
+        
+        results = await asyncio.gather(*download_tasks, return_exceptions=True)
+        
+        # Determine the final status of the folder download.
+        has_failures = any(isinstance(res, Exception) and not isinstance(res, asyncio.CancelledError) for res in results)
+        was_cancelled = any(isinstance(res, asyncio.CancelledError) for res in results)
+
+        if was_cancelled:
+            logger.warning(f"Download of folder '{folder_item['name']}' was partially or fully cancelled.")
+            progress_callback(main_task_id, actual_folder_name, 0, total_size, 'cancelled', 0)
+        elif has_failures:
+            logger.error(f"Some files failed to download for folder '{folder_item['name']}'.")
+            progress_callback(main_task_id, actual_folder_name, 0, total_size, 'failed', 0, message="Some files failed to download.")
+        else:
+            progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
+
+    async def _download_file_from_details(self, client, group_id: int, task_id: str, file_details: Dict, destination: str, progress_callback: Callable, parent_task_id: str = None):
+        """Helper coroutine to download a single file given its full details."""
         file_name = file_details['name']
         try:
             progress_callback(task_id, file_name, 0, file_details.get("size", 0), 'transferring', 0, parent_task_id=parent_task_id)
             
+            # Create and register the cancellable download task.
             coro = telegram_comms.download_file(
                 client, group_id, file_details, destination,
                 task_id=task_id, progress_callback=progress_callback
@@ -220,18 +231,29 @@ class TransferService:
             self.shared_state.active_tasks[task_id] = task
             await task
         except asyncio.CancelledError:
-            logger.warning(f"下載任務 '{file_name}' (ID: {task_id}) 已被使用者取消。")
+            logger.warning(f"Download task '{file_name}' (ID: {task_id}) was cancelled.")
             progress_callback(task_id, file_name, 0, 0, 'cancelled', 0, parent_task_id=parent_task_id)
+            # Re-raise to notify the parent gather().
+            raise
         except Exception as e:
-            logger.error(f"下載檔案 '{file_name}' (ID: {task_id}) 時發生未預期錯誤。", exc_info=True)
-            progress_callback(task_id, file_name, 0, 0, 'failed', 0, message="下載時發生未預期錯誤。", parent_task_id=parent_task_id)
+            logger.error(f"Unexpected error while downloading '{file_name}' (ID: {task_id}).", exc_info=True)
+            progress_callback(task_id, file_name, 0, 0, 'failed', 0, message="An unexpected error occurred.", parent_task_id=parent_task_id)
+            # Re-raise to notify the parent gather().
+            raise
         finally:
             if task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[task_id]
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
+        """
+        Requests the cancellation of an active transfer task.
+        """
         task = self.shared_state.active_tasks.get(task_id)
         if task and not task.done():
+            # Schedule the cancellation on the main event loop's thread.
             self.shared_state.loop.call_soon_threadsafe(task.cancel)
-            return {"success": True, "message": f"任務 {task_id} 已請求取消。"}
-        return {"success": False, "message": "任務不存在或已完成。"}
+            logger.info(f"Cancellation requested for task {task_id}.")
+            return {"success": True, "message": f"Cancellation requested for task {task_id}."}
+        
+        logger.warning(f"Could not cancel task {task_id}: task not found or already completed.")
+        return {"success": False, "message": "Task not found or already completed."}

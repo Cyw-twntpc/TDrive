@@ -1,17 +1,29 @@
+"""
+Provides core, GUI-framework-specific utility functions for invoking native
+dialogs, such as file and folder selection dialogs.
+
+This module abstracts the direct calls to PySide6's QFileDialog, making it
+easier to call these common dialogs from various parts of the application.
+"""
 from PySide6.QtWidgets import QFileDialog
 
-def core_select_files(multiple=False, title="選取檔案", initial_dir=None):
+def core_select_files(multiple: bool = False, title: str = "Select File(s)", initial_dir: str = "") -> list[str]:
     """
-    開啟一個用於選擇單一或多個檔案的對話方塊的核心邏輯 (使用 PySide6)。
-    """
-    # 確保 initial_dir 不是 None，雖然 Qt 通常可以處理 None，但給空字串更保險
-    start_dir = initial_dir if initial_dir else ""
+    Opens a native dialog for selecting one or multiple files.
 
-    # parent 設為 None，因為這是一個工具函式，它會作為頂層視窗彈出
-    # 或者依附於當前活躍的 Application 實例
+    Args:
+        multiple: If True, allows selecting multiple files. Defaults to False.
+        title: The title of the dialog window.
+        initial_dir: The directory to open the dialog in.
+
+    Returns:
+        A list of selected absolute file paths. Returns an empty list if the
+        dialog is canceled.
+    """
+    start_dir = initial_dir if initial_dir else ""
     
     if multiple:
-        # getOpenFileNames 返回 (檔案列表, 篩選器字串)
+        # getOpenFileNames returns a tuple: (list_of_filenames, filter_string)
         file_paths, _ = QFileDialog.getOpenFileNames(
             None, 
             title, 
@@ -20,7 +32,7 @@ def core_select_files(multiple=False, title="選取檔案", initial_dir=None):
         )
         return file_paths
     else:
-        # getOpenFileName 返回 (檔案路徑, 篩選器字串)
+        # getOpenFileName returns a tuple: (filename, filter_string)
         file_path, _ = QFileDialog.getOpenFileName(
             None, 
             title, 
@@ -29,13 +41,20 @@ def core_select_files(multiple=False, title="選取檔案", initial_dir=None):
         )
         return [file_path] if file_path else []
 
-def core_select_directory(title="選取資料夾", initial_dir=None):
+def core_select_directory(title: str = "Select Folder", initial_dir: str = "") -> str:
     """
-    開啟一個用於選擇資料夾的對話方塊的核心邏輯 (使用 PySide6)。
+    Opens a native dialog for selecting a single directory.
+
+    Args:
+        title: The title of the dialog window.
+        initial_dir: The directory to open the dialog in.
+
+    Returns:
+        The selected absolute folder path. Returns an empty string if the
+        dialog is canceled.
     """
     start_dir = initial_dir if initial_dir else ""
     
-    # getExistingDirectory 只返回路徑字串
     folder_path = QFileDialog.getExistingDirectory(
         None, 
         title, 

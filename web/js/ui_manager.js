@@ -1,22 +1,39 @@
+/**
+ * @fileoverview A utility object for managing global UI elements and state.
+ *
+ * This object provides a collection of static methods to control elements like
+ * loading indicators, popovers, modals, and to format data for display.
+ */
 const UIManager = {
     // --- Global Indicators & Locks ---
+    
+    /** Shows the global top progress bar. */
     startProgress() {
         document.getElementById('global-progress-bar')?.classList.add('visible');
     },
 
+    /** Hides the global top progress bar. */
     stopProgress() {
         document.getElementById('global-progress-bar')?.classList.remove('visible');
     },
 
+    /** Locks the UI to prevent user interaction during critical operations. */
     setInteractionLock(isLocked) {
         document.getElementById('interaction-lock-overlay')?.classList.toggle('visible', isLocked);
     },
 
+    /** Toggles the visibility of the search spinner. */
     toggleSearchSpinner(show) {
         document.getElementById('search-spinner')?.classList.toggle('visible', show);
     },
     
-    // --- UI Helpers ---
+    // --- UI Formatting Helpers ---
+
+    /**
+     * Gets a Font Awesome icon class based on a file's extension.
+     * @param {string} fileName - The name of the file.
+     * @returns {string} The corresponding Font Awesome class string.
+     */
     getFileTypeIcon(fileName) {
         const extension = fileName.split('.').pop().toLowerCase();
         if (fileName.includes('.') === false) return 'fa-solid fa-file';
@@ -35,6 +52,11 @@ const UIManager = {
         }
     },
     
+    /**
+     * Formats a number of bytes into a human-readable string (B, KB, MB, GB).
+     * @param {number} bytes - The number of bytes.
+     * @returns {string} The formatted size string.
+     */
     formatBytes(bytes) {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -43,68 +65,70 @@ const UIManager = {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     },
 
+    /**
+     * Gets a user-friendly description for a file type based on its extension.
+     * @param {string} fileName - The name of the file.
+     * @param {boolean} isFolder - True if the item is a folder.
+     * @returns {string} The file type description.
+     */
     getFileTypeDescription(fileName, isFolder) {
-        if (isFolder) return '檔案資料夾';
+        if (isFolder) return 'Folder';
         const extension = fileName.split('.').pop().toLowerCase();
-        if (fileName.includes('.') === false) return '檔案';
+        if (!fileName.includes('.')) return 'File';
         switch (extension) {
-            case 'txt': return '純文字檔案';
-            case 'md': return 'Markdown 文件';
-            case 'pdf': return 'PDF 文件';
-            case 'doc': case 'docx': return 'Word 文件';
-            case 'xls': case 'xlsx': return 'Excel 工作表';
-            case 'ppt': case 'pptx': return 'PowerPoint 簡報';
-            case 'zip': case 'rar': case '7z': case 'tar': return `${extension.toUpperCase()} 壓縮檔`;
-            case 'jpg': case 'jpeg': return 'JPEG 影像';
-            case 'png': return 'PNG 影像';
-            case 'gif': return 'GIF 影像';
-            case 'mp3': case 'wav': case 'aac': return `${extension.toUpperCase()} 音訊`;
-            case 'mp4': case 'mov': case 'flv': case 'mkv': case 'wmv': case 'avi': return `${extension.toUpperCase()} 影片`;
-            case 'py': return 'Python 程式碼';
-            case 'js': return 'JavaScript 程式碼';
-            case 'html': return 'HTML 文件';
-            case 'css': return '網頁樣式表';
-            case 'json': return 'JSON 檔案';
-            case 'exe': return 'EXE 執行檔';
-            default: return `${extension.toUpperCase()} 檔案`;
+            case 'txt': return 'Text Document';
+            case 'md': return 'Markdown Document';
+            case 'pdf': return 'PDF Document';
+            case 'doc': case 'docx': return 'Word Document';
+            case 'xls': case 'xlsx': return 'Excel Spreadsheet';
+            case 'ppt': case 'pptx': return 'PowerPoint Presentation';
+            case 'zip': case 'rar': case '7z': case 'tar': return `${extension.toUpperCase()} Archive`;
+            case 'jpg': case 'jpeg': return 'JPEG Image';
+            case 'png': return 'PNG Image';
+            case 'gif': return 'GIF Image';
+            case 'mp3': case 'wav': case 'aac': return `${extension.toUpperCase()} Audio`;
+            case 'mp4': case 'mov': case 'avi': case 'mkv': return `${extension.toUpperCase()} Video`;
+            case 'py': return 'Python Script';
+            case 'js': return 'JavaScript File';
+            case 'html': return 'HTML Document';
+            case 'css': return 'Stylesheet';
+            case 'json': return 'JSON File';
+            case 'exe': return 'Application';
+            default: return `${extension.toUpperCase()} File`;
         }
     },
 
     // --- Modal & Overlay Control ---
+
+    /** Toggles the visibility of a modal or overlay. */
     toggleModal(modalId, show) {
-        const modal = document.getElementById(modalId);
-        if (modal) {
-            if (show) {
-                modal.classList.remove('hidden');
-            } else {
-                modal.classList.add('hidden');
-            }
-        }
+        document.getElementById(modalId)?.classList.toggle('hidden', !show);
     },
 
     // --- Popovers & User Info ---
+
+    /** Updates the user avatar icon with either a custom image or a default icon. */
     updateUserAvatar(AppState) {
         const userBtn = document.getElementById('user-btn');
-        if (AppState.userAvatar) {
-            userBtn.innerHTML = `<img src="${AppState.userAvatar}" alt="avatar">`;
-        } else {
-            userBtn.innerHTML = `<i class="fas fa-user-circle"></i>`;
-        }
+        userBtn.innerHTML = AppState.userAvatar 
+            ? `<img src="${AppState.userAvatar}" alt="User Avatar">`
+            : `<i class="fas fa-user-circle"></i>`;
     },
 
+    /** Populates the user info popover with data from the AppState. */
     populateUserInfoPopover(AppState) {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
-            const info = AppState.userInfo;
-            contentEl.innerHTML = `<p><strong>姓名:</strong> <span>${info.name}</span></p>
-                                   <p><strong>電話:</strong> <span>${info.phone}</span></p>
-                                   <p><strong>使用者名稱:</strong> <span>${info.username}</span></p>
-                                   <p><strong>儲存群組:</strong> <span>${info.storage_group}</span></p>`;
+            const { name, phone, username } = AppState.userInfo;
+            contentEl.innerHTML = `<p><strong>Name:</strong> <span>${name}</span></p>
+                                   <p><strong>Phone:</strong> <span>${phone}</span></p>
+                                   <p><strong>Username:</strong> <span>${username}</span></p>`;
         } else {
-            contentEl.innerHTML = '<p>載入中...</p>';
+            contentEl.innerHTML = '<p>Loading...</p>';
         }
     },
 
+    /** Sets up global click listeners to handle popover visibility. */
     setupPopovers() {
         document.querySelectorAll('[data-popover]').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -113,6 +137,7 @@ const UIManager = {
                 const targetPopover = document.getElementById(popoverId);
                 
                 const isVisible = !targetPopover.classList.contains('hidden');
+                // Hide all other popovers first.
                 document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
                 if (!isVisible) {
                     targetPopover.classList.remove('hidden');
@@ -120,6 +145,7 @@ const UIManager = {
             });
         });
 
+        // Clicking anywhere outside a popover will close all of them.
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.popover') && !e.target.closest('[data-popover]')) {
                 document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
@@ -128,43 +154,34 @@ const UIManager = {
     },
 
     // --- Error Handling ---
-    showInlineError(inputId, message) {
-        const errorEl = document.getElementById(`${inputId}Error`);
-        const inputEl = document.getElementById(inputId);
-        if (errorEl) {
-            errorEl.textContent = message ? `⚠ ${message}` : '';
-            errorEl.classList.toggle('show', !!message);
-        }
-        if (inputEl) {
-            inputEl.classList.toggle('error', !!message);
-        }
-    },
-
+    
+    /** Displays a user-friendly modal alert for backend-reported errors. */
     handleBackendError(response) {
-        let title = '發生錯誤';
-        let message = response.message || '發生未知的內部錯誤，請稍後再試。';
+        let title = 'Error';
+        let message = response.message || 'An unknown internal error occurred. Please try again later.';
 
         switch (response.error_code) {
             case 'ITEM_ALREADY_EXISTS':
-                title = '操作失敗';
+                title = 'Operation Failed';
                 break;
             case 'PATH_NOT_FOUND':
-                title = '找不到項目';
+                title = 'Item Not Found';
                 break;
             case 'CONNECTION_FAILED':
-                title = '連線錯誤';
-                message = '無法連接到伺服器，請檢查您的網路連線或稍後再試。';
+                title = 'Connection Error';
+                message = 'Could not connect to the server. Please check your network connection and try again.';
                 break;
             case 'FLOOD_WAIT_ERROR':
-                title = '請求過於頻繁';
+                title = 'Too Many Requests';
                 break;
             case 'INTERNAL_ERROR':
-                title = '系統內部錯誤';
+                title = 'System Error';
                 break;
         }
         UIModals.showAlert(title, message, 'btn-primary');
     },
 
+    /** Shows or hides the "Connection Lost" overlay. */
     handleConnectionStatus(status) {
         console.log(`Connection status changed: ${status}`);
         this.toggleModal('connection-lost-overlay', status === 'lost');
