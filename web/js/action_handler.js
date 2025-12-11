@@ -33,7 +33,7 @@ const ActionHandler = {
      */
     async handleRename(item) {
         const { id, name, type } = item;
-        const newName = await this._uiModals.showPrompt('Rename', `Enter a new name for "${name}":`, name);
+        const newName = await this._uiModals.showPrompt('重新命名', `請輸入 "${name}" 的新名稱：`, name);
         if (newName === null || newName === name) return; // User cancelled or entered the same name
 
         this._uiManager.startProgress();
@@ -47,7 +47,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Rename operation failed:", error);
-            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
+            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
@@ -60,7 +60,7 @@ const ActionHandler = {
      */
     async handleDownload() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("Notice", "Please select items to download first.", 'btn-primary');
+            return await this._uiModals.showAlert("提示", "請先選擇要下載的項目。", 'btn-primary');
         }
         
         let destinationDir = null;
@@ -69,13 +69,13 @@ const ActionHandler = {
         if (useDefault) {
             destinationDir = localStorage.getItem('defaultDownloadPath');
             if (!destinationDir) {
-                await this._uiModals.showAlert("Error", "Default download path is enabled but not set.", 'btn-primary');
+                await this._uiModals.showAlert("錯誤", "已啟用預設下載路徑但尚未設定。", 'btn-primary');
                 return;
             }
         } else {
             UIManager.toggleModal('blocking-overlay', true);
             try {
-                destinationDir = await this._apiService.selectDirectory("Select Download Folder");
+                destinationDir = await this._apiService.selectDirectory("選擇下載資料夾");
             } finally {
                 UIManager.toggleModal('blocking-overlay', false);
             }
@@ -102,9 +102,9 @@ const ActionHandler = {
      */
     async handleDelete() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("Notice", "Please select items to delete first.", 'btn-primary');
+            return await this._uiModals.showAlert("提示", "請先選擇要刪除的項目。", 'btn-primary');
         }
-        const confirmation = await this._uiModals.showConfirm('Confirm Deletion', `Are you sure you want to delete these ${this._appState.selectedItems.length} items?<br><b>This action cannot be undone.</b>`);
+        const confirmation = await this._uiModals.showConfirm('確認刪除', `您確定要刪除這 ${this._appState.selectedItems.length} 個項目嗎？<br><b>此動作無法復原。</b>`);
         if (!confirmation) return;
 
         this._uiManager.startProgress();
@@ -119,7 +119,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Delete operation failed:", error);
-            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
+            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
@@ -130,7 +130,7 @@ const ActionHandler = {
      * Handles the creation of a new folder.
      */
     async handleNewFolder() {
-        const newFolderName = await this._uiModals.showPrompt("New Folder", "Enter the new folder's name:", "Untitled Folder");
+        const newFolderName = await this._uiModals.showPrompt("新資料夾", "請輸入新資料夾的名稱：", "未命名資料夾");
         if (newFolderName === null) return;
 
         this._uiManager.startProgress();
@@ -144,7 +144,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Create folder operation failed:", error);
-            this._uiManager.handleBackendError({ message: "Error communicating with the backend. Please try again." });
+            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
@@ -157,7 +157,7 @@ const ActionHandler = {
     async handleUpload() {
         UIManager.toggleModal('blocking-overlay', true);
         try {
-            const localPaths = await this._apiService.selectFiles(true, "Select Files to Upload");
+            const localPaths = await this._apiService.selectFiles(true, "選擇要上傳的檔案");
             if (!localPaths || localPaths.length === 0) return;
 
             const parentId = this._appState.currentFolderId;
@@ -169,7 +169,7 @@ const ActionHandler = {
                                     this._appState.currentFolderContents.folders.some(f => f.name === fileName);
                 
                 if (isDuplicate) {
-                    this._uiModals.showAlert('Upload Failed', `An item named "${fileName}" already exists in this folder.`);
+                    this._uiModals.showAlert('上傳失敗', `此資料夾中已存在名為 "${fileName}" 的項目。`);
                     return;
                 }
 
@@ -235,7 +235,7 @@ const ActionHandler = {
      * Handles the user logout process after confirmation.
      */
     async handleLogout() {
-        const confirmed = await this._uiModals.showConfirm('Confirm Logout', 'Are you sure you want to log out? This will clear all local data and settings.');
+        const confirmed = await this._uiModals.showConfirm('確認登出', '您確定要登出嗎？此動作將清除所有本機資料和設定。');
         if (confirmed) {
             this._uiManager.startProgress();
             this._uiManager.setInteractionLock(true);
@@ -245,7 +245,7 @@ const ActionHandler = {
                 window.location.href = 'login.html';
             } catch (error) {
                 console.error("Logout operation failed:", error);
-                this._uiManager.handleBackendError({ message: "An error occurred during logout. Please try again." });
+                this._uiManager.handleBackendError({ message: "登出過程中發生錯誤，請重試。" });
                 this._uiManager.stopProgress();
                 this._uiManager.setInteractionLock(false);
             }

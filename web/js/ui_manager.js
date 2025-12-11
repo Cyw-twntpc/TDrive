@@ -72,29 +72,29 @@ const UIManager = {
      * @returns {string} The file type description.
      */
     getFileTypeDescription(fileName, isFolder) {
-        if (isFolder) return 'Folder';
+        if (isFolder) return '資料夾';
         const extension = fileName.split('.').pop().toLowerCase();
-        if (!fileName.includes('.')) return 'File';
+        if (!fileName.includes('.')) return '檔案';
         switch (extension) {
-            case 'txt': return 'Text Document';
-            case 'md': return 'Markdown Document';
-            case 'pdf': return 'PDF Document';
-            case 'doc': case 'docx': return 'Word Document';
-            case 'xls': case 'xlsx': return 'Excel Spreadsheet';
-            case 'ppt': case 'pptx': return 'PowerPoint Presentation';
-            case 'zip': case 'rar': case '7z': case 'tar': return `${extension.toUpperCase()} Archive`;
-            case 'jpg': case 'jpeg': return 'JPEG Image';
-            case 'png': return 'PNG Image';
-            case 'gif': return 'GIF Image';
-            case 'mp3': case 'wav': case 'aac': return `${extension.toUpperCase()} Audio`;
-            case 'mp4': case 'mov': case 'avi': case 'mkv': return `${extension.toUpperCase()} Video`;
-            case 'py': return 'Python Script';
-            case 'js': return 'JavaScript File';
-            case 'html': return 'HTML Document';
-            case 'css': return 'Stylesheet';
-            case 'json': return 'JSON File';
-            case 'exe': return 'Application';
-            default: return `${extension.toUpperCase()} File`;
+            case 'txt': return '文字文件';
+            case 'md': return 'Markdown 文件';
+            case 'pdf': return 'PDF 文件';
+            case 'doc': case 'docx': return 'Word 文件';
+            case 'xls': case 'xlsx': return 'Excel 試算表';
+            case 'ppt': case 'pptx': return 'PowerPoint 簡報';
+            case 'zip': case 'rar': case '7z': case 'tar': return `${extension.toUpperCase()} 壓縮檔`;
+            case 'jpg': case 'jpeg': return 'JPEG 圖片';
+            case 'png': return 'PNG 圖片';
+            case 'gif': return 'GIF 圖片';
+            case 'mp3': case 'wav': case 'aac': return `${extension.toUpperCase()} 音訊`;
+            case 'mp4': case 'mov': case 'avi': case 'mkv': return `${extension.toUpperCase()} 影片`;
+            case 'py': return 'Python 腳本';
+            case 'js': return 'JavaScript 檔案';
+            case 'html': return 'HTML 文件';
+            case 'css': return '樣式表';
+            case 'json': return 'JSON 檔案';
+            case 'exe': return '應用程式';
+            default: return `${extension.toUpperCase()} 檔案`;
         }
     },
 
@@ -120,11 +120,11 @@ const UIManager = {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
             const { name, phone, username } = AppState.userInfo;
-            contentEl.innerHTML = `<p><strong>Name:</strong> <span>${name}</span></p>
-                                   <p><strong>Phone:</strong> <span>${phone}</span></p>
-                                   <p><strong>Username:</strong> <span>${username}</span></p>`;
+            contentEl.innerHTML = `<p><strong>名稱：</strong> <span>${name}</span></p>
+                                   <p><strong>電話：</strong> <span>${phone}</span></p>
+                                   <p><strong>使用者名稱：</strong> <span>${username}</span></p>`;
         } else {
-            contentEl.innerHTML = '<p>Loading...</p>';
+            contentEl.innerHTML = '<p>載入中...</p>';
         }
     },
 
@@ -157,25 +157,25 @@ const UIManager = {
     
     /** Displays a user-friendly modal alert for backend-reported errors. */
     handleBackendError(response) {
-        let title = 'Error';
-        let message = response.message || 'An unknown internal error occurred. Please try again later.';
+        let title = '錯誤';
+        let message = response.message || '發生未知的內部錯誤，請稍後再試。';
 
         switch (response.error_code) {
             case 'ITEM_ALREADY_EXISTS':
-                title = 'Operation Failed';
+                title = '操作失敗';
                 break;
             case 'PATH_NOT_FOUND':
-                title = 'Item Not Found';
+                title = '項目不存在';
                 break;
             case 'CONNECTION_FAILED':
-                title = 'Connection Error';
-                message = 'Could not connect to the server. Please check your network connection and try again.';
+                title = '連線錯誤';
+                message = '無法連線至伺服器，請檢查您的網路連線並重試。';
                 break;
             case 'FLOOD_WAIT_ERROR':
-                title = 'Too Many Requests';
+                title = '請求過於頻繁';
                 break;
             case 'INTERNAL_ERROR':
-                title = 'System Error';
+                title = '系統錯誤';
                 break;
         }
         UIModals.showAlert(title, message, 'btn-primary');

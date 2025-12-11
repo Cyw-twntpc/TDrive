@@ -37,7 +37,7 @@ class FileService:
             return await asyncio.to_thread(_sync_db_op)
         except Exception as e:
             logger.error(f"Error getting folder contents for id {folder_id}: {e}", exc_info=True)
-            return {"success": False, "error_code": "DB_READ_FAILED", "message": "Could not retrieve folder contents."}
+            return {"success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取資料夾內容。"}
 
     async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
         """
@@ -52,7 +52,7 @@ class FileService:
             return await asyncio.to_thread(_sync_db_op)
         except Exception as e:
             logger.error(f"Error recursively fetching folder contents for id {folder_id}: {e}", exc_info=True)
-            return {"folder_name": "Error", "items": [], "success": False, "error_code": "DB_READ_FAILED", "message": "Could not retrieve folder contents."}
+            return {"folder_name": "Error", "items": [], "success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取資料夾內容。"}
 
     async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter: Callable, request_id: str):
         """
@@ -88,21 +88,21 @@ class FileService:
                 logger.info(f"Streaming search completed for request_id: {request_id}.")
             except Exception as e:
                 logger.error(f"Critical error in background search thread: {e}", exc_info=True)
-                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': 'A critical error occurred during search.'}}
+                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '搜尋過程中發生嚴重錯誤。'}}
                 result_signal_emitter(error_payload)
 
         try:
             await asyncio.to_thread(db_search_sync)
         except Exception as e:
             logger.error(f"Failed to start background search thread: {e}", exc_info=True)
-            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': 'Failed to start the background search task.'}}
+            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '無法啟動背景搜尋任務。'}}
             result_signal_emitter(error_payload)
 
     async def create_folder(self, parent_id: int, folder_name: str) -> Dict[str, Any]:
         """Creates a new folder in the database under the given parent ID."""
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed. Please check your network or re-login."}
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
         
         try:
             db = DatabaseHandler()
@@ -116,13 +116,13 @@ class FileService:
             return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
         except Exception as e:
             logger.error(f"Unknown error creating folder '{folder_name}'.", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "An unknown internal error occurred."}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "建立資料夾時發生未知的內部錯誤。"}
 
     async def rename_item(self, item_id: int, new_name: str, item_type: str) -> Dict[str, Any]:
         """Renames a file or a folder."""
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed. Please check your network or re-login."}
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
             
         try:
             db = DatabaseHandler()
@@ -139,7 +139,7 @@ class FileService:
             return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
         except Exception as e:
             logger.error(f"Unknown error renaming item {item_id}.", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "An unknown internal error occurred."}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "重新命名時發生未知的內部錯誤。"}
 
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -148,7 +148,7 @@ class FileService:
         """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed. Please check your network or re-login."}
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
 
         all_message_ids_to_delete = []
         try:
@@ -174,14 +174,14 @@ class FileService:
                     await client.delete_messages(group_id, chunk)
                 logger.info("Successfully deleted chunks from Telegram.")
 
-            return {"success": True, "message": f"Successfully deleted {len(items)} item(s)."}
+            return {"success": True, "message": f"成功刪除 {len(items)} 個項目。"}
 
         except errors.PathNotFoundError as e:
             logger.warning(f"Failed to delete item: {e}")
             return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
         except telethon_errors.FloodWaitError as e:
             logger.warning(f"Delete operation hit a flood wait for {e.seconds} seconds.")
-            return {"success": False, "error_code": "FLOOD_WAIT_ERROR", "message": f"Too many requests. Please wait {e.seconds} seconds."}
+            return {"success": False, "error_code": "FLOOD_WAIT_ERROR", "message": f"請求過多，請等待 {e.seconds} 秒。"}
         except Exception as e:
             logger.error(f"An unknown error occurred while deleting items: {items}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "An unknown error occurred during deletion."}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "刪除過程中發生未知的錯誤。"}

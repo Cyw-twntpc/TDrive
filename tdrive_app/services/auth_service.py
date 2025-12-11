@@ -161,11 +161,11 @@ class AuthService:
         except ApiIdInvalidError:
             logger.warning(f"API credential verification failed for api_id: {api_id}")
             if client and client.is_connected(): await client.disconnect()
-            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "Invalid API ID or API Hash."}
+            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "無效的 API ID 或 API Hash。"}
         except Exception as e:
             logger.error(f"Connection failed during API credential verification: {e}", exc_info=True)
             if client and client.is_connected(): await client.disconnect()
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"Connection failed: {e}"}
+            return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"連線失敗：{e}"}
 
     async def start_qr_login(self, event_callback: Callable) -> Dict[str, Any]:
         """
@@ -174,7 +174,7 @@ class AuthService:
         client = self.shared_state.client
         if not client or not client.is_connected():
             logger.warning("QR login requested, but client is not connected.")
-            return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client is not connected."}
+            return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端未連線。"}
             
         try:
             qr_login = await client.qr_login()
@@ -194,10 +194,10 @@ class AuthService:
             return {"success": True, "qr_url": f"data:image/png;base64,{img_str}"}
         except ApiIdInvalidError:
             logger.warning(f"QR code generation failed due to invalid API credentials.")
-            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "Invalid API ID or API Hash. Please go back and re-enter."}
+            return {"success": False, "error_code": "INVALID_API_CREDENTIALS", "message": "無效的 API ID 或 API Hash，請返回重新輸入。"}
         except Exception as e:
             logger.error(f"QR code generation failed: {e}", exc_info=True)
-            return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR code generation failed: {e}"}
+            return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR 碼產生失敗：{e}"}
 
     async def _wait_for_qr_login(self, qr_login, event_callback: Callable):
         """Helper to wait for QR login and dispatch events."""
@@ -223,10 +223,10 @@ class AuthService:
             return {"success": True}
         except PhoneNumberInvalidError:
             logger.warning(f"Invalid phone number provided: {phone_number}")
-            return {"success": False, "error_code": "PHONE_NUMBER_INVALID", "message": "The phone number is invalid. Please check and re-enter."}
+            return {"success": False, "error_code": "PHONE_NUMBER_INVALID", "message": "電話號碼無效，請檢查並重新輸入。"}
         except Exception as e:
             logger.error(f"Failed to send code to {phone_number}: {e}", exc_info=True)
-            return {"success": False, "error_code": "SEND_CODE_FAILED", "message": f"Failed to send code: {e}"}
+            return {"success": False, "error_code": "SEND_CODE_FAILED", "message": f"傳送驗證碼失敗：{e}"}
 
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
         """Submits the verification code received by the user."""
@@ -239,12 +239,12 @@ class AuthService:
             return {"success": True}
         except PhoneCodeInvalidError:
             logger.warning("An invalid verification code was submitted.")
-            return {"success": False, "error_code": "INVALID_VERIFICATION_CODE", "message": "The verification code is incorrect."}
+            return {"success": False, "error_code": "INVALID_VERIFICATION_CODE", "message": "驗證碼錯誤。"}
         except SessionPasswordNeededError:
             return {"success": True, "password_needed": True}
         except Exception as e:
             logger.error(f"Unknown error while submitting verification code: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"Verification failed: {e}"}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"驗證失敗：{e}"}
 
     async def submit_password(self, password: str) -> Dict[str, Any]:
         """Submits the two-factor authentication password."""
@@ -257,10 +257,10 @@ class AuthService:
             return {"success": True}
         except PasswordHashInvalidError:
             logger.warning("An invalid 2FA password was submitted.")
-            return {"success": False, "error_code": "INVALID_PASSWORD", "message": "The password is incorrect."}
+            return {"success": False, "error_code": "INVALID_PASSWORD", "message": "密碼錯誤。"}
         except Exception as e:
             logger.error(f"Unknown error while submitting password: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"Login failed: {e}"}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"登入失敗：{e}"}
 
     async def reset_client_for_new_login_method(self) -> Dict[str, bool]:
         """
@@ -298,7 +298,7 @@ class AuthService:
         if not client or not self.shared_state.api_id:
             msg = "Cannot initialize drive: Client or App API ID is missing."
             logger.error(msg)
-            return {"success": False, "error_code": "INITIALIZATION_FAILED", "message": msg}
+            return {"success": False, "error_code": "INITIALIZATION_FAILED", "message": "無法初始化雲端硬碟：缺少用戶端或 App API ID。"}
 
         try:
             logger.info("Initializing TDrive...")
@@ -311,10 +311,10 @@ class AuthService:
             return {"success": True}
         except asyncio.TimeoutError:
             logger.error("Drive initialization timed out after 30 seconds.")
-            return {"success": False, "error_code": "DRIVE_INITIALIZATION_TIMEOUT", "message": "Initialization timed out. Please check your network connection and try again."}
+            return {"success": False, "error_code": "DRIVE_INITIALIZATION_TIMEOUT", "message": "初始化逾時，請檢查您的網路連線並重試。"}
         except Exception as e:
             logger.error(f"An error occurred during drive initialization: {e}", exc_info=True)
-            return {"success": False, "error_code": "DRIVE_INITIALIZATION_FAILED", "message": f"Initialization failed: {e}"}
+            return {"success": False, "error_code": "DRIVE_INITIALIZATION_FAILED", "message": f"初始化失敗：{e}"}
 
     async def get_user_info(self) -> Dict[str, Any]:
         """Fetches basic information about the currently logged-in user."""
@@ -330,21 +330,21 @@ class AuthService:
             }
         except Exception as e:
             logger.error(f"Failed to get user info: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "Failed to retrieve user information"}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "無法取得使用者資訊"}
 
     async def get_user_avatar(self) -> Dict[str, Any]:
         """
         Fetches the user's profile picture and returns it as a base64 data URI.
         """
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed"}
+        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
         
         avatar_path = './file/user_avatar.jpg'
         try:
             path = await client.download_profile_photo('me', file=avatar_path)
             if not path: 
                 logger.info("User has no profile picture set.")
-                return {"success": False, "error_code": "AVATAR_NOT_FOUND", "message": "No profile picture found"}
+                return {"success": False, "error_code": "AVATAR_NOT_FOUND", "message": "找不到個人圖片"}
             
             with open(path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
@@ -352,7 +352,7 @@ class AuthService:
             return {"success": True, "avatar_base64": f"data:image/jpeg;base64,{encoded_string}"}
         except Exception as e:
             logger.error(f"Failed to get user avatar: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "Failed to retrieve user avatar"}
+            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "無法取得使用者頭像"}
 
     async def perform_logout(self) -> Dict[str, Any]:
         """
@@ -371,7 +371,7 @@ class AuthService:
                 logger.info("Successfully cleaned up local file cache.")
         except Exception as e:
             logger.error(f"Error during local file cleanup on logout: {e}", exc_info=True)
-            return {"success": True, "warning": "Logout completed, but failed to clean up some local files."}
+            return {"success": True, "warning": "登出完成，但無法清除部分本機檔案。"}
         
         # Reset all in-memory state.
         self.shared_state.client = None

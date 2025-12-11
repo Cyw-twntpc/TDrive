@@ -97,7 +97,7 @@ const UIModals = {
                 errorEl.classList.add('hidden');
 
                 if (!value) {
-                    errorEl.textContent = 'The name cannot be empty.';
+                    errorEl.textContent = '名稱不能為空。';
                     errorEl.classList.remove('hidden');
                     return;
                 }
@@ -110,7 +110,7 @@ const UIModals = {
                     okBtn.disabled = false;
 
                     if (result && !result.success) {
-                        errorEl.textContent = result.message || 'An unknown validation error occurred.';
+                        errorEl.textContent = result.message || '發生未知的驗證錯誤。';
                         errorEl.classList.remove('hidden');
                         return; // Keep the prompt open
                     }

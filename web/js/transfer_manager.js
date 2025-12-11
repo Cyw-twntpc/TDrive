@@ -166,7 +166,7 @@ const TransferManager = {
         if (task.status === 'failed' && !task.alertShown) {
             this.UIManager.handleBackendError({ 
                 error_code: 'TRANSFER_FAILED',
-                message: `Transfer of "${task.name}" failed.<br><b>Reason:</b> ${task.message || 'Unknown error'}`
+                message: `"${task.name}" 傳輸失敗。<br><b>原因：</b> ${task.message || '未知錯誤'}`
             });
             task.alertShown = true;
         }
@@ -303,7 +303,7 @@ const TransferManager = {
             const uploadPercent = totalUploadSize > 0 ? (totalUploadProgress / totalUploadSize * 100) : 0;
             uploadProgressBar.style.width = `${uploadPercent}%`;
 
-            let uploadTitle = `Uploading ${activeUploads} items...`;
+            let uploadTitle = `正在上傳 ${activeUploads} 個項目...`;
             let uploadProgressClass = '';
 
             if (activeUploads === 0) {
@@ -311,13 +311,13 @@ const TransferManager = {
                 const hasCancellations = [...this.uploads.values()].some(t => t.status === 'cancelled');
                 
                 if (hasFailures) {
-                    uploadTitle = 'Some uploads failed';
+                    uploadTitle = '部分上傳失敗';
                     uploadProgressClass = 'failed';
                 } else if (hasCancellations) {
-                    uploadTitle = 'Uploads cancelled';
+                    uploadTitle = '上傳已取消';
                     uploadProgressClass = 'cancelled'; // Note: 'cancelled' class is for logic, can be styled if needed
                 } else {
-                    uploadTitle = 'Uploads complete';
+                    uploadTitle = '上傳完成';
                     uploadProgressClass = 'completed';
                 }
             }
@@ -349,7 +349,7 @@ const TransferManager = {
             const downloadPercent = totalDownloadSize > 0 ? (totalDownloadProgress / totalDownloadSize * 100) : 0;
             downloadProgressBar.style.width = `${downloadPercent}%`;
 
-            let downloadTitle = `Downloading ${activeDownloads} items...`;
+            let downloadTitle = `正在下載 ${activeDownloads} 個項目...`;
             let downloadProgressClass = '';
 
             if (activeDownloads === 0) {
@@ -357,13 +357,13 @@ const TransferManager = {
                 const hasCancellations = [...this.downloads.values()].some(t => t.status === 'cancelled');
 
                 if (hasFailures) {
-                    downloadTitle = 'Some downloads failed';
+                    downloadTitle = '部分下載失敗';
                     downloadProgressClass = 'failed';
                 } else if (hasCancellations) {
-                    downloadTitle = 'Downloads cancelled';
+                    downloadTitle = '下載已取消';
                     downloadProgressClass = 'cancelled';
                 } else {
-                    downloadTitle = 'Downloads complete';
+                    downloadTitle = '下載完成';
                     downloadProgressClass = 'completed';
                 }
             }
@@ -428,7 +428,7 @@ const TransferManager = {
         const uploadListEl = document.getElementById('upload-list');
         uploadListEl.innerHTML = '';
         if (this.uploads.size === 0) {
-            uploadListEl.innerHTML = '<p class="empty-list-msg">No upload tasks</p>';
+            uploadListEl.innerHTML = '<p class="empty-list-msg">無上傳任務</p>';
         } else {
             renderListRecursive(this.uploads, uploadListEl);
         }
@@ -436,7 +436,7 @@ const TransferManager = {
         const downloadListEl = document.getElementById('download-list');
         downloadListEl.innerHTML = '';
         if (this.downloads.size === 0) {
-            downloadListEl.innerHTML = '<p class="empty-list-msg">No download tasks</p>';
+            downloadListEl.innerHTML = '<p class="empty-list-msg">無下載任務</p>';
         } else {
             renderListRecursive(this.downloads, downloadListEl);
         }
@@ -478,7 +478,7 @@ const TransferManager = {
                 break;
             case 'failed':
                 progressFill.style.backgroundColor = 'var(--danger-color)';
-                progressText.textContent = item.message || 'Failed';
+                progressText.textContent = item.message || '失敗';
                 itemStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
                 break;
             case 'transferring':
@@ -486,15 +486,15 @@ const TransferManager = {
                 itemStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 break;
             case 'starting_folder':
-                progressText.textContent = `${item.completed_files} / ${item.total_files} files (${this.UIManager.formatBytes(item.size)})`;
+                progressText.textContent = `${item.completed_files} / ${item.total_files} 個檔案 (${this.UIManager.formatBytes(item.size)})`;
                 itemStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 break;
             case 'queued':
-                progressText.textContent = 'Queued...';
+                progressText.textContent = '等待中...';
                 itemStatus.innerHTML = '<i class="fas fa-clock"></i>';
                 break;
             case 'cancelled':
-                progressText.textContent = 'Cancelled';
+                progressText.textContent = '已取消';
                 itemStatus.innerHTML = '<i class="fas fa-times-circle" style="color: var(--danger-color);"></i>';
                 break;
             default:

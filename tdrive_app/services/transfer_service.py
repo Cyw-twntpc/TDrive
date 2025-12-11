@@ -33,7 +33,7 @@ class TransferService:
         if not client:
             logger.error("Upload cannot start: client is not connected.")
             for item in upload_items:
-                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="Connection failed, cannot start upload.")
+                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法開始上傳。")
             return
         
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
@@ -61,7 +61,7 @@ class TransferService:
 
             client = await utils.ensure_client_connected(self.shared_state)
             if not client or not os.path.exists(file_path):
-                msg = "Client disconnected or local file does not exist."
+                msg = "用戶端已斷線或本機檔案不存在。"
                 logger.warning(f"Upload task '{file_name}' failed: {msg}")
                 progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
                 return
@@ -73,14 +73,14 @@ class TransferService:
                 folder_contents = self.db.get_folder_contents(parent_id)
                 if any(f['name'] == file_name for f in folder_contents['files']) or \
                    any(f['name'] == file_name for f in folder_contents['folders']):
-                    raise errors.ItemAlreadyExistsError(f"An item named '{file_name}' already exists in the destination.")
+                    raise errors.ItemAlreadyExistsError(f"目標位置已存在名為 '{file_name}' 的項目。")
 
                 # Check for content hash collision (for "instant" upload).
                 original_file_hash = crypto_handler.hash_data(file_path)
                 if existing_file_obj := self.db.find_file_by_hash(original_file_hash):
                     logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
                     self.db.add_file(parent_id, file_name, existing_file_obj["size"], existing_file_obj["hash"], time.time(), existing_file_obj["split_files"])
-                    progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="Instant upload")
+                    progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功")
                     await utils.trigger_db_upload_in_background(self.shared_state)
                     return
 
@@ -98,7 +98,7 @@ class TransferService:
                 progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e))
             except Exception as e:
                 logger.error(f"An unexpected error occurred while uploading '{file_name}'.", exc_info=True)
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="An unexpected internal error occurred.")
+                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未知的內部錯誤。")
             finally:
                 if task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[task_id]
@@ -112,7 +112,7 @@ class TransferService:
             logger.error("Download cannot start: client is not connected.")
             for item in items:
                 temp_task_id = f"dl_{uuid.uuid4()}"
-                progress_callback(temp_task_id, item.get('name', "Unknown"), 0, 0, 'failed', 0, message="Connection failed.")
+                progress_callback(temp_task_id, item.get('name', "Unknown"), 0, 0, 'failed', 0, message="連線失敗。")
             return
 
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
@@ -141,14 +141,14 @@ class TransferService:
             async with semaphore:
                 client = await utils.ensure_client_connected(self.shared_state)
                 if not client:
-                    progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="Connection failed.")
+                    progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="連線失敗。")
                     return
                 
                 progress_callback(main_task_id, item_name, 0, item.get('size',0), 'queued', 0)
 
                 if item_type == 'file':
                     file_details = self.db.get_file_details(item_db_id)
-                    if not file_details: raise errors.PathNotFoundError(f"File with ID {item_db_id} not found in database.")
+                    if not file_details: raise errors.PathNotFoundError(f"資料庫中找不到 ID 為 {item_db_id} 的檔案。")
                     await self._download_file_from_details(client, group_id, main_task_id, file_details, dest_path, progress_callback)
                 
                 elif item_type == 'folder':
@@ -162,7 +162,7 @@ class TransferService:
             progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message=str(e))
         except Exception as e:
             logger.error(f"Unexpected error while processing download for '{item_name}'.", exc_info=True)
-            progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="An unexpected internal error occurred.")
+            progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message="發生未知的內部錯誤。")
         finally:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
@@ -171,7 +171,7 @@ class TransferService:
         """Helper method to handle the logic for downloading a folder."""
         folder_contents = self.db.get_folder_contents_recursive(folder_item['db_id'])
         if not folder_contents:
-            raise errors.PathNotFoundError(f"Folder with ID {folder_item['db_id']} not found in database.")
+            raise errors.PathNotFoundError(f"資料庫中找不到 ID 為 {folder_item['db_id']} 的資料夾。")
         
         actual_folder_name = folder_contents.get('folder_name', folder_item['name'])
         local_root_path = os.path.join(dest_path, actual_folder_name)
@@ -212,7 +212,7 @@ class TransferService:
             progress_callback(main_task_id, actual_folder_name, 0, total_size, 'cancelled', 0)
         elif has_failures:
             logger.error(f"Some files failed to download for folder '{folder_item['name']}'.")
-            progress_callback(main_task_id, actual_folder_name, 0, total_size, 'failed', 0, message="Some files failed to download.")
+            progress_callback(main_task_id, actual_folder_name, 0, total_size, 'failed', 0, message="部分檔案下載失敗。")
         else:
             progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
 
@@ -237,7 +237,7 @@ class TransferService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error while downloading '{file_name}' (ID: {task_id}).", exc_info=True)
-            progress_callback(task_id, file_name, 0, 0, 'failed', 0, message="An unexpected error occurred.", parent_task_id=parent_task_id)
+            progress_callback(task_id, file_name, 0, 0, 'failed', 0, message="發生未知的錯誤。", parent_task_id=parent_task_id)
             # Re-raise to notify the parent gather().
             raise
         finally:
@@ -256,4 +256,4 @@ class TransferService:
             return {"success": True, "message": f"Cancellation requested for task {task_id}."}
         
         logger.warning(f"Could not cancel task {task_id}: task not found or already completed.")
-        return {"success": False, "message": "Task not found or already completed."}
+        return {"success": False, "message": "任務找不到或已完成。"}

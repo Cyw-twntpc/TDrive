@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
             AppState.currentFolderContents = data;
             renderListAndSyncManager();
         } else {
-            UIManager.handleBackendError(data || { message: "Could not load folder contents." });
+            UIManager.handleBackendError(data || { message: "無法載入資料夾內容。" });
         }
     }
 
@@ -68,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (type === 'error') {
             UIManager.stopProgress();
             UIManager.toggleSearchSpinner(false);
-            UIManager.handleBackendError(data || { message: "An unknown error occurred during search." });
+            UIManager.handleBackendError(data || { message: "搜尋過程中發生未知錯誤。" });
         }
     }
 
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (AppState.isSearching) ActionHandler.exitSearchMode();
 
         if (!AppState.folderMap.has(folderId)) {
-            await UIModals.showAlert("Error", "The target folder does not exist. It may have been moved or deleted.", 'btn-primary');
+            await UIModals.showAlert("錯誤", "目標資料夾不存在，可能已被移動或刪除。", 'btn-primary');
             const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
             if (rootFolder) await navigateTo(rootFolder.id);
             return;
@@ -122,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!Array.isArray(rawFolderTree)) {
             console.error("Failed to load folder tree. Backend returned:", rawFolderTree);
-            return UIModals.showAlert('Critical Error', 'Could not load the folder structure. Please refresh or log in again.', 'btn-danger');
+            return UIModals.showAlert('嚴重錯誤', '無法載入資料夾結構，請重新整理或重新登入。', 'btn-danger');
         }
 
         // Rebuild the folder tree data structures.
@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rootFolder) {
                 AppState.currentFolderId = rootFolder.id;
             } else {
-                return UIModals.showAlert('Critical Error', 'Could not find the root folder.', 'btn-danger');
+                return UIModals.showAlert('嚴重錯誤', '找不到根目錄。', 'btn-danger');
             }
         }
         
@@ -168,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         searchScopeToggle.addEventListener('click', () => {
             AppState.searchScope = (AppState.searchScope === 'all') ? 'current' : 'all';
-            searchScopeToggle.textContent = (AppState.searchScope === 'all') ? 'All Folders' : 'Current Folder';
+            searchScopeToggle.textContent = (AppState.searchScope === 'all') ? '所有資料夾' : '目前資料夾';
             if (AppState.isSearching) ActionHandler.handleSearch(AppState.searchTerm);
         });
 

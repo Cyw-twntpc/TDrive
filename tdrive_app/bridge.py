@@ -76,7 +76,7 @@ class Bridge(QObject):
         """
         if self._is_busy:
             logger.warning("BUSY: A critical operation was rejected because a previous one is still in progress.")
-            return {"success": False, "error_code": "BUSY", "message": "Another critical operation is in progress. Please wait."}
+            return {"success": False, "error_code": "BUSY", "message": "另一個關鍵操作正在進行中，請稍候。"}
 
         # If the main asyncio loop isn't running, we can run the coroutine directly.
         if not self._loop.is_running():
@@ -132,11 +132,11 @@ class Bridge(QObject):
 
     # --- Native Dialog Slots ---
     @Slot(bool, str, result=list)
-    def select_files(self, multiple=False, title="Select Files"):
+    def select_files(self, multiple=False, title="選擇檔案"):
         return core_select_files(multiple, title, None)
 
     @Slot(str, result=str)
-    def select_directory(self, title="Select Folder"):
+    def select_directory(self, title="選擇資料夾"):
         return core_select_directory(title, None)
 
     @Slot(result=str)

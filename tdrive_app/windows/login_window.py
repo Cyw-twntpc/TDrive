@@ -33,7 +33,7 @@ class LoginWindow(QMainWindow):
         self._drag_offset = None
         self._is_ready_to_close = False
 
-        self.setWindowTitle("TDrive - Login")
+        self.setWindowTitle("TDrive - 登入")
         self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
 
         # Set flags for a frameless, transparent window, allowing the HTML/CSS to define the window's appearance.
