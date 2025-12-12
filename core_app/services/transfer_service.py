@@ -254,7 +254,7 @@ class TransferService:
             # Schedule the cancellation on the main event loop's thread.
             self.shared_state.loop.call_soon_threadsafe(task.cancel)
             logger.info(f"Cancellation requested for task {task_id}.")
-            return {"success": True, "message": f"Cancellation requested for task {task_id}."}
+            return {"success": True, "message": f"已請求取消任務 {task_id}。"}
         
         logger.warning(f"Could not cancel task {task_id}: task not found or already completed.")
         return {"success": False, "message": "任務找不到或已完成。"}

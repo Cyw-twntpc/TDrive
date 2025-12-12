@@ -288,7 +288,7 @@ class DatabaseHandler:
     
     def add_folder(self, parent_id, name):
         if not self._is_valid_item_name(name):
-            raise errors.InvalidNameError(f"The folder name '{name}' contains invalid characters.")
+            raise errors.InvalidNameError(f"資料夾名稱 '{name}' 包含無效字元。")
         
         conn = self._get_conn()
         try:
@@ -300,7 +300,7 @@ class DatabaseHandler:
                 )
                 self._increment_db_version(cursor)
         except sqlite3.IntegrityError:
-            raise errors.ItemAlreadyExistsError(f"A folder with the name '{name}' already exists in this location.")
+            raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{name}' 的資料夾。")
         finally:
             if conn:
                 conn.close()
@@ -423,7 +423,7 @@ class DatabaseHandler:
     def rename_folder(self, folder_id: int, new_name: str):
         """Renames a folder."""
         if not self._is_valid_item_name(new_name):
-            raise errors.InvalidNameError(f"The folder name '{new_name}' contains invalid characters.")
+            raise errors.InvalidNameError(f"資料夾名稱 '{new_name}' 包含無效字元。")
 
         conn = self._get_conn()
         try:
@@ -432,14 +432,14 @@ class DatabaseHandler:
                 cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
                 folder_info = cursor.fetchone()
                 if not folder_info:
-                    raise errors.PathNotFoundError(f"Folder with ID '{folder_id}' not found.")
+                    raise errors.PathNotFoundError(f"找不到 ID 為 '{folder_id}' 的資料夾。")
                 
                 parent_id = folder_info['parent_id']
                 # Check for name collision in the same directory.
                 cursor.execute("SELECT id FROM folders WHERE parent_id = ? AND name = ? AND id != ?",
                                (parent_id, new_name, folder_id))
                 if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"An item named '{new_name}' already exists in this location.")
+                    raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{new_name}' 的項目。")
 
                 cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?",
                                (new_name, time.time(), folder_id))
@@ -451,7 +451,7 @@ class DatabaseHandler:
     def rename_file(self, file_id: int, new_name: str):
         """Renames a file."""
         if not self._is_valid_item_name(new_name):
-            raise errors.InvalidNameError(f"The file name '{new_name}' contains invalid characters.")
+            raise errors.InvalidNameError(f"檔案名稱 '{new_name}' 包含無效字元。")
 
         conn = self._get_conn()
         try:
@@ -460,13 +460,13 @@ class DatabaseHandler:
                 cursor.execute("SELECT parent_id FROM files WHERE id = ?", (file_id,))
                 file_info = cursor.fetchone()
                 if not file_info:
-                    raise errors.PathNotFoundError(f"File with ID '{file_id}' not found.")
+                    raise errors.PathNotFoundError(f"找不到 ID 為 '{file_id}' 的檔案。")
                 parent_id = file_info['parent_id']
 
                 cursor.execute("SELECT id FROM files WHERE parent_id = ? AND name = ? AND id != ?",
                                (parent_id, new_name, file_id))
                 if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"An item named '{new_name}' already exists in this location.")
+                    raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{new_name}' 的項目。")
 
                 cursor.execute("UPDATE files SET name = ?, modif_date = ? WHERE id = ?",
                                (new_name, time.time(), file_id))

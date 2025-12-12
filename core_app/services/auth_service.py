@@ -217,7 +217,7 @@ class AuthService:
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
         """Requests a verification code to be sent to the user's phone."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
             sent_code = await client.send_code_request(phone_number)
             self.shared_state.phone = phone_number
@@ -233,7 +233,7 @@ class AuthService:
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
         """Submits the verification code received by the user."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
             self.shared_state.is_logged_in = True
@@ -251,7 +251,7 @@ class AuthService:
     async def submit_password(self, password: str) -> Dict[str, Any]:
         """Submits the two-factor authentication password."""
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "Client not initialized."}
+        if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
             await client.sign_in(password=password)
             self.shared_state.is_logged_in = True
@@ -321,7 +321,7 @@ class AuthService:
     async def get_user_info(self) -> Dict[str, Any]:
         """Fetches basic information about the currently logged-in user."""
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "Connection failed"}
+        if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
         try:
             me = await client.get_me()
             return {

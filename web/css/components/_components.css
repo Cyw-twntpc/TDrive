@@ -1,4 +1,4 @@
-.btn { padding: 8px 16px; border: 1px solid var(--primary-color); background-color: var(--primary-color); color: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+.btn { padding: 8px 16px; border: 1px solid var(--primary-color); background-color: var(--primary-color); color: white; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: 8px; }
 .btn:hover { background-color: var(--primary-hover-color); border-color: var(--primary-hover-color); }
 .btn:disabled { background-color: #e9ecef; border-color: #dee2e6; color: #6c757d; cursor: not-allowed; opacity: 0.8; } /* [新增] 通用禁用按鈕樣式 */
 .btn.btn-danger { background-color: var(--danger-color); border-color: var(--danger-color); }
@@ -11,7 +11,7 @@
 /* 使用者頭像按鈕樣式 */
 #user-btn img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 
-.popover { position: absolute; top: 55px; right: 0; width: 320px; background-color: white; border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 8px 16px rgba(0,0,0,0.1); z-index: 1001; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.popover { position: absolute; top: 55px; right: 0; width: 320px; background-color: white; border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 8px 16px rgba(0,0,0,0.1); z-index: 1001; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .popover.hidden { display: none; }
 .popover h3 { margin: 0 0 10px 0; color: var(--primary-color); padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
 .popover ul { padding-left: 20px; margin: 0; }
@@ -22,7 +22,7 @@
     font-size: 11px;
     background-color: #f0f2f5;
     padding: 6px 10px;
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--text-light-color);
     word-break: break-all;
     margin-top: -5px;
@@ -66,7 +66,7 @@ input:checked + .slider:before { transform: translateX(20px); }
     pointer-events: none; 
 }
 .modal-overlay:not(.hidden) { opacity: 1; pointer-events: all; }
-.modal-content { background: var(--main-content-bg); width: 90%; max-width: 800px; max-height: 90vh; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); display: flex; flex-direction: column; transform: scale(0.9); transition: transform 0.3s; }
+.modal-content { background: var(--main-content-bg); width: 90%; max-width: 800px; max-height: 90vh; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); display: flex; flex-direction: column; transform: scale(0.9); transition: transform 0.3s; overflow: hidden; }
 .modal-overlay:not(.hidden) .modal-content { transform: scale(1); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--border-color); }
 .modal-header h2 { font-size: 20px; }
@@ -79,12 +79,25 @@ input:checked + .slider:before { transform: translateX(20px); }
 .small-modal .modal-header { background-color: #f7f9fc; }
 .small-modal .modal-header h2 { font-size: 18px; font-weight: 600; }
 .small-modal .modal-body { padding: 24px; }
-.small-modal .modal-body p { margin: 0 0 16px; line-height: 1.6; color: var(--text-light-color); }
+.small-modal .modal-body p { margin: 0 0 16px; line-height: 1.6; color: var(--text-light-color); user-select: none; -webkit-user-select: none; }
 .small-modal .modal-body p#prompt-message { margin-bottom: 8px; }
-.modal-input { width: 100%; padding: 10px 12px; font-size: 16px; border-radius: 6px; border: 1px solid #ccc; transition: border-color 0.2s, box-shadow 0.2s; }
+.modal-input { width: 100%; padding: 10px 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; transition: border-color 0.2s, box-shadow 0.2s; }
 .modal-input:focus { border-color: var(--primary-color); outline: none; box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15); }
-.modal-error { color: var(--danger-color); font-size: 14px; margin-top: 8px; }
+/* 錯誤狀態樣式 */
+.modal-input.input-error, .form-input.input-error { border-color: var(--danger-color) !important; box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.15) !important; }
+.modal-error { color: var(--danger-color) !important; font-size: 14px; margin-top: 8px; min-height: 20px; display: none; align-items: center; gap: 6px; }
+.modal-error:not(.hidden) { display: flex; }
+.modal-error::before { content: "\f071"; font-family: "Font Awesome 5 Free"; font-weight: 900; }
 .small-modal .modal-footer { justify-content: flex-end; background-color: #f7f9fc; }
+
+/* 震動動畫 */
+@keyframes shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  10%, 30%, 50%, 70%, 90% { transform: translate3d(-3px, 0, 0); }
+  20%, 40%, 60%, 80% { transform: translate3d(3px, 0, 0); }
+}
+.shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; backface-visibility: hidden; perspective: 1000px; }
+
 
 /* [新增] 中型 Modal 與移動視窗樣式 */
 .modal-content.medium-modal { max-width: 600px; height: 80vh; max-height: 700px; }

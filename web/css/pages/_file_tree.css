@@ -1,19 +1,112 @@
-/* 檔案樹導覽 */
+/* File Tree Navigation Styles */
 .file-tree-nav { flex-grow: 1; overflow-y: auto; }
 #file-tree, #file-tree ul { list-style-type: none; padding-left: 0; }
-#file-tree ul { padding-left: 20px; }
-.tree-item { display: flex; align-items: center; padding: 4px 8px; border-radius: 6px; user-select: none; }
-.tree-item > .folder-content { flex-grow: 1; cursor: pointer; display: flex; align-items: center; border-radius: 4px; padding: 4px 5px; }
-.tree-item > .folder-content:hover { background-color: #f0f6ff; }
-.tree-item.active > .folder-content { background-color: var(--selected-bg-color); color: var(--primary-color); font-weight: 500; }
-.tree-item.active > .folder-content i { color: var(--primary-color); }
-.folder-toggle { width: 24px; height: 24px; text-align: center; line-height: 24px; margin-right: 2px; color: #888; transition: transform 0.2s ease, background-color 0.2s; display: inline-flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 50%; flex-shrink: 0; }
+
+/* Tree Item Container - Responsible for full-width background and row layout */
+.tree-item { 
+    display: flex; 
+    align-items: center; 
+    padding: 2px 8px 2px 0; /* Right padding only */
+    border-radius: 6px; /* Rounded corners for selection background */
+    user-select: none; 
+    cursor: default; /* Default cursor for the indent area */
+    transition: background-color 0.15s;
+}
+.tree-item:hover { background-color: #f0f6ff; }
+.tree-item.active { background-color: var(--selected-bg-color); }
+.tree-item.active .folder-content { color: var(--primary-color); font-weight: 500; }
+.tree-item.active .folder-content i { color: var(--primary-color); }
+
+/* Spacer for indentation to maintain full-width background */
+.tree-indent-spacer {
+    flex-shrink: 0;
+    height: 100%;
+    /* Width is set dynamically via inline style */
+}
+
+/* Wrapper for the interactive part of the row (Icon + Name + Right Space) */
+.tree-item-wrapper {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+    cursor: pointer; /* Interactive area shows pointer cursor */
+    overflow: hidden; /* Ensure ellipsis works */
+}
+
+/* Folder Content (Icon + Text) */
+.tree-item > .tree-item-wrapper > .folder-content { 
+    flex-grow: 0; 
+    display: flex; 
+    align-items: center; 
+    padding: 4px 8px; 
+    overflow: hidden; 
+    max-width: 100%;
+    cursor: inherit;
+}
+.tree-item > .tree-item-wrapper > .folder-content .folder-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Expand/Collapse Toggle Button */
+.folder-toggle { 
+    width: 24px; 
+    height: 24px; 
+    text-align: center; 
+    line-height: 24px; 
+    margin-right: 2px; 
+    color: #888; 
+    transition: transform 0.2s ease, background-color 0.2s; 
+    display: inline-flex; 
+    justify-content: center; 
+    align-items: center; 
+    cursor: pointer; 
+    border-radius: 50%; 
+    flex-shrink: 0; 
+}
 .folder-toggle:hover { background-color: #eef1f5; }
 .folder-toggle.open { transform: rotate(90deg); }
+
+/* Placeholder for items without children to maintain alignment */
+.folder-toggle-placeholder {
+    width: 24px;
+    height: 24px;
+    margin-right: 2px;
+    flex-shrink: 0;
+}
+
 .tree-item .folder-icon { margin-right: 8px; color: var(--primary-color); }
 .collapsed { display: none; }
 
-/* [新增] 移動視窗中的樹狀節點樣式 */
+/* Custom Tooltip for Truncated Text */
+#tree-tooltip {
+    position: fixed;
+    z-index: 9999;
+    background-color: #fff;
+    color: var(--text-color);
+    padding: 4px 8px;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    white-space: nowrap;
+    pointer-events: none; /* Allow events to pass through */
+    display: none;
+    border: 1px solid var(--border-color);
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+}
+#tree-tooltip i {
+    margin-right: 8px;
+    color: var(--primary-color);
+}
+#tree-tooltip.active-folder {
+    background-color: var(--selected-bg-color);
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+/* Move Modal Tree Styles */
 #move-tree-container .tree-node { margin-bottom: 2px; user-select: none; }
 #move-tree-container .tree-content {
     display: flex;
@@ -31,7 +124,7 @@
 #move-tree-container .tree-toggle:hover { color: #555; }
 #move-tree-container .tree-toggle-placeholder { width: 24px; display: inline-block; }
 
-/* 目前位置樣式 - 禁用狀態 */
+/* Current Location Style (Disabled state in Move Modal) */
 #move-tree-container .tree-content.current-location {
     opacity: 0.6;
     background-color: #f8f9fa;

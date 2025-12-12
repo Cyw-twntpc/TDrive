@@ -138,7 +138,15 @@ const UIHandler = {
             message ? errorEl.classList.add('show') : errorEl.classList.remove('show');
         }
         if (inputEl) {
-            inputEl.classList.toggle('error', !!message);
+            if (message) {
+                inputEl.classList.add('input-error', 'shake');
+                // Remove shake class after animation completes so it can be re-triggered
+                setTimeout(() => {
+                    inputEl.classList.remove('shake');
+                }, 300);
+            } else {
+                inputEl.classList.remove('input-error');
+            }
         }
     },
     /**

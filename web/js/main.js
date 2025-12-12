@@ -206,6 +206,12 @@ document.addEventListener('DOMContentLoaded', () => {
      * The main application initialization sequence.
      */
     async function initialize() {
+        // Create the global tooltip element for the file tree
+        const tooltip = document.createElement('div');
+        tooltip.id = 'tree-tooltip';
+        tooltip.style.display = 'none';
+        document.body.appendChild(tooltip);
+
         // 1. Wait for the QWebChannel bridge to become available.
         await new Promise(resolve => {
             const interval = setInterval(() => {

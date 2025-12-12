@@ -99,7 +99,7 @@ async def get_group(client, app_api_id: int) -> int | None:
     try:
         result = await client(CreateChannelRequest(
             title=name,
-            about="This is the TDrive storage group. Do not delete or leave.",
+            about="這是 TDrive 儲存群組。請勿刪除或退出。",
             megagroup=True
         ))
         channel = result.chats[0]
@@ -202,14 +202,14 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
         messages_to_download = [m for m in messages_to_download if m]
         
         if len(messages_to_download) != len(file_details['chunks']):
-            raise FileNotFoundError(f"Could not retrieve all parts for '{file_name}'. Some parts may be missing from the cloud.")
+            raise FileNotFoundError(f"無法取得 '{file_name}' 的所有部分。雲端可能遺失了部分檔案。")
 
         total_size = int(file_details['size'])
         
         # 1. Check disk space and pre-allocate the file.
         free_space = shutil.disk_usage(download_dir).free
         if free_space < total_size:
-            raise IOError(f"Not enough disk space. Required: {total_size / 1024**2:.2f} MB, Available: {free_space / 1024**2:.2f} MB.")
+            raise IOError(f"磁碟空間不足。需要：{total_size / 1024**2:.2f} MB，可用：{free_space / 1024**2:.2f} MB。")
         
         with open(final_path, 'wb') as f:
             f.seek(total_size - 1)
@@ -272,7 +272,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
         logger.info(f"All parts of '{file_name}' processed. Performing final integrity check.")
         final_hash = cr.hash_data(final_path)
         if final_hash != file_details['hash']:
-            raise ValueError(f"Final checksum for '{file_name}' does not match. The file may be corrupt.")
+            raise ValueError(f"'{file_name}' 的最終校驗和不符。檔案可能已損毀。")
         
         logger.info(f"'{file_name}' successfully downloaded and verified.")
         if progress_callback:
@@ -289,7 +289,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
     except Exception as e:
         logger.error(f"Download failed for '{file_name}' (task_id: {task_id}): {e}", exc_info=True)
         if progress_callback:
-            msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "An unexpected error occurred during download."
+            msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "下載過程中發生未預期的錯誤。"
             progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
         if 'final_path' in locals() and os.path.exists(final_path):
             os.remove(final_path)

@@ -33,25 +33,30 @@ const ActionHandler = {
      */
     async handleRename(item) {
         const { id, name, type } = item;
-        const newName = await this._uiModals.showPrompt('重新命名', `請輸入 "${name}" 的新名稱：`, name);
-        if (newName === null || newName === name) return; // User cancelled or entered the same name
-
-        this._uiManager.startProgress();
-        this._uiManager.setInteractionLock(true);
-        try {
-            const result = await this._apiService.renameItem(id, newName, type);
-            if (result.success) {
-                await this._refreshAllCallback();
-            } else {
-                this._uiManager.handleBackendError(result);
-            }
-        } catch (error) {
-            console.error("Rename operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
-        } finally {
-            this._uiManager.stopProgress();
-            this._uiManager.setInteractionLock(false);
-        }
+        
+        await this._uiModals.showPrompt(
+            '重新命名',
+            `請輸入 "${name}" 的新名稱：`,
+            name,
+            async (newName) => {
+                if (newName === name) return { success: true }; // No change
+                
+                try {
+                    const result = await this._apiService.renameItem(id, newName, type);
+                    if (result.success) {
+                        await this._refreshAllCallback();
+                        return { success: true };
+                    } else {
+                        // Return error to be displayed inline
+                        return { success: false, message: result.message };
+                    }
+                } catch (error) {
+                    console.error("Rename operation failed:", error);
+                    return { success: false, message: "與後端通訊時發生錯誤，請重試。" };
+                }
+            },
+            'filename' // Selection strategy: only select the filename part
+        );
     },
 
     /**
@@ -596,25 +601,26 @@ const ActionHandler = {
      * Handles the creation of a new folder.
      */
     async handleNewFolder() {
-        const newFolderName = await this._uiModals.showPrompt("新資料夾", "請輸入新資料夾的名稱：", "未命名資料夾");
-        if (newFolderName === null) return;
-
-        this._uiManager.startProgress();
-        this._uiManager.setInteractionLock(true);
-        try {
-            const result = await this._apiService.createFolder(this._appState.currentFolderId, newFolderName);
-            if (result.success) {
-                await this._refreshAllCallback();
-            } else {
-                this._uiManager.handleBackendError(result);
+        await this._uiModals.showPrompt(
+            "新資料夾", 
+            "請輸入新資料夾的名稱：", 
+            "未命名資料夾",
+            async (newFolderName) => {
+                try {
+                    const result = await this._apiService.createFolder(this._appState.currentFolderId, newFolderName);
+                    if (result.success) {
+                        await this._refreshAllCallback();
+                        return { success: true };
+                    } else {
+                        // Return error to be displayed inline
+                        return { success: false, message: result.message };
+                    }
+                } catch (error) {
+                    console.error("Create folder operation failed:", error);
+                    return { success: false, message: "與後端通訊時發生錯誤，請重試。" };
+                }
             }
-        } catch (error) {
-            console.error("Create folder operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
-        } finally {
-            this._uiManager.stopProgress();
-            this._uiManager.setInteractionLock(false);
-        }
+        );
     },
 
     /**
