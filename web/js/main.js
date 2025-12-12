@@ -63,11 +63,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderListAndSyncManager(); // Progressively render new results.
         } else if (type === 'done') {
             UIManager.stopProgress();
-            UIManager.toggleSearchSpinner(false);
             console.log(`Search complete for request_id: ${request_id}`);
         } else if (type === 'error') {
             UIManager.stopProgress();
-            UIManager.toggleSearchSpinner(false);
             UIManager.handleBackendError(data || { message: "搜尋過程中發生未知錯誤。" });
         }
     }

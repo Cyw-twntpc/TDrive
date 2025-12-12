@@ -13,8 +13,12 @@
 .file-item-col.size { flex: 1; justify-content: flex-end; min-width: 100px; }
 
 .header-name-wrapper { display: flex; align-items: center; }
-.name-col-main { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; }
-.name-col-main i { margin-right: 15px; font-size: 20px; width: 24px; text-align: center; pointer-events: none; }
+.name-col-main { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; flex-grow: 1; min-width: 0; }
+.name-col-main i { margin-right: 15px; font-size: 20px; width: 24px; text-align: center; pointer-events: none; flex-shrink: 0; }
+.name-and-path { overflow: hidden; display: flex; flex-direction: column; min-width: 0; flex-grow: 1; }
+.name-wrapper { display: flex; align-items: center; min-width: 0; }
+.name-part-base { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
+.name-part-ext { flex-shrink: 0; white-space: nowrap; }
 .folder-icon { color: var(--primary-color); }
 .file-icon { color: var(--text-light-color); }
 

@@ -59,22 +59,3 @@
     position: relative; /* Needed for spinner positioning */
 }
 
-#search-spinner {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--text-light-color);
-    display: none; /* Hidden by default */
-}
-
-#search-spinner.visible {
-    display: inline-block;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    100% {
-        transform: translateY(-50%) rotate(360deg);
-    }
-}

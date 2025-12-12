@@ -686,7 +686,6 @@ const ActionHandler = {
 
         // Provide immediate visual feedback.
         this._uiManager.startProgress();
-        this._uiManager.toggleSearchSpinner(true);
         this._appState.currentFolderContents = { folders: [], files: [] }; // Clear previous results
         FileListHandler.sortAndRender(this._appState); // Render the empty state
         FileListHandler.updateBreadcrumb(this._appState, this._navigateToCallback);

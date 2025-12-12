@@ -21,11 +21,6 @@ const UIManager = {
     setInteractionLock(isLocked) {
         document.getElementById('interaction-lock-overlay')?.classList.toggle('visible', isLocked);
     },
-
-    /** Toggles the visibility of the search spinner. */
-    toggleSearchSpinner(show) {
-        document.getElementById('search-spinner')?.classList.toggle('visible', show);
-    },
     
     // --- UI Formatting Helpers ---
 

@@ -180,12 +180,27 @@ const FileListHandler = {
             }
         }
 
+        // [Feature] Smart Filename Truncation (Keep Extension)
+        let nameHtml = '';
+        if (isFolder) {
+            nameHtml = `<span>${item.name}</span>`;
+        } else {
+            const lastDotIndex = item.name.lastIndexOf('.');
+            if (lastDotIndex > 0 && lastDotIndex < item.name.length - 1) {
+                const baseName = item.name.substring(0, lastDotIndex);
+                const extName = item.name.substring(lastDotIndex);
+                nameHtml = `<span class="name-part-base">${baseName}</span><span class="name-part-ext">${extName}</span>`;
+            } else {
+                nameHtml = `<span class="name-part-base">${item.name}</span>`;
+            }
+        }
+
         itemEl.innerHTML = `
             <div class="file-item-col name">
                 <div class="name-col-main">
                     ${iconHtml}
                     <div class="name-and-path">
-                        <span>${item.name}</span>
+                        <div class="name-wrapper">${nameHtml}</div>
                         ${pathHtml} 
                     </div>
                 </div>
