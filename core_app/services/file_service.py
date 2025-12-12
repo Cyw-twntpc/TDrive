@@ -4,11 +4,12 @@ from telethon import errors as telethon_errors
 from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
 if TYPE_CHECKING:
-    from ..shared_state import SharedState
+    from core_app.data.shared_state import SharedState
 
 from . import utils
-from .. import errors, telegram_comms
-from ..db_handler import DatabaseHandler
+from core_app.common import errors
+from core_app.api import telegram_comms
+from core_app.data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
 

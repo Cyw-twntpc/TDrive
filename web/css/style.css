@@ -1,9 +1,10 @@
-@import url('_base.css');
-@import url('_layout.css');
-@import url('_components.css');
-@import url('_file_tree.css');
-@import url('_file_list.css');
-@import url('_transfer_panel.css');
+@import url('base/_base.css');
+@import url('layout/_layout.css');
+@import url('components/_components.css');
+@import url('pages/_file_tree.css');
+@import url('pages/_file_list.css');
+@import url('components/_transfer_panel.css');
+@import url('components/_global_indicators.css');
 /* Drag and Drop Visuals */
 .drop-target {
     background-color: rgba(0, 122, 255, 0.1) !important;

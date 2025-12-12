@@ -3,7 +3,7 @@ import logging
 import asyncio
 from PySide6.QtCore import QObject, Slot, Signal, QEventLoop as QtEventLoop
 from .main_service import TDriveService
-from .gui_utils import core_select_files, core_select_directory
+from .ui.gui_utils import core_select_files, core_select_directory
 
 logger = logging.getLogger(__name__)
 

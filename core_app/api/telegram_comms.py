@@ -18,8 +18,8 @@ from typing import Callable
 
 from . import crypto_handler as cr
 from . import file_processor as fp
-from .db_handler import DatabaseHandler
-from .shared_state import TEMP_DIR
+from ..data.db_handler import DatabaseHandler
+from ..data.shared_state import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 

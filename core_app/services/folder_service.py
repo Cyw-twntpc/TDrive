@@ -2,9 +2,9 @@ import logging
 from typing import TYPE_CHECKING, List, Dict, Any
 
 if TYPE_CHECKING:
-    from ..shared_state import SharedState
+    from core_app.data.shared_state import SharedState
 
-from ..db_handler import DatabaseHandler
+from core_app.data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
 

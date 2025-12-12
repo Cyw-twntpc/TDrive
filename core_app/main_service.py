@@ -2,7 +2,7 @@ import logging
 import asyncio
 from typing import Dict, Any, List, Callable
 
-from .shared_state import SharedState
+from .data.shared_state import SharedState
 from .services.auth_service import AuthService
 from .services.file_service import FileService
 from .services.folder_service import FolderService

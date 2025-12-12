@@ -8,8 +8,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QIcon, QCloseEvent, QGuiApplication, QColor
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
-from tdrive_app.main_service import TDriveService
-from tdrive_app.bridge import Bridge
+from core_app.main_service import TDriveService
+from core_app.bridge import Bridge
 
 logger = logging.getLogger(__name__)
 

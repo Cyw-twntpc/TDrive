@@ -7,12 +7,12 @@ import shutil
 from typing import TYPE_CHECKING, Optional
 from telethon import TelegramClient
 
-from .. import telegram_comms
-from ..shared_state import TEMP_DIR
+from core_app.api import telegram_comms
+from core_app.data.shared_state import TEMP_DIR
 
 # Use a forward reference for type hinting to avoid circular imports.
 if TYPE_CHECKING:
-    from ..shared_state import SharedState
+    from core_app.data.shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 

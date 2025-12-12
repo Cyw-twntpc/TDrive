@@ -9,8 +9,8 @@ from PySide6.QtGui import QIcon, QCloseEvent
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 
-from tdrive_app.main_service import TDriveService
-from tdrive_app.bridge import Bridge
+from core_app.main_service import TDriveService
+from core_app.bridge import Bridge
 
 logger = logging.getLogger(__name__)
 

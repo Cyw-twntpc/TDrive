@@ -12,11 +12,11 @@ from PySide6.QtWidgets import QApplication
 
 from qasync import QEventLoop
 
-from tdrive_app import logger_config
-from tdrive_app.services.utils import cleanup_temp_folders
-from tdrive_app.main_service import TDriveService
-from tdrive_app.windows.login_window import LoginWindow
-from tdrive_app.windows.main_window import MainWindow
+from core_app.common import logger_config
+from core_app.services.utils import cleanup_temp_folders
+from core_app.main_service import TDriveService
+from core_app.ui.windows.login_window import LoginWindow
+from core_app.ui.windows.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
