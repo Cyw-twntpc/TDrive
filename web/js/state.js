@@ -31,4 +31,11 @@ const AppState = {
     userInfo: null,
     // Base64 data URI of the user's avatar.
     userAvatar: null,
+    // --- Drag and Drop State ---
+    // Whether a drag operation is currently in progress.
+    isDragging: false,
+    // Array of items currently being dragged.
+    draggedItems: [],
+    // Timer ID for folder auto-expansion during drag hover.
+    dragHoverTimer: null,
 };

@@ -72,15 +72,21 @@ const FileTreeHandler = {
         // Create the expand/collapse toggle arrow.
         const toggle = document.createElement('span');
         toggle.className = 'folder-toggle';
+        
+        // Toggle action helper
+        const toggleAction = () => {
+            const subTree = li.querySelector('ul');
+            if (subTree) {
+                subTree.classList.toggle('collapsed');
+                toggle.classList.toggle('open');
+            }
+        };
+
         if (hasSubFolders) {
             toggle.innerHTML = '<i class="fas fa-caret-right"></i>';
             toggle.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const subTree = li.querySelector('ul');
-                if (subTree) {
-                    subTree.classList.toggle('collapsed');
-                    toggle.classList.toggle('open');
-                }
+                toggleAction();
             });
         }
     
@@ -89,6 +95,54 @@ const FileTreeHandler = {
         const icon = isRoot ? 'fa-hdd' : 'fa-folder'; // Root gets a different icon.
         contentDiv.innerHTML = `<i class="fas ${icon} folder-icon"></i><span class="folder-name">${folder.name}</span>`;
         contentDiv.addEventListener('click', () => navigateTo(folder.id));
+        
+        // --- Drop Target & Auto-Expand Logic ---
+        contentDiv.addEventListener('dragover', (e) => {
+            if (!AppState.isDragging) return;
+
+            // Use the centralized validation logic
+            const isValid = ActionHandler.isValidMove(AppState.draggedItems, folder.id);
+
+            if (!isValid) {
+                e.dataTransfer.dropEffect = 'none';
+                return; // Do not preventDefault, effectively disabling drop
+            }
+
+            e.preventDefault(); // Allow drop
+            e.stopPropagation(); // Stop bubbling
+            e.dataTransfer.dropEffect = 'move';
+            contentDiv.classList.add('drop-target');
+
+            // Auto-Expand Logic
+            if (hasSubFolders && !toggle.classList.contains('open')) {
+                if (!AppState.dragHoverTimer) {
+                    AppState.dragHoverTimer = setTimeout(() => {
+                        toggleAction();
+                        AppState.dragHoverTimer = null;
+                    }, 800); // Expand after 800ms hover
+                }
+            }
+        });
+
+        contentDiv.addEventListener('dragleave', () => {
+            contentDiv.classList.remove('drop-target');
+            if (AppState.dragHoverTimer) {
+                clearTimeout(AppState.dragHoverTimer);
+                AppState.dragHoverTimer = null;
+            }
+        });
+
+        contentDiv.addEventListener('drop', (e) => {
+            e.preventDefault();
+            contentDiv.classList.remove('drop-target');
+            if (AppState.dragHoverTimer) {
+                clearTimeout(AppState.dragHoverTimer);
+                AppState.dragHoverTimer = null;
+            }
+            if (AppState.isDragging) {
+                ActionHandler.executeMove(AppState.draggedItems, folder.id);
+            }
+        });
     
         itemDiv.appendChild(toggle);
         itemDiv.appendChild(contentDiv);

@@ -4,4 +4,39 @@
 @import url('_file_tree.css');
 @import url('_file_list.css');
 @import url('_transfer_panel.css');
-@import url('_global_indicators.css');
+/* Drag and Drop Visuals */
+.drop-target {
+    background-color: rgba(0, 122, 255, 0.1) !important;
+    outline: 2px dashed var(--primary-color) !important;
+    outline-offset: -2px;
+}
+
+.file-item.dragging {
+    opacity: 0.4;
+    background-color: #f0f0f0;
+}
+
+#drag-ghost {
+    position: absolute;
+    top: -1000px;
+    left: -1000px;
+    padding: 8px 12px;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 99999;
+    pointer-events: none;
+    max-width: 300px;
+}
+#drag-ghost i { font-size: 16px; }
+#drag-ghost span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

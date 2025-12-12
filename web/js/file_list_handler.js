@@ -57,6 +57,10 @@ const FileListHandler = {
             } else {
                 const link = Object.assign(document.createElement('a'), { href: '#', textContent: folder.name });
                 link.addEventListener('click', (e) => { e.preventDefault(); navigateTo(folder.id); });
+                
+                // [Added] Make breadcrumb items drop targets
+                this._setupDropTarget(link, folder.id);
+
                 this.breadcrumbEl.appendChild(link);
                 this.breadcrumbEl.appendChild(Object.assign(document.createElement('span'), { className: 'separator', innerHTML: '&nbsp;&gt;&nbsp;' }));
             }
@@ -91,12 +95,63 @@ const FileListHandler = {
     _createItemElement(item, isFolder, AppState) {
         const itemEl = document.createElement('div');
         itemEl.className = 'file-item';
+        itemEl.draggable = true; // [Added] Enable dragging
         itemEl.dataset.id = item.id;
         itemEl.dataset.name = item.name;
         itemEl.dataset.type = isFolder ? 'folder' : 'file';
         
         if (item.isUploading) {
             itemEl.classList.add('is-uploading');
+            itemEl.draggable = false; // Uploading items cannot be dragged
+        }
+
+        // --- Drag Source Logic ---
+        itemEl.addEventListener('dragstart', (e) => {
+            if (itemEl.classList.contains('is-uploading')) {
+                e.preventDefault();
+                return;
+            }
+
+            // Selection Logic:
+            // If dragging an unselected item, select it exclusively.
+            // If dragging a selected item, drag all selected items.
+            const isSelected = itemEl.classList.contains('selected');
+            if (!isSelected) {
+                // Clear previous selection
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+                AppState.selectedItems.length = 0;
+                // Select current
+                itemEl.classList.add('selected');
+                AppState.selectedItems.push({ ...item, type: isFolder ? 'folder' : 'file' });
+            }
+
+            AppState.isDragging = true;
+            AppState.draggedItems = [...AppState.selectedItems];
+            
+            // Set Drag Image (Ghost)
+            const ghost = this._createDragGhost(AppState.draggedItems);
+            document.body.appendChild(ghost);
+            e.dataTransfer.setDragImage(ghost, 0, 0);
+            setTimeout(() => document.body.removeChild(ghost), 0); // Cleanup DOM immediately
+
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', JSON.stringify(AppState.draggedItems.map(i => i.id))); // Fallback data
+
+            // Visual feedback
+            requestAnimationFrame(() => {
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.add('dragging'));
+            });
+        });
+
+        itemEl.addEventListener('dragend', (e) => {
+            AppState.isDragging = false;
+            AppState.draggedItems = [];
+            document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
+        });
+
+        // --- Drop Target Logic (Folders only) ---
+        if (isFolder) {
+            this._setupDropTarget(itemEl, item.id);
         }
 
         // Determine the correct icon based on item type or upload status.
@@ -180,6 +235,59 @@ const FileListHandler = {
         });
 
         return itemEl;
+    },
+
+    _createDragGhost(items) {
+        const div = document.createElement('div');
+        div.id = 'drag-ghost';
+        const count = items.length;
+        
+        if (count > 1) {
+            // Multiple items: Show generic icon + total count
+            // Check if mixed types or all folders/files to choose icon
+            const hasFolder = items.some(i => i.type === 'folder');
+            const iconClass = hasFolder ? 'fas fa-folder' : 'fas fa-file'; // Or 'fas fa-layer-group'
+            
+            div.innerHTML = `<i class="${iconClass}"></i> <span>${count}</span>`;
+        } else {
+            // Single item: Show specific icon + name
+            const item = items[0];
+            const iconClass = item.type === 'folder' ? 'fas fa-folder' : UIManager.getFileTypeIcon(item.name);
+            div.innerHTML = `<i class="${iconClass}"></i> <span>${item.name}</span>`;
+        }
+        
+        return div;
+    },
+
+    _setupDropTarget(element, targetId) {
+        element.addEventListener('dragover', (e) => {
+            if (!AppState.isDragging) return;
+
+            const isValid = ActionHandler.isValidMove(AppState.draggedItems, targetId);
+
+            if (!isValid) {
+                e.dataTransfer.dropEffect = 'none';
+                return;
+            }
+
+            e.preventDefault(); // Allow drop
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            element.classList.add('drop-target');
+        });
+
+        element.addEventListener('dragleave', () => {
+            element.classList.remove('drop-target');
+        });
+
+        element.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            element.classList.remove('drop-target');
+            if (AppState.isDragging) {
+                ActionHandler.executeMove(AppState.draggedItems, targetId);
+            }
+        });
     },
 
     /**

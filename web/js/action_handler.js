@@ -126,217 +126,471 @@ const ActionHandler = {
         }
     },
 
-    /**
-     * Handles the move action for all selected items.
-     */
-    async handleMove() {
-        if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要移動的項目。", 'btn-primary');
-        }
+                /**
 
-        const modalId = 'move-modal';
-        const treeContainer = document.getElementById('move-tree-container');
-        const confirmBtn = document.getElementById('move-confirm-btn');
-        const cancelBtn = document.getElementById('move-cancel-btn');
-        const closeBtn = document.getElementById('move-close-btn');
+                 * Checks if a move operation is valid.
 
-        let selectedTargetId = null;
+                 * @param {Array} items - The items to move.
 
-        // Helper to get the path of IDs from root to current folder for default expansion
-        const getPathToCurrent = () => {
-            const path = [];
-            let current = this._appState.currentFolderId;
-            while(current) {
-                path.unshift(current);
-                const folder = this._appState.folderMap.get(current);
-                current = folder ? folder.parent_id : null;
+                 * @param {number} targetFolderId - The destination folder ID.
+
+                 * @returns {boolean} True if the move is valid.
+
+                 */
+
+                isValidMove(items, targetFolderId) {
+
+                    if (!items || items.length === 0) return false;
+
+                    
+
+                    // Ensure targetFolderId is a number
+
+                    const targetId = Number(targetFolderId);
+
+            
+
+                    // Check if any item is being moved into itself
+
+                    // [Fix] Only folders can be target destinations, so only a folder with the same ID is invalid (self-move).
+
+                    // A file with ID 5 CAN be moved into a folder with ID 5.
+
+                    const isSelf = items.some(item => item.type === 'folder' && item.id === targetId);
+
+                    if (isSelf) return false;
+
+            
+
+                    // Check for circular dependency (moving a folder into its own subtree)
+
+                    const isCircular = items.some(item => {
+
+                        if (item.type !== 'folder') return false;
+
+                        let current = targetId;
+
+                        // Prevent infinite loop if tree is malformed
+
+                        let depth = 0; 
+
+                        while (current && depth < 100) {
+
+                            if (current === item.id) return true;
+
+                            const folder = this._appState.folderMap.get(current);
+
+                            current = folder ? folder.parent_id : null;
+
+                            depth++;
+
+                        }
+
+                        return false;
+
+                    });
+
+            
+
+                    if (isCircular) return false;
+
+            
+
+                    return true;
+
+                },
+
+        
+
+            /**
+
+             * Executes the move operation via the API and handles the UI updates.
+
+         * This is a shared helper used by both the move modal and drag-and-drop.
+
+         * @param {Array} items - The items to move.
+
+         * @param {number} targetFolderId - The destination folder ID.
+
+         */
+
+        async executeMove(items, targetFolderId) {
+
+            if (!items || items.length === 0) return;
+
+    
+
+            // Prevent moving into self or moving to current folder (no-op)
+
+            if (targetFolderId === this._appState.currentFolderId) return;
+
+            
+
+            // Prevent moving a folder into its own subtree (Basic frontend check, backend also checks)
+
+            const isCircular = items.some(item => {
+
+                if (item.type !== 'folder') return false;
+
+                let current = targetFolderId;
+
+                while (current) {
+
+                    if (current === item.id) return true;
+
+                    const folder = this._appState.folderMap.get(current);
+
+                    current = folder ? folder.parent_id : null;
+
+                }
+
+                return false;
+
+            });
+
+    
+
+            if (isCircular) {
+
+                this._uiModals.showAlert("操作無效", "無法將資料夾移動到其子資料夾中。", 'btn-danger');
+
+                return;
+
             }
-            return path;
-        };
-        const expandedIds = new Set(getPathToCurrent());
 
-        // Render the folder tree specifically for the move operation
-        const renderMoveTree = () => {
-            treeContainer.innerHTML = '';
+    
+
+            this._uiManager.startProgress();
+
+            this._uiManager.setInteractionLock(true);
+
             
-            // Get root folders
-            const roots = this._appState.folderTreeData.filter(f => f.parent_id === null);
-            
-            // Helper to check if a folder is one of the items being moved (to prevent moving into self)
-            const isBeingMoved = (folderId) => {
-                return this._appState.selectedItems.some(i => i.type === 'folder' && i.id === folderId);
+
+            try {
+
+                const result = await this._apiService.moveItems(items, targetFolderId);
+
+                
+
+                if (result.success) {
+
+                    await this._refreshAllCallback();
+
+                } else {
+
+                    this._uiManager.handleBackendError(result);
+
+                }
+
+            } catch (error) {
+
+                console.error("Move operation failed:", error);
+
+                this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+
+            } finally {
+
+                this._uiManager.stopProgress();
+
+                this._uiManager.setInteractionLock(false);
+
+            }
+
+        },
+
+    
+
+        /**
+
+         * Handles the move action for all selected items via the modal dialog.
+
+         */
+
+        async handleMove() {
+
+            if (this._appState.selectedItems.length === 0) {
+
+                return await this._uiModals.showAlert("提示", "請先選擇要移動的項目。", 'btn-primary');
+
+            }
+
+    
+
+            const modalId = 'move-modal';
+
+            const treeContainer = document.getElementById('move-tree-container');
+
+            const confirmBtn = document.getElementById('move-confirm-btn');
+
+            const cancelBtn = document.getElementById('move-cancel-btn');
+
+            const closeBtn = document.getElementById('move-close-btn');
+
+    
+
+            let selectedTargetId = null;
+
+    
+
+            // Helper to get the path of IDs from root to current folder for default expansion
+
+            const getPathToCurrent = () => {
+
+                const path = [];
+
+                let current = this._appState.currentFolderId;
+
+                while(current) {
+
+                    path.unshift(current);
+
+                    const folder = this._appState.folderMap.get(current);
+
+                    current = folder ? folder.parent_id : null;
+
+                }
+
+                return path;
+
             };
 
-            const createNode = (folder, level) => {
-                // If this folder is being moved, don't render it or its children in the destination tree
-                if (isBeingMoved(folder.id)) return null;
+            const expandedIds = new Set(getPathToCurrent());
 
-                const nodeEl = document.createElement('div');
-                nodeEl.className = 'tree-node';
-                nodeEl.style.paddingLeft = `${level * 20}px`;
-                
-                const contentEl = document.createElement('div');
-                contentEl.className = 'tree-content';
-                contentEl.dataset.id = folder.id;
-                
-                // Add toggle icon if children exist
-                const children = this._appState.folderTreeData.filter(f => f.parent_id === folder.id);
-                const hasChildren = children.length > 0;
-                
-                let toggleIcon = '';
-                if (hasChildren) {
-                    const isExpanded = expandedIds.has(folder.id);
-                    toggleIcon = `<i class="fas ${isExpanded ? 'fa-caret-down' : 'fa-caret-right'} tree-toggle"></i>`;
-                } else {
-                    toggleIcon = `<span class="tree-toggle-placeholder"></span>`;
-                }
+    
 
-                contentEl.innerHTML = `${toggleIcon} <i class="fas fa-folder"></i> <span class="folder-name">${folder.name}</span>`;
+            // Render the folder tree specifically for the move operation
+
+            const renderMoveTree = () => {
+
+                treeContainer.innerHTML = '';
+
                 
-                if (folder.id === this._appState.currentFolderId) {
-                    contentEl.classList.add('current-location');
-                    contentEl.title = "目前位置";
-                }
 
-                // Event listener for selection
-                contentEl.addEventListener('click', (e) => {
-                    // Prevent selection of current folder
-                    if (folder.id === this._appState.currentFolderId) return;
+                // Get root folders
 
-                    // Handle toggle click separately if clicked on the caret
-                    if (e.target.classList.contains('tree-toggle')) {
-                        e.stopPropagation();
-                        if (expandedIds.has(folder.id)) expandedIds.delete(folder.id);
-                        else expandedIds.add(folder.id);
-                        renderMoveTree(); // Re-render to show/hide children
-                        return;
+                const roots = this._appState.folderTreeData.filter(f => f.parent_id === null);
+
+                
+
+                // Helper to check if a folder is one of the items being moved (to prevent moving into self)
+
+                const isBeingMoved = (folderId) => {
+
+                    return this._appState.selectedItems.some(i => i.type === 'folder' && i.id === folderId);
+
+                };
+
+    
+
+                const createNode = (folder, level) => {
+
+                    // If this folder is being moved, don't render it or its children in the destination tree
+
+                    if (isBeingMoved(folder.id)) return null;
+
+    
+
+                    const nodeEl = document.createElement('div');
+
+                    nodeEl.className = 'tree-node';
+
+                    nodeEl.style.paddingLeft = `${level * 20}px`;
+
+                    
+
+                    const contentEl = document.createElement('div');
+
+                    contentEl.className = 'tree-content';
+
+                    contentEl.dataset.id = folder.id;
+
+                    
+
+                    // Add toggle icon if children exist
+
+                    const children = this._appState.folderTreeData.filter(f => f.parent_id === folder.id);
+
+                    const hasChildren = children.length > 0;
+
+                    
+
+                    let toggleIcon = '';
+
+                    if (hasChildren) {
+
+                        const isExpanded = expandedIds.has(folder.id);
+
+                        toggleIcon = `<i class="fas ${isExpanded ? 'fa-caret-down' : 'fa-caret-right'} tree-toggle"></i>`;
+
+                    } else {
+
+                        toggleIcon = `<span class="tree-toggle-placeholder"></span>`;
+
                     }
 
-                    document.querySelectorAll('#move-tree-container .tree-content.selected').forEach(el => el.classList.remove('selected'));
-                    contentEl.classList.add('selected');
-                    selectedTargetId = folder.id;
-                    confirmBtn.disabled = false;
-                });
+    
 
-                nodeEl.appendChild(contentEl);
+                    contentEl.innerHTML = `${toggleIcon} <i class="fas fa-folder"></i> <span class="folder-name">${folder.name}</span>`;
 
-                // Render children if expanded
-                if (hasChildren && expandedIds.has(folder.id)) {
-                    const childrenContainer = document.createElement('div');
-                    children.forEach(child => {
-                        const childNode = createNode(child, level + 1);
-                        if (childNode) childrenContainer.appendChild(childNode);
-                    });
-                    nodeEl.appendChild(childrenContainer);
-                }
-                
-                return nodeEl;
-            };
+                    
 
-            roots.forEach(root => {
-                const rootNode = createNode(root, 0);
-                if (rootNode) treeContainer.appendChild(rootNode);
-            });
-        };
+                    if (folder.id === this._appState.currentFolderId) {
 
-                renderMoveTree();
+                        contentEl.classList.add('current-location');
 
-                confirmBtn.disabled = true; // [已恢復] 初始狀態禁用
+                        contentEl.title = "目前位置";
 
-                this._uiManager.toggleModal(modalId, true);
+                    }
 
-        
+    
 
-                return new Promise(resolve => {
+                    // Event listener for selection
 
-                    const cleanup = () => {
+                    contentEl.addEventListener('click', (e) => {
 
-                        this._uiManager.toggleModal(modalId, false);
+                        // Prevent selection of current folder
 
-                        confirmBtn.removeEventListener('click', onConfirm);
+                        if (folder.id === this._appState.currentFolderId) return;
 
-                        cancelBtn.removeEventListener('click', onCancel);
+    
 
-                        closeBtn.removeEventListener('click', onCancel);
+                        // Handle toggle click separately if clicked on the caret
 
-                    };
+                        if (e.target.classList.contains('tree-toggle')) {
 
-        
+                            e.stopPropagation();
 
-                    const onConfirm = async () => {
+                            if (expandedIds.has(folder.id)) expandedIds.delete(folder.id);
 
-                        if (selectedTargetId === null) return;
+                            else expandedIds.add(folder.id);
 
-                        
-
-                        // Optimistic check: moving to same folder
-
-                        if (selectedTargetId === this._appState.currentFolderId) {
-
-                            cleanup();
-
-                            resolve();
+                            renderMoveTree(); // Re-render to show/hide children
 
                             return;
 
                         }
 
-        
+    
 
-                        cleanup();
+                        document.querySelectorAll('#move-tree-container .tree-content.selected').forEach(el => el.classList.remove('selected'));
 
-                        this._uiManager.startProgress();
+                        contentEl.classList.add('selected');
 
-                        this._uiManager.setInteractionLock(true);
+                        selectedTargetId = folder.id;
 
-                        
+                        confirmBtn.disabled = false;
 
-                        try {
+                    });
 
-                            const itemsToMove = this._appState.selectedItems.map(item => ({ id: item.id, type: item.type }));
+    
 
-                            const result = await this._apiService.moveItems(itemsToMove, selectedTargetId);
+                    nodeEl.appendChild(contentEl);
 
-                            
+    
 
-                            if (result.success) {
+                    // Render children if expanded
 
-                                await this._refreshAllCallback();
+                    if (hasChildren && expandedIds.has(folder.id)) {
 
-                            } else {
+                        const childrenContainer = document.createElement('div');
 
-                                this._uiManager.handleBackendError(result);
+                        children.forEach(child => {
 
-                            }
+                            const childNode = createNode(child, level + 1);
 
-                        } catch (error) {
+                            if (childNode) childrenContainer.appendChild(childNode);
 
-                            console.error("Move operation failed:", error);
+                        });
 
-                            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+                        nodeEl.appendChild(childrenContainer);
 
-                        } finally {
+                    }
 
-                            this._uiManager.stopProgress();
+                    
 
-                            this._uiManager.setInteractionLock(false);
+                    return nodeEl;
 
-                            resolve();
+                };
 
-                        }
+    
 
-                    };
+                roots.forEach(root => {
 
-            const onCancel = () => {
-                cleanup();
-                resolve();
+                    const rootNode = createNode(root, 0);
+
+                    if (rootNode) treeContainer.appendChild(rootNode);
+
+                });
+
             };
 
-            confirmBtn.addEventListener('click', onConfirm);
-            cancelBtn.addEventListener('click', onCancel);
-            closeBtn.addEventListener('click', onCancel);
-        });
-    },
+    
+
+            renderMoveTree();
+
+            confirmBtn.disabled = true; // [已恢復] 初始狀態禁用
+
+            this._uiManager.toggleModal(modalId, true);
+
+    
+
+            return new Promise(resolve => {
+
+                const cleanup = () => {
+
+                    this._uiManager.toggleModal(modalId, false);
+
+                    confirmBtn.removeEventListener('click', onConfirm);
+
+                    cancelBtn.removeEventListener('click', onCancel);
+
+                    closeBtn.removeEventListener('click', onCancel);
+
+                };
+
+    
+
+                const onConfirm = async () => {
+
+                    if (selectedTargetId === null) return;
+
+                    
+
+                    cleanup();
+
+                    
+
+                    const itemsToMove = this._appState.selectedItems.map(item => ({ id: item.id, type: item.type }));
+
+                    await this.executeMove(itemsToMove, selectedTargetId);
+
+                    
+
+                    resolve();
+
+                };
+
+    
+
+                const onCancel = () => {
+
+                    cleanup();
+
+                    resolve();
+
+                };
+
+    
+
+                confirmBtn.addEventListener('click', onConfirm);
+
+                cancelBtn.addEventListener('click', onCancel);
+
+                closeBtn.addEventListener('click', onCancel);
+
+            });
+
+        },
 
     /**
      * Handles the creation of a new folder.
