@@ -93,10 +93,56 @@ document.addEventListener('DOMContentLoaded', () => {
         AppState.currentFolderContents = { folders: [], files: [] };
         renderListAndSyncManager(); 
         
-        // Update UI components that don't depend on the async call.
-        FileTreeHandler.render(AppState, navigateTo);
-        FileListHandler.updateBreadcrumb(AppState, navigateTo);
+        // --- Tree View Updates ---
+        
+        // 1. Calculate the path of ancestors (from Root down to Parent)
+        // We want to expand everything leading UP TO the current folder.
+        const targetPathIds = [];
+        let tempId = folderId;
+        
+        // Start from parent, because we don't expand the current folder itself
+        const currentFolder = AppState.folderMap.get(tempId);
+        if (currentFolder && currentFolder.parent_id !== null) {
+            tempId = currentFolder.parent_id;
+            while(tempId) {
+                targetPathIds.unshift(tempId); // Add to beginning
+                const f = AppState.folderMap.get(tempId);
+                tempId = f ? f.parent_id : null;
+            }
+        }
+        
+        // Ensure Root is in the path (it should be always open)
+        const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
+        if (rootFolder && targetPathIds.length === 0) {
+             // If we are at Root, path is empty. If we are below Root, Root is in path.
+             // Just ensuring consistent array structure.
+             if (folderId !== rootFolder.id) targetPathIds.unshift(rootFolder.id);
+             // If folderId IS root, targetPathIds remains empty (no parents to expand), which is correct.
+             // Wait, if folderId is Root, we don't need to expand anything except Root itself?
+             // Root is special, it's always visible.
+             // But our compareAndSwitch starts from Root. 
+             // If targetPathIds is empty, compareAndSwitch might close Root's children? Yes.
+             // That's correct behavior: "Close everything else".
+             
+             // Actually, if we are AT Root, we want Root expanded? 
+             // "只展開父資料夾" -> Root has no parent. So nothing to expand.
+             // BUT Root's children should be visible? Yes, that means Root is expanded.
+             // Root is always expanded in `render`. `close` logic shouldn't close Root unless we want to.
+             // Our `compareAndSwitch` starts comparing from Root's children.
+             // If targetPathIds is empty, it means we don't require any child of Root to be open.
+             // So Root stays open (it's the container), but its sub-folders (L1) close. Correct.
+        } else if (rootFolder && targetPathIds[0] !== rootFolder.id) {
+             // Should not happen if tree is valid, but safety check.
+             targetPathIds.unshift(rootFolder.id);
+        }
+
+        // 2. Sync Expansion State with Animation
+        FileTreeHandler.compareAndSwitch(targetPathIds, AppState);
+        
+        // 3. Update Visual Selection
         FileTreeHandler.updateSelection(AppState);
+        
+        FileListHandler.updateBreadcrumb(AppState, navigateTo);
 
         // Fetch folder contents in a fire-and-forget manner. The view will be updated by the onFolderContentsReady callback.
         ApiService.getFolderContents(folderId, requestId);
@@ -138,7 +184,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // Trigger the navigation flow to refresh the file list view.
+        // Render the tree structure first (static init)
+        FileTreeHandler.render(AppState, navigateTo);
+
+        // Trigger the navigation flow to refresh the file list view and sync tree state.
         navigateTo(AppState.currentFolderId);
     }
     
