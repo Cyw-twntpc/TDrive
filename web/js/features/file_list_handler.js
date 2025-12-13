@@ -229,25 +229,6 @@ const FileListHandler = {
         itemEl.querySelector('.move-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-move', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.download-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-download', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-delete', { detail: itemDetail, bubbles: true })); });
-        
-        // Manually handle hover effect for action buttons because the pure CSS :hover
-        // can be buggy with virtual lists and fast DOM manipulations.
-        const actionsEl = itemEl.querySelector('.name-col-actions');
-        itemEl.addEventListener('mouseenter', () => {
-            actionsEl.style.visibility = 'visible';
-            actionsEl.style.opacity = '1';
-        });
-        itemEl.addEventListener('mouseleave', () => {
-            actionsEl.style.visibility = 'hidden';
-            actionsEl.style.opacity = '0';
-        });
-        // [Fix] Add mousemove as a fallback to ensure buttons appear if mouseenter is missed
-        itemEl.addEventListener('mousemove', () => {
-            if (actionsEl.style.visibility !== 'visible') {
-                actionsEl.style.visibility = 'visible';
-                actionsEl.style.opacity = '1';
-            }
-        });
 
         return itemEl;
     },
@@ -419,6 +400,7 @@ const FileListHandler = {
             // Only start dragging if the mousedown is on the container itself, not an item.
             if (e.target !== containerEl && e.target !== document.getElementById('file-list-body')) return;
             
+            containerEl.classList.add('is-selecting');
             e.preventDefault(); 
             isDragging = true;
             const rect = containerEl.getBoundingClientRect();
@@ -478,6 +460,7 @@ const FileListHandler = {
             };
 
             const onMouseUp = () => {
+                containerEl.classList.remove('is-selecting');
                 isDragging = false; 
                 this.selectionBox.style.display = 'none';
                 document.removeEventListener('mousemove', onMouseMove);
