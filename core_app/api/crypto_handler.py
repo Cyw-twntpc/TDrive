@@ -114,6 +114,9 @@ def hash_data(data_source: str) -> str:
         sha256_hash.update(data_source.encode('utf-8'))
     return sha256_hash.hexdigest()
 
+def hash_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
 def generate_key(password: str, salt: str) -> bytes:
     """
     Derives a key from a password and salt using PBKDF2.

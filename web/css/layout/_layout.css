@@ -4,6 +4,7 @@
 .sidebar { width: 260px; background-color: var(--sidebar-bg); border-right: 1px solid var(--border-color); padding: 5px; display: flex; flex-direction: column; transition: width 0.3s ease; }
 .logo { padding-bottom: 20px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: center; align-items: center; }
 .logo img { max-width: 80%; height: auto; object-fit: contain; }
+.file-tree-nav { flex: 1; overflow-y: auto; }
 
 /* 主要內容 & 頂部欄 */
 .main-content { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--main-content-bg); position: relative; }

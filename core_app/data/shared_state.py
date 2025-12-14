@@ -6,13 +6,9 @@ all sub-services. It acts as a shared container for application-wide state,
 such as the Telegram client instance, authentication details, and active tasks.
 """
 import asyncio
-import os
 import threading
 from typing import Dict, Optional, Callable
 from telethon import TelegramClient
-
-# Define the base directory for temporary files.
-TEMP_DIR = os.path.join('file', 'temp')
 
 
 class SharedState:

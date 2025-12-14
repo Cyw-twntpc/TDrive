@@ -7,13 +7,12 @@ import ctypes
 import asyncio
 import logging
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import QApplication
 
 from qasync import QEventLoop
 
 from core_app.common import logger_config
-from core_app.services.utils import cleanup_temp_folders
 from core_app.main_service import TDriveService
 from core_app.ui.windows.login_window import LoginWindow
 from core_app.ui.windows.main_window import MainWindow
@@ -81,12 +80,9 @@ class AppController(QObject):
 def main():
     """
     Main entry point for the TDrive application.
-    
-    Initializes logging, cleans up temporary files, sets up the application
-    environment, and starts the main event loop.
+    sets up the application environment, and starts the main event loop.
     """
     logger_config.setup_logging()
-    cleanup_temp_folders()
 
     # Set a custom AppUserModelID for Windows. This is necessary for the
     # application icon to be displayed correctly in the taskbar.
@@ -95,6 +91,10 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception as e:
         logger.warning(f"Could not set AppUserModelID. This may affect the taskbar icon on Windows. Error: {e}")
+
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    QApplication.setAttribute(Qt.AA_UseDesktopOpenGL) 
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
 
     app = QApplication(sys.argv)
     

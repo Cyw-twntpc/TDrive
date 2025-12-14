@@ -49,6 +49,7 @@ class TransferService:
     async def _upload_single_file(self, client, group_id: int, parent_id: int, file_path: str, task_id: str, semaphore: asyncio.Semaphore, progress_callback: Callable):
         """
         The core worker coroutine for uploading a single file.
+        [Optimized] Blocking I/O and CPU-bound tasks are offloaded to a thread pool.
         """
         file_name = os.path.basename(file_path)
         
@@ -69,26 +70,59 @@ class TransferService:
 
             total_size = os.path.getsize(file_path)
             
+            # [新增] 獲取當前事件迴圈，用於將任務丟到背景
+            loop = asyncio.get_running_loop()
+
             try:
-                # Check for existing item with the same name.
-                folder_contents = self.db.get_folder_contents(parent_id)
+                # [優化 1] 將資料庫讀取移至背景執行緒 (檢查同名檔案)
+                folder_contents = await loop.run_in_executor(
+                    None, self.db.get_folder_contents, parent_id
+                )
+                
                 if any(f['name'] == file_name for f in folder_contents['files']) or \
                    any(f['name'] == file_name for f in folder_contents['folders']):
                     raise errors.ItemAlreadyExistsError(f"目標位置已存在名為 '{file_name}' 的項目。")
 
-                # Check for content hash collision (for "instant" upload).
-                original_file_hash = crypto_handler.hash_data(file_path)
-                if existing_file_obj := self.db.find_file_by_hash(original_file_hash):
+                # [優化 2] 將 SHA-256 雜湊計算移至背景執行緒 (這能解決開始上傳前的卡頓)
+                original_file_hash = await loop.run_in_executor(
+                    None, crypto_handler.hash_data, file_path
+                )
+                
+                # [優化 3] 將「秒傳」檢查的資料庫查詢移至背景
+                existing_file_obj = await loop.run_in_executor(
+                    None, self.db.find_file_by_hash, original_file_hash
+                )
+
+                if existing_file_obj:
                     logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
-                    self.db.add_file(parent_id, file_name, existing_file_obj["size"], existing_file_obj["hash"], time.time(), existing_file_obj["split_files"])
+                    
+                    # [優化 4] 將「秒傳」的資料庫寫入移至背景
+                    # 使用 lambda 將帶有參數的函式包裝起來
+                    await loop.run_in_executor(
+                        None, 
+                        lambda: self.db.add_file(
+                            parent_id, file_name, existing_file_obj["size"], 
+                            existing_file_obj["hash"], time.time(), existing_file_obj["split_files"]
+                        )
+                    )
+                    
                     progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功")
                     await utils.trigger_db_upload_in_background(self.shared_state)
                     return
 
                 progress_callback(task_id, file_name, 0, total_size, 'transferring', 0)
-                split_files_info = await telegram_comms.upload_file_with_info(client, group_id, file_path, task_id, progress_callback)
                 
-                self.db.add_file(parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info)
+                # upload_file_with_info 本身是 async 的 (且內部已依照建議修改為非阻塞)，所以直接 await 即可
+                split_files_info = await telegram_comms.upload_file_with_info(client, group_id, file_path, original_file_hash, task_id, progress_callback)
+                
+                # [優化 5] 將上傳完成後的資料庫寫入移至背景
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.db.add_file(
+                        parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info
+                    )
+                )
+                
                 await utils.trigger_db_upload_in_background(self.shared_state)
 
             except asyncio.CancelledError:
@@ -129,6 +163,7 @@ class TransferService:
         """
         The core worker coroutine for downloading a single item, which can be
         either a file or a folder.
+        [Optimized] Database queries are offloaded to a thread pool to prevent UI blocking.
         """
         item_db_id, item_type, item_name = item['db_id'], item['type'], item['name']
         
@@ -137,6 +172,9 @@ class TransferService:
             self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
         except RuntimeError:
              logger.warning(f"Could not get current task for folder download (ID: {main_task_id}). Cancellation may not work.")
+
+        # [新增] 獲取當前事件迴圈
+        loop = asyncio.get_running_loop()
 
         try:
             async with semaphore:
@@ -148,11 +186,18 @@ class TransferService:
                 progress_callback(main_task_id, item_name, 0, item.get('size',0), 'queued', 0)
 
                 if item_type == 'file':
-                    file_details = self.db.get_file_details(item_db_id)
-                    if not file_details: raise errors.PathNotFoundError(f"資料庫中找不到 ID 為 {item_db_id} 的檔案。")
+                    # [優化 1] 將取得檔案詳情 (包含所有分塊資訊) 的 DB 查詢移至背景
+                    file_details = await loop.run_in_executor(
+                        None, self.db.get_file_details, item_db_id
+                    )
+                    
+                    if not file_details: 
+                        raise errors.PathNotFoundError(f"資料庫中找不到 ID 為 {item_db_id} 的檔案。")
+                    
                     await self._download_file_from_details(client, group_id, main_task_id, file_details, dest_path, progress_callback)
                 
                 elif item_type == 'folder':
+                    # 呼叫同樣優化過的資料夾下載邏輯
                     await self._download_folder(client, group_id, main_task_id, item, dest_path, progress_callback)
 
         except asyncio.CancelledError:
@@ -169,18 +214,29 @@ class TransferService:
                 del self.shared_state.active_tasks[main_task_id]
 
     async def _download_folder(self, client, group_id: int, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
-        """Helper method to handle the logic for downloading a folder."""
-        folder_contents = self.db.get_folder_contents_recursive(folder_item['db_id'])
+        """
+        Helper method to handle the logic for downloading a folder.
+        [Optimized] Recursive DB fetch is offloaded to background thread.
+        """
+        loop = asyncio.get_running_loop()
+
+        # [優化 2] 遞迴查詢資料夾內容通常很耗時 (涉及 CTE 查詢)，必須移至背景
+        folder_contents = await loop.run_in_executor(
+            None, self.db.get_folder_contents_recursive, folder_item['db_id']
+        )
+        
         if not folder_contents:
             raise errors.PathNotFoundError(f"資料庫中找不到 ID 為 {folder_item['db_id']} 的資料夾。")
         
         actual_folder_name = folder_contents.get('folder_name', folder_item['name'])
         local_root_path = os.path.join(dest_path, actual_folder_name)
+        
+        # 建立資料夾 (I/O) 也可以移至背景，或者因為很快所以保留
         os.makedirs(local_root_path, exist_ok=True)
         
         files_in_folder = [f for f in folder_contents['items'] if f['type'] == 'file']
         
-        # Create subdirectories and prepare child item info for the UI.
+        # 準備前端需要的樹狀結構資訊
         child_info_for_frontend = []
         for f_or_d in folder_contents['items']:
             item_task_id = f"dl_{uuid.uuid4()}"
@@ -193,10 +249,12 @@ class TransferService:
         progress_callback(main_task_id, actual_folder_name, 0, total_size, 'starting_folder', 0, 
                           total_files=len(files_in_folder), children=child_info_for_frontend)
 
-        # Create download tasks for all files within the folder.
+        # 這裡不需要改，因為 _download_file_from_details 內部呼叫的是 telegram_comms.download_file，
+        # 而 telegram_comms.download_file 已經被我們改寫為全異步了。
         download_tasks = [
             self._download_file_from_details(
-                client, group_id, child['id'], self.db.get_file_details(child['db_id']), 
+                client, group_id, child['id'], 
+                child, 
                 os.path.join(local_root_path, os.path.dirname(child['relative_path'])), 
                 progress_callback, parent_task_id=main_task_id
             ) for child in child_info_for_frontend if child['type'] == 'file'

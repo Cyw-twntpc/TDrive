@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from typing import Dict, Any, List, Callable
 
 from .data.shared_state import SharedState
@@ -46,24 +47,41 @@ class TDriveService:
         """
         Creates an adapter function to transform backend progress arguments
         into a dictionary format expected by the frontend.
+        
         """
+        # 使用 closure 變數來記錄每個任務上一次發送訊號的時間
+        last_emit_time = {} 
+        
         def adapter(task_id, name, progress, total, status, speed, message=None, **kwargs):
-            data = {
-                "id": task_id,
-                "name": name,
-                "progress": progress,
-                "size": total,
-                "status": status,
-                "speed": speed,
-            }
-            if message:
-                data["message"] = message
-            
-            # Include any other keyword arguments for future flexibility.
-            data.update(kwargs)
-            
-            # Emit the formatted dictionary via the provided Qt signal.
-            signal_emitter(data)
+            current_time = time.time()
+
+            should_emit = (
+                status != 'transferring' or 
+                task_id not in last_emit_time or 
+                (current_time - last_emit_time[task_id] >= 0.03)
+            )
+
+            if should_emit:
+                last_emit_time[task_id] = current_time
+                
+                # 如果任務結束，可以清理掉記錄以節省記憶體
+                if status in ['completed', 'failed', 'cancelled']:
+                    last_emit_time.pop(task_id, None)
+
+                data = {
+                    "id": task_id,
+                    "name": name,
+                    "progress": progress,
+                    "size": total,
+                    "status": status,
+                    "speed": speed,
+                }
+                if message:
+                    data["message"] = message
+                
+                data.update(kwargs)
+                signal_emitter(data)
+                
         return adapter
 
     def _schedule_background_task(self, coro):

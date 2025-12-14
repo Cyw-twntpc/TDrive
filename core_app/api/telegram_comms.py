@@ -19,7 +19,6 @@ from typing import Callable
 from . import crypto_handler as cr
 from . import file_processor as fp
 from ..data.db_handler import DatabaseHandler
-from ..data.shared_state import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -112,18 +111,16 @@ async def get_group(client, app_api_id: int) -> int | None:
         logger.error(f"Fatal error while creating group: {e}", exc_info=True)
         return None
 
-async def upload_file_with_info(client, group_id: int, file_path: str, task_id: str, progress_callback: Callable | None = None) -> list:
+async def upload_file_with_info(client, group_id: int, file_path: str, original_file_hash: str, task_id: str, progress_callback: Callable | None = None) -> list:
     """
-    Streams, encrypts, and uploads a file, returning metadata for all its chunks.
+    Streams, encrypts, and uploads a file with fully async I/O to prevent UI blocking.
     """
-    temp_dir = os.path.join(TEMP_DIR, f"temp_upload_{os.path.basename(file_path)}_{task_id}")
     file_name = os.path.basename(file_path)
     split_files_info = []
+    
+    loop = asyncio.get_running_loop()
 
     try:
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        original_file_hash = cr.hash_data(file_path)
         key = cr.generate_key(original_file_hash[:32], original_file_hash[-32:])
         
         total_size = os.path.getsize(file_path)
@@ -131,11 +128,11 @@ async def upload_file_with_info(client, group_id: int, file_path: str, task_id: 
         last_update_time = 0
         last_call_bytes = 0
 
+        # 定義進度回調 (保持不變)
         def callback(current, total):
             nonlocal uploaded_bytes, last_update_time, last_call_bytes
             now = time.time()
-            # Throttle progress updates to about twice a second to avoid UI lag.
-            if now - last_update_time > 0.5 or current == total:
+            if now - last_update_time > 1.0: # 限制更新頻率 (Throttling)
                 elapsed = now - last_update_time
                 speed = (current - last_call_bytes) / elapsed if elapsed > 0 else 0
                 last_call_bytes = current
@@ -143,61 +140,73 @@ async def upload_file_with_info(client, group_id: int, file_path: str, task_id: 
                 if progress_callback:
                     progress_callback(task_id, file_name, uploaded_bytes + current, total_size, 'transferring', speed)
 
-        # Stream the file, encrypting and uploading one chunk at a time.
-        for part_num, part_path in fp.stream_split_and_encrypt(file_path, key, original_file_hash, temp_dir):
+        # 建立生成器，但不直接迭代
+        generator = fp.stream_split_and_encrypt(file_path, key)
+
+        while True:
+            # 將 "讀取原始檔 + 加密 + 寫入暫存檔" 移至背景執行緒
             try:
-                part_hash = cr.hash_data(part_path)
-                last_call_bytes = 0 # Reset for each new part's progress callback.
+                result = await loop.run_in_executor(None, next, generator, None)
+                if result is None:
+                    break
+                part_num, part_bytes = result
+            except StopIteration:
+                break
+            except Exception as e:
+                logger.error(f"Error in encryption stream: {e}")
+                raise
+
+            try:
+                # 分塊雜湊計算移至背景
+                part_hash = await loop.run_in_executor(None, cr.hash_bytes, part_bytes)
+                last_call_bytes = 0
                 
+                # 在背景將加密後的暫存檔讀入記憶體
+                # Telethon 收到 bytes 物件後，就不會執行同步硬碟讀取，從而解決上傳時的斷續卡頓
+                
+                # 直接發送記憶體中的 bytes
                 message = await client.send_file(
                     group_id,
-                    file=part_path,
+                    file=part_bytes, 
                     progress_callback=callback
                 )
                 
                 split_files_info.append([part_num, message.id, part_hash])
-                uploaded_bytes += os.path.getsize(part_path)
-            finally:
-                # Ensure temporary encrypted chunks are deleted immediately after use.
-                if os.path.exists(part_path):
-                    os.remove(part_path)
+                uploaded_bytes += len(part_bytes)
+            except Exception as e:
+                logger.error(f"Error uploading part {part_num}: {e}")
+                raise
 
+        # 完成回調
         if progress_callback:
             progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
         
-        logger.info(f"File '{file_name}' (task_id: {task_id}) uploaded successfully.")
+        logger.info(f"File '{file_name}' uploaded successfully.")
         return split_files_info
 
     except Exception as e:
-        logger.error(f"Upload failed for file '{file_name}' (task_id: {task_id}): {e}", exc_info=True)
+        logger.error(f"Upload failed: {e}", exc_info=True)
         if progress_callback:
             progress_callback(task_id, file_name, 0, 0, 'failed', 0)
         raise
-    finally:
-        # Final cleanup of the main temporary directory for the upload.
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.debug(f"Cleaned up main upload temp directory: {temp_dir}")
 
 async def download_file(client, group_id: int, file_details: dict, download_dir: str, task_id: str, progress_callback: Callable | None = None):
     """
-    Downloads, decrypts, and reassembles a file from its chunks.
-    
-    This function pre-allocates the final file on disk and writes decrypted
-    chunks directly to their correct positions, avoiding high memory usage.
+    Downloads, decrypts, and reassembles a file with fully async I/O.
     """
     file_name = file_details['name']
     part_info_map = {part['message_id']: {"num": part['part_num'], "hash": part['part_hash']} for part in file_details['chunks']}
     message_ids = list(part_info_map.keys())
     
-    temp_dir = os.path.join(TEMP_DIR, f"temp_download_{task_id}")
     final_path = os.path.join(download_dir, file_name)
     key = cr.generate_key(file_details['hash'][:32], file_details['hash'][-32:])
 
+    loop = asyncio.get_running_loop()
+
     try:
-        os.makedirs(temp_dir, exist_ok=True)
         logger.info(f"Starting stream download for '{file_name}' (task_id: {task_id}).")
 
+        # 取得訊息物件 (Metadata)
         messages_to_download = await client.get_messages(group_id, ids=message_ids)
         messages_to_download = [m for m in messages_to_download if m]
         
@@ -206,17 +215,20 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
 
         total_size = int(file_details['size'])
         
-        # 1. Check disk space and pre-allocate the file.
-        free_space = shutil.disk_usage(download_dir).free
-        if free_space < total_size:
-            raise IOError(f"磁碟空間不足。需要：{total_size / 1024**2:.2f} MB，可用：{free_space / 1024**2:.2f} MB。")
+        # 檢查磁碟空間 & 預先分配檔案 (移至背景)
+        def pre_allocate_file():
+            free_space = shutil.disk_usage(download_dir).free
+            if free_space < total_size:
+                raise IOError(f"磁碟空間不足。需要：{total_size / 1024**2:.2f} MB，可用：{free_space / 1024**2:.2f} MB。")
+            
+            # 建立空檔案並設為最終大小
+            with open(final_path, 'wb') as f:
+                f.seek(total_size - 1)
+                f.write(b'\0')
         
-        with open(final_path, 'wb') as f:
-            f.seek(total_size - 1)
-            f.write(b'\0')
+        await loop.run_in_executor(None, pre_allocate_file)
         logger.debug(f"Pre-allocated file of size {total_size} at '{final_path}'.")
 
-        # 2. Stream download, decrypt, and write chunks.
         downloaded_bytes = 0
         last_update_time = 0
         last_call_bytes = 0
@@ -224,7 +236,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
         def callback(current, total):
             nonlocal downloaded_bytes, last_update_time, last_call_bytes
             now = time.time()
-            if now - last_update_time > 0.5 or current == total:
+            if now - last_update_time > 1.0:
                 elapsed = now - last_update_time
                 speed = (current - last_call_bytes) / elapsed if elapsed > 0 else 0
                 last_call_bytes = current
@@ -232,7 +244,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
                 if progress_callback:
                     progress_callback(task_id, file_name, downloaded_bytes + current, total_size, 'transferring', speed)
 
-        MAX_DOWNLOAD_PART_RETRIES = 3
+        MAX_DOWNLOAD_PART_RETRIES = 3        
 
         for message in messages_to_download:
             part_num = part_info_map[message.id]["num"]
@@ -240,37 +252,42 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
             last_call_bytes = 0
             
             for retry_count in range(MAX_DOWNLOAD_PART_RETRIES):
-                downloaded_part_path = await message.download_media(file=temp_dir, progress_callback=callback)
-                
-                if not downloaded_part_path or not os.path.exists(downloaded_part_path):
-                    logger.warning(f"Download of part {part_num} failed or file not found. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
-                    await asyncio.sleep(1)
-                    continue
+                try:
+                    # 下載到記憶體 (Bytes)
+                    # Telethon 支援 file=bytes，這會直接回傳 bytes 物件，完全不寫硬碟
+                    encrypted_bytes = await message.download_media(file=bytes, progress_callback=callback)
+                    
+                    if not encrypted_bytes:
+                         raise ValueError("Empty response from Telegram")
 
-                actual_part_hash = cr.hash_data(downloaded_part_path)
-                if actual_part_hash == expected_part_hash:
-                    logger.debug(f"Part {part_num} checksum verified.")
-                    try:
+                    # 在背景計算雜湊
+                    actual_part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_bytes)
+                    
+                    if actual_part_hash == expected_part_hash:
+                        # 在背景解密並寫入硬碟
                         offset = (part_num - 1) * fp.CHUNK_SIZE
-                        fp.decrypt_and_write_chunk(downloaded_part_path, final_path, key, offset)
-                        logger.debug(f"Part {part_num} decrypted and written to offset {offset}.")
-                        os.remove(downloaded_part_path)
-                        break # Success, break retry loop
-                    except Exception as e:
-                        logger.error(f"Error processing part {part_num}: {e}", exc_info=True)
-                        raise # Re-raise critical internal errors
-                else:
-                    logger.warning(f"Part {part_num} checksum mismatch. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
-                    os.remove(downloaded_part_path)
+                        await loop.run_in_executor(
+                            None, 
+                            fp.decrypt_bytes_and_write, 
+                            encrypted_bytes, final_path, key, offset
+                        )
+                        break # 成功，跳出重試迴圈
+                    else:
+                        logger.warning(f"Part {part_num} checksum mismatch. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
+                        await asyncio.sleep(1)
+
+                except Exception as e:
+                    logger.warning(f"Download error for part {part_num}: {e}. Retrying...")
                     await asyncio.sleep(1)
-            else: # This 'else' belongs to the 'for' loop, executed if the loop completes without a 'break'.
+            else:
                 raise ValueError(f"Part {part_num} failed checksum verification after {MAX_DOWNLOAD_PART_RETRIES} retries.")
             
             downloaded_bytes += message.document.size
 
-        # 3. Final integrity check on the reassembled file.
+        # 最終完整性檢查移至背景 (這對大檔案來說非常耗時)
         logger.info(f"All parts of '{file_name}' processed. Performing final integrity check.")
-        final_hash = cr.hash_data(final_path)
+        final_hash = await loop.run_in_executor(None, cr.hash_data, final_path)
+        
         if final_hash != file_details['hash']:
             raise ValueError(f"'{file_name}' 的最終校驗和不符。檔案可能已損毀。")
         
@@ -282,8 +299,9 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
         logger.warning(f"Download task for '{file_name}' (ID: {task_id}) was cancelled.")
         if progress_callback:
             progress_callback(task_id, file_name, 0, 0, 'cancelled', 0)
+        # 如果取消，刪除未完成的檔案
         if 'final_path' in locals() and os.path.exists(final_path):
-            os.remove(final_path)
+             await loop.run_in_executor(None, os.remove, final_path)
         raise
 
     except Exception as e:
@@ -292,13 +310,8 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
             msg = str(e) if isinstance(e, (IOError, ValueError, FileNotFoundError)) else "下載過程中發生未預期的錯誤。"
             progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
         if 'final_path' in locals() and os.path.exists(final_path):
-            os.remove(final_path)
+             await loop.run_in_executor(None, os.remove, final_path)
         raise
-    
-    finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.debug(f"Cleaned up download temp directory: {temp_dir}")
 
 async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_message):
     """

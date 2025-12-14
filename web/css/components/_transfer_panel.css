@@ -1,33 +1,153 @@
 /* [MODIFIED] 傳輸面板與 Modal 樣式 */
-.transfer-summary { position: fixed; bottom: 20px; right: 20px; width: 320px; z-index: 2000; transition: transform 0.4s ease-out, opacity 0.4s; transform-origin: bottom right; }
-.transfer-summary.hidden { transform: scale(0.8); opacity: 0; pointer-events: none; }
-.transfer-summary .panel-content { background-color: #2c3e50; color: white; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); padding: 16px; opacity: 1; transition: opacity 0.3s; }
-.transfer-summary.minimized .panel-content { opacity: 0; pointer-events: none; }
 
-.summary-section:not(:first-child) { margin-top: 12px; }
-.summary-section.hidden { display: none; }
-.summary-section h4 { margin: 0 0 8px 0; font-size: 14px; font-weight: 500; }
+/* --- 側邊欄傳輸狀態區塊 (新設計 - 左右分割) --- */
+.sidebar-transfer-status {
+    border-top: 1px solid var(--border-color);
+    padding: 4px; /* Reduced from 8px */
+    margin-top: auto; /* 推到底部 */
+    cursor: pointer;
+    transition: background-color 0.2s;
+    user-select: none;
+    display: flex; /* 改為 Flex 佈局 */
+    align-items: stretch; /* 讓子元素填滿高度 */
+    height: 50px; /* Reduced from 60px */
+    gap: 6px; /* Reduced from 8px */
+}
 
-.total-progress-bar { width: 100%; height: 8px; background-color: #465a72; border-radius: 4px; overflow: hidden; }
-.total-progress-bar .progress-fill { width: 0%; height: 100%; background-color: var(--primary-color); border-radius: 4px; transition: width 0.2s linear; position: relative; overflow: hidden; }
-.total-progress-bar .progress-fill.completed { background-color: var(--success-color); }
-.total-progress-bar .progress-fill.failed { background-color: var(--danger-color); }
-.total-progress-bar .progress-fill::after { content: ''; position: absolute; top: 0; left: 0; bottom: 0; right: 0; background-image: linear-gradient(45deg, rgba(255, 255, 255, .2) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, .2) 50%, rgba(255, 255, 255, .2) 75%, transparent 75%, transparent); background-size: 40px 40px; animation: progress-scan 1s linear infinite; }
-@keyframes progress-scan { from { background-position: 40px 0; } to { background-position: 0 0; } }
+.sidebar-transfer-status:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
 
-.panel-actions { display: flex; justify-content: space-between; margin-top: 12px; }
-.panel-btn, .panel-btn-danger { background: transparent; border: none; color: #a6d2ff; cursor: pointer; font-size: 14px; padding: 4px; }
-.panel-btn-danger { color: #ff8a8a; }
-.panel-btn:hover { color: white; } .panel-btn-danger:hover { color: #ff5252; }
+/* 左側：大圖示區塊 */
+.sidebar-transfer-left {
+    flex-shrink: 0;
+    width: 36px; /* Reduced from 40px */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(var(--primary-color-rgb), 0.1); /* 輕微背景色 */
+    border-radius: 4px; /* Slightly reduced radius */
+}
 
-.minimized-icon { position: absolute; bottom: 0; right: 0; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 0.3s, visibility 0.3s; z-index: 2001; }
-.transfer-summary.minimized .minimized-icon { opacity: 1; visibility: visible; }
-.minimized-icon i { font-size: 20px; animation: bounce-arrow 1.5s infinite; color: var(--primary-color); z-index: 2; }
-@keyframes bounce-arrow { 0%, 20%, 50%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-4px); } 60% { transform: translateY(4px); } }
-.minimized-icon .progress-ring, .minimized-icon .progress-ring-bg { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
-.minimized-icon .progress-ring-bg { width: 44px; height: 44px; border-radius: 50%; background-color: #2c3e50; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-.progress-ring-circle { transition: stroke-dashoffset 0.2s linear, stroke-dasharray 0.2s linear; transform: rotate(-90deg); transform-origin: 50% 50%; }
+.transfer-icon-wrapper {
+    color: var(--primary-color);
+    font-size: 20px; /* Reduced from 24px */
+    transition: color 0.3s ease;
+    width: 24px;   /* Explicit width */
+    height: 24px;  /* Explicit height is required when <i> is hidden */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
+.transfer-icon-wrapper i {
+    will-change: transform, background-position;
+    transform: translateZ(0); /* Force GPU acceleration */
+}
+
+/* 傳輸進行時加速旋轉 */
+.transfer-active.mixed-active .transfer-icon-wrapper i {
+    animation: slow-spin 2s linear infinite;
+}
+
+/* 上傳狀態：隱藏字型圖示，顯示 GIF 動畫 */
+.transfer-active.upload-active .transfer-icon-wrapper i {
+    display: none;
+}
+.transfer-active.upload-active .transfer-icon-wrapper {
+    background-image: url('../../img/upload.gif');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* 下載狀態：隱藏字型圖示，顯示 GIF 動畫 */
+.transfer-active.download-active .transfer-icon-wrapper i {
+    display: none;
+}
+.transfer-active.download-active .transfer-icon-wrapper {
+    background-image: url('../../img/download.gif');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+@keyframes slow-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 右側：資訊區塊 */
+.sidebar-transfer-right {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden; /* 防止文字溢出 */
+    padding-bottom: 2px; /* 預留底部空間 */
+}
+
+.transfer-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0;
+    line-height: 1.2;
+    height: 16px; /* Fixed height to prevent layout shift */
+}
+
+#sidebar-transfer-title {
+    font-size: 12px; /* Reduced from 13px */
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#sidebar-transfer-speed {
+    font-size: 10px; /* Reduced from 11px for better hierarchy */
+    color: var(--text-light-color);
+}
+
+.sidebar-progress-container {
+    height: 4px;
+    background-color: #e9eef5; /* 更淡的灰色軌道 */
+    border-radius: 2px;
+    overflow: hidden;
+    width: 100%;
+    margin-top: 3px; /* Reduced/Adjusted */
+    flex-shrink: 0; /* 防止被壓縮 */
+}
+
+.sidebar-progress-fill {
+    height: 100%;
+    background-color: transparent;
+    width: 100%; /* Full width, controlled by scaleX */
+    transform: scaleX(0); /* Initial state */
+    transform-origin: left; /* Grow from left */
+    transition: transform 0.15s linear, background-color 0.3s ease; /* 0.15s < 0.2s interval to avoid conflict */
+    border-radius: 2px;
+}
+
+/* 狀態顏色變化 - 改變 icon 顏色與進度條顏色 */
+.sidebar-transfer-status.transfer-active .sidebar-progress-fill,
+.sidebar-transfer-status.transfer-active.upload-active .sidebar-progress-fill,
+.sidebar-transfer-status.transfer-active.download-active .sidebar-progress-fill,
+.sidebar-transfer-status.transfer-active.mixed-active .sidebar-progress-fill { 
+    background-color: var(--primary-color) !important; 
+}
+
+.sidebar-transfer-status.status-completed .sidebar-progress-fill { background-color: var(--success-color); width: 100% !important; }
+.sidebar-transfer-status.status-failed .sidebar-progress-fill { background-color: var(--danger-color); }
+
+.status-completed .transfer-icon-wrapper { color: var(--success-color); }
+.status-completed .sidebar-transfer-left { background-color: rgba(var(--success-color-rgb), 0.1); }
+
+.status-failed .transfer-icon-wrapper { color: var(--danger-color); }
+.status-failed .sidebar-transfer-left { background-color: rgba(var(--danger-color-rgb), 0.1); }
+
+
+/* --- 傳輸詳細資訊 Modal 樣式 (保留並優化) --- */
 .modal-tabs { display: flex; border-bottom: 1px solid var(--border-color); padding: 0 24px; }
 .tab-btn { background: none; border: none; padding: 14px 16px; font-size: 16px; cursor: pointer; position: relative; color: var(--text-light-color); }
 .tab-btn.active { color: var(--primary-color); font-weight: 700; }
@@ -62,7 +182,7 @@
 
 /* --- 傳輸管理器樹狀視圖樣式 --- */
 .transfer-item .item-indent {
-    flex-shrink: 0; /* 防止縮排空間被壓縮 */
+    flex-shrink: 0;
 }
 .transfer-item .item-toggle {
     width: 16px;

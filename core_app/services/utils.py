@@ -1,40 +1,16 @@
 import logging
 import asyncio
 import threading
-import os
-import glob
-import shutil
 from typing import TYPE_CHECKING, Optional
 from telethon import TelegramClient
 
 from core_app.api import telegram_comms
-from core_app.data.shared_state import TEMP_DIR
 
 # Use a forward reference for type hinting to avoid circular imports.
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
 
 logger = logging.getLogger(__name__)
-
-def cleanup_temp_folders():
-    """
-    Removes all temporary directories created during previous application runs.
-    This is typically called at startup to ensure a clean state.
-    """
-    logger.info("Performing cleanup of temporary files...")
-    try:
-        os.makedirs(TEMP_DIR, exist_ok=True)
-        temp_dirs_pattern = os.path.join(TEMP_DIR, 'temp_*')
-        for temp_dir in glob.glob(temp_dirs_pattern):
-            if os.path.isdir(temp_dir):
-                try:
-                    shutil.rmtree(temp_dir)
-                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
-                except OSError as e:
-                    logger.error(f"Failed to clean up temporary directory {temp_dir}: {e}")
-        logger.info("Temporary file cleanup complete.")
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during temp file cleanup: {e}", exc_info=True)
 
 
 async def ensure_client_connected(shared_state: 'SharedState') -> Optional[TelegramClient]:

@@ -26,6 +26,24 @@
             <nav class="file-tree-nav">
                 <ul id="file-tree"></ul>
             </nav>
+            <div id="sidebar-transfer-status" class="sidebar-transfer-status">
+                <div class="sidebar-transfer-left">
+                     <div class="transfer-icon-wrapper">
+                        <i class="fas fa-sync-alt" id="sidebar-transfer-icon"></i>
+                    </div>
+                </div>
+                <div class="sidebar-transfer-right">
+                    <div class="transfer-info-row">
+                        <span id="sidebar-transfer-title"></span>
+                    </div>
+                    <div class="transfer-info-row">
+                        <span id="sidebar-transfer-speed">-- KB/s</span>
+                    </div>
+                    <div class="sidebar-progress-container">
+                        <div id="sidebar-transfer-bar" class="sidebar-progress-fill"></div>
+                    </div>
+                </div>
+            </div>
         </aside>
 
         <main class="main-content">
@@ -142,34 +160,6 @@
         <h3>使用者資訊</h3>
         <div id="user-info-content"></div>
         <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;">登出</button>
-    </div>
-
-    <div id="transfer-summary-panel" class="transfer-summary hidden unselectable">
-        <div class="panel-content">
-            <div id="summary-uploads" class="summary-section hidden">
-                <h4 id="summary-uploads-title">上傳中...</h4>
-                <div class="total-progress-bar">
-                    <div id="summary-uploads-progress" class="progress-fill"></div>
-                </div>
-            </div>
-            <div id="summary-downloads" class="summary-section hidden">
-                <h4 id="summary-downloads-title">下載中...</h4>
-                <div class="total-progress-bar">
-                    <div id="summary-downloads-progress" class="progress-fill"></div>
-                </div>
-            </div>
-            <div class="panel-actions">
-                <button id="show-details-btn" class="panel-btn">顯示詳細資訊</button>
-                <button id="cancel-all-btn" class="panel-btn-danger">全部取消</button>
-            </div>
-        </div>
-        <div id="minimized-transfer-icon" class="minimized-icon" title="顯示傳輸狀態">
-            <i class="fas fa-exchange-alt"></i>
-            <div class="progress-ring-bg"></div>
-            <svg class="progress-ring" width="36" height="36">
-                <circle id="minimized-progress-circle" class="progress-ring-circle" stroke="white" stroke-width="3" fill="transparent" r="16" cx="18" cy="18"/>
-            </svg>
-        </div>
     </div>
 
     <div id="transfer-details-modal" class="modal-overlay hidden unselectable">
