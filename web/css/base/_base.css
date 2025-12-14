@@ -21,6 +21,10 @@
     --sort-icon-color: #9db2ce;
 }
 
+.hidden {
+    display: none !important;
+}
+
 .unselectable { 
     user-select: none; 
 }

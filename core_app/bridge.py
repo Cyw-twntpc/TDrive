@@ -22,6 +22,7 @@ class Bridge(QObject):
     # --- Authentication and State Signals ---
     login_event = Signal(dict)  # Reports progress/status during the QR login flow.
     transfer_progress_updated = Signal(dict)  # Updates transfer progress for uploads/downloads.
+    transfer_chart_updated = Signal(dict) # [New] Emits speed vs completion chart data.
     connection_status_changed = Signal(str)  # Notifies of changes in the Telegram client's connection state.
     login_and_initialization_complete = Signal()  # Emitted after successful login and initialization.
 
@@ -38,6 +39,10 @@ class Bridge(QObject):
         self._service = tdrive_service
         self._loop = loop
         self._is_busy = False # A simple mutex to prevent re-entrant critical async operations.
+        
+        # Connect the service's chart monitor to the bridge signal
+        self._service.set_chart_callback(self.transfer_chart_updated.emit)
+        
         logger.debug("Bridge initialized.")
 
     def _run_background_task(self, coro, result_signal, request_id):

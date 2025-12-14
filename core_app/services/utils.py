@@ -29,7 +29,7 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
     logger.warning("Connection lost. Locking UI and attempting to reconnect to Telegram...")
     
     if shared_state.connection_emitter:
-        shared_state.connection_emitter.emit('lost')
+        shared_state.connection_emitter('lost')
 
     api_id = shared_state.api_id
     api_hash = shared_state.api_hash
@@ -38,7 +38,7 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
     if not (api_id and api_hash):
         logger.error("Cannot reconnect: API credentials not found in SharedState.")
         if shared_state.connection_emitter:
-            shared_state.connection_emitter.emit('restored') # Restore UI interaction
+            shared_state.connection_emitter('restored') # Restore UI interaction
         return None
 
     while True:
@@ -57,7 +57,7 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
                 shared_state.client = new_client
                 
                 if shared_state.connection_emitter:
-                    shared_state.connection_emitter.emit('restored')
+                    shared_state.connection_emitter('restored')
                 return new_client
             else:
                 logger.error("Reconnection failed: user authorization is invalid. Re-login is required.")
@@ -68,7 +68,7 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
             await asyncio.sleep(5)
     
     if shared_state.connection_emitter:
-        shared_state.connection_emitter.emit('restored')
+        shared_state.connection_emitter('restored')
     return None
 
 def _upload_db(shared_state: 'SharedState'):

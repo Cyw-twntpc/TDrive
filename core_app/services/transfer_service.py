@@ -12,6 +12,7 @@ from . import utils
 from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
+from core_app.services.monitor_service import TransferMonitorService
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,72 @@ class TransferService:
     def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
+        self.monitor = TransferMonitorService()
+        self._active_transfers_map: Dict[str, int] = {} # task_id -> last_reported_bytes
+
+    def set_chart_callback(self, callback: Callable):
+        """Passes the bridge signal emitter to the monitor service."""
+        self.monitor.set_callback(callback)
+
+    def _wrap_progress_callback(self, original_callback: Callable, task_id: str) -> Callable:
+        """
+        Wraps the progress callback to update the monitor service.
+        """
+        # Initialize tracker for this task
+        self._active_transfers_map[task_id] = 0
+        
+        def wrapper(tid, name, current, total, status, speed, **kwargs):
+            # Update monitor stats
+            last_reported = self._active_transfers_map.get(tid, 0)
+            
+            # Only update if transferring or starting
+            if status in ['transferring', 'completed', 'starting_folder']:
+                delta = current - last_reported
+                if delta > 0:
+                    # Async call not awaited here (fire and forget-ish), 
+                    # but since update_transferred_bytes is lightweight and non-blocking logic, 
+                    # we can just run it. Ideally it should be sync or scheduled.
+                    # Since we are in a thread pool (from telegram_comms) or async loop?
+                    # telegram_comms callbacks run in the event loop.
+                    # monitor.update_transferred_bytes is async.
+                    # We need to schedule it.
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self.monitor.update_transferred_bytes(delta))
+                    except RuntimeError:
+                        # Fallback if no loop (shouldn't happen in this architecture)
+                        pass
+                    
+                    self._active_transfers_map[tid] = current
+            
+            # Call original
+            original_callback(tid, name, current, total, status, speed, **kwargs)
+            
+        return wrapper
+
+    async def _start_monitor_if_needed(self):
+        # We can detect if it's a new session by checking if it's running.
+        # But monitor.start() handles checks internally.
+        # We need to know if we should reset.
+        # Accessing private member _running is bad, but TransferMonitorService could expose `is_running`.
+        # Alternatively, we just reset if we know we are starting a fresh batch (active_tasks was empty).
+        # But active_tasks might not be empty if we call this inside upload_files before tasks added? 
+        # No, upload_files adds tasks to monitor before calling this.
+        
+        # Simpler approach: If monitor is not running, reset it before starting.
+        # We need to peek into monitor or add an is_running property.
+        # Let's add is_running property to MonitorService or use the private one since we are in same package?
+        # Python doesn't enforce private.
+        
+        if not self.monitor._running:
+             self.monitor.reset_session()
+             
+        await self.monitor.start()
+
+    async def _stop_monitor_if_idle(self):
+        # If no active tasks in shared_state, stop monitor
+        if not self.shared_state.active_tasks:
+            await self.monitor.stop()
 
     async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], concurrency_limit: int, progress_callback: Callable):
         """
@@ -37,14 +104,30 @@ class TransferService:
                 progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法開始上傳。")
             return
         
+        # [Monitor] Update expected total
+        total_size_added = 0
+        for item in upload_items:
+            try:
+                sz = os.path.getsize(item['local_path'])
+                total_size_added += sz
+            except:
+                pass
+        
+        await self.monitor.add_expected_bytes(total_size_added)
+        await self._start_monitor_if_needed()
+
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
         
-        tasks_to_run = [
-            self._upload_single_file(client, group_id, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback)
-            for item in upload_items
-        ]
+        tasks_to_run = []
+        for item in upload_items:
+            wrapped_cb = self._wrap_progress_callback(progress_callback, item['task_id'])
+            tasks_to_run.append(
+                self._upload_single_file(client, group_id, parent_id, item['local_path'], item['task_id'], semaphore, wrapped_cb)
+            )
+            
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
+        await self._stop_monitor_if_idle()
 
     async def _upload_single_file(self, client, group_id: int, parent_id: int, file_path: str, task_id: str, semaphore: asyncio.Semaphore, progress_callback: Callable):
         """
@@ -137,6 +220,9 @@ class TransferService:
             finally:
                 if task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[task_id]
+                # Cleanup tracker
+                if task_id in self._active_transfers_map:
+                    del self._active_transfers_map[task_id]
 
     async def download_items(self, items: List[Dict], destination_dir: str, concurrency_limit: int, progress_callback: Callable):
         """
@@ -149,15 +235,24 @@ class TransferService:
                 temp_task_id = f"dl_{uuid.uuid4()}"
                 progress_callback(temp_task_id, item.get('name', "Unknown"), 0, 0, 'failed', 0, message="連線失敗。")
             return
+        
+        # [Monitor] Update expected total
+        total_size_added = sum(item.get('size', 0) for item in items)
+        await self.monitor.add_expected_bytes(total_size_added)
+        await self._start_monitor_if_needed()
 
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
 
-        tasks = [
-            self._download_single_item(client, group_id, item['task_id'], item, destination_dir, semaphore, progress_callback)
-            for item in items
-        ]
+        tasks = []
+        for item in items:
+            wrapped_cb = self._wrap_progress_callback(progress_callback, item['task_id'])
+            tasks.append(
+                self._download_single_item(client, group_id, item['task_id'], item, destination_dir, semaphore, wrapped_cb)
+            )
+        
         await asyncio.gather(*tasks, return_exceptions=True)
+        await self._stop_monitor_if_idle()
 
     async def _download_single_item(self, client, group_id: int, main_task_id: str, item: Dict, dest_path: str, semaphore: asyncio.Semaphore, progress_callback: Callable):
         """
@@ -212,6 +307,8 @@ class TransferService:
         finally:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
+            if main_task_id in self._active_transfers_map:
+                del self._active_transfers_map[main_task_id]
 
     async def _download_folder(self, client, group_id: int, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
         """
@@ -251,14 +348,19 @@ class TransferService:
 
         # 這裡不需要改，因為 _download_file_from_details 內部呼叫的是 telegram_comms.download_file，
         # 而 telegram_comms.download_file 已經被我們改寫為全異步了。
-        download_tasks = [
-            self._download_file_from_details(
-                client, group_id, child['id'], 
-                child, 
-                os.path.join(local_root_path, os.path.dirname(child['relative_path'])), 
-                progress_callback, parent_task_id=main_task_id
-            ) for child in child_info_for_frontend if child['type'] == 'file'
-        ]
+        download_tasks = []
+        for child in child_info_for_frontend:
+             if child['type'] == 'file':
+                 # IMPORTANT: Need to wrap callback for children as well!
+                 wrapped_cb = self._wrap_progress_callback(progress_callback, child['id'])
+                 download_tasks.append(
+                     self._download_file_from_details(
+                        client, group_id, child['id'], 
+                        child, 
+                        os.path.join(local_root_path, os.path.dirname(child['relative_path'])), 
+                        wrapped_cb, parent_task_id=main_task_id
+                    )
+                 )
         
         results = await asyncio.gather(*download_tasks, return_exceptions=True)
         
@@ -302,6 +404,8 @@ class TransferService:
         finally:
             if task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[task_id]
+            if task_id in self._active_transfers_map:
+                del self._active_transfers_map[task_id]
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
         """

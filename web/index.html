@@ -147,55 +147,92 @@
 
             <!-- Page Container: Transfer Dashboard -->
             <div id="page-transfer" class="page-view hidden">
-                <!-- Content will be injected by TransferManager -->
-                 <header class="top-bar transfer-header">
-                    <h2>傳輸管理器</h2>
-                    <div class="transfer-controls">
-                        <button id="pause-all-btn" class="btn"><i class="fas fa-pause"></i> 全部暫停</button>
-                        <button id="resume-all-btn" class="btn"><i class="fas fa-play"></i> 全部繼續</button>
-                        <button id="clear-completed-btn" class="btn"><i class="fas fa-check-circle"></i> 清除已完成</button>
-                        <button id="close-transfer-page-btn" class="btn-icon"><i class="fas fa-times"></i></button>
-                    </div>
-                </header>
                 <div class="transfer-dashboard-body">
-                    <!-- Dashboard Statistics Cards -->
-                    <div class="dashboard-stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-icon upload"><i class="fas fa-cloud-upload-alt"></i></div>
-                            <div class="stat-info">
-                                <span class="stat-label">正在上傳</span>
-                                <h3 id="stat-upload-count">0</h3>
-                                <span class="stat-sub" id="stat-upload-speed">-- B/s</span>
+                    
+                    <!-- 1. Hero Section -->
+                    <div class="hero-section">
+                        <svg class="hero-chart-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="chart-gradient" x1="0" x2="0" y1="0" y2="1">
+                                    <stop offset="0%" stop-color="var(--primary-color)" stop-opacity="0.2"/>
+                                    <stop offset="100%" stop-color="var(--primary-color)" stop-opacity="0"/>
+                                </linearGradient>
+                            </defs>
+                            <path id="hero-chart-area" d="" fill="url(#chart-gradient)" stroke="none" />
+                            <path id="hero-chart-line" d="" fill="none" stroke="var(--primary-color)" stroke-width="2" vector-effect="non-scaling-stroke" />
+                        </svg>
+                        <div class="hero-content">
+                            <div class="hero-stat-block">
+                                <h2 id="hero-total-speed">-- B/s</h2>
+                                <p>即時總速度</p>
+                            </div>
+                            <div class="hero-stat-block">
+                                <h2 id="hero-daily-traffic">--</h2>
+                                <p>今日總流量</p>
+                            </div>
+                            <div class="hero-stat-block">
+                                <h2 id="hero-eta">--:--:--</h2>
+                                <p>剩餘預估時間</p>
                             </div>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-icon download"><i class="fas fa-cloud-download-alt"></i></div>
-                            <div class="stat-info">
-                                <span class="stat-label">正在下載</span>
-                                <h3 id="stat-download-count">0</h3>
-                                <span class="stat-sub" id="stat-download-speed">-- B/s</span>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon total"><i class="fas fa-tachometer-alt"></i></div>
-                            <div class="stat-info">
-                                <span class="stat-label">總體速度</span>
-                                <h3 id="stat-total-speed">-- B/s</h3>
-                                <span class="stat-sub">即時監控中</span>
-                            </div>
+                        <div class="hero-actions">
+                            <button id="global-pause-btn" class="icon-btn-lg" title="全部暫停"><i class="fas fa-pause"></i></button>
+                            <button id="global-cancel-btn" class="icon-btn-lg danger" title="全部取消"><i class="fas fa-times"></i></button>
                         </div>
                     </div>
 
-                    <div class="transfer-tabs">
-                        <button class="tab-btn active" data-tab="uploads">上傳中 <span id="upload-count"></span></button>
-                        <button class="tab-btn" data-tab="downloads">下載中 <span id="download-count"></span></button>
+                    <!-- 2. Tabs -->
+                    <div class="tabs-container">
+                        <div class="tab-item active" data-tab="uploads">上傳中</div>
+                        <div class="tab-item" data-tab="downloads">下載中</div>
+                        <div class="tab-item" data-tab="completed">已完成</div>
                     </div>
-                    <div id="uploads-tab" class="tab-content active">
-                        <div id="upload-list" class="transfer-list-fullscreen"></div>
+
+                    <!-- 3. Dynamic Content Container (Uploads/Downloads) -->
+                    <div id="transfer-live-view">
+                        <!-- Active Tasks -->
+                        <div id="section-active" class="task-section">
+                            <div class="task-group-title" style="color:var(--primary);">
+                                進行中 (<span id="count-active">0</span>) <div class="group-line"></div>
+                            </div>
+                            <div id="list-active" class="task-list-container"></div>
+                        </div>
+
+                        <!-- Failed Tasks -->
+                        <div id="section-failed" class="task-section hidden">
+                            <div class="task-group-title" style="color:var(--danger);">
+                                失敗 (<span id="count-failed">0</span>) 
+                                <div class="group-line"></div> 
+                                <button id="retry-all-btn" class="retry-all-btn">全部重試</button>
+                            </div>
+                            <div id="list-failed" class="task-list-container"></div>
+                        </div>
+
+                        <!-- Queued Tasks -->
+                        <div id="section-queued" class="task-section">
+                            <div class="task-group-title">
+                                等待中 (<span id="count-queued">0</span>) <div class="group-line"></div>
+                            </div>
+                            <div id="list-queued" class="task-list-container"></div>
+                        </div>
                     </div>
-                    <div id="downloads-tab" class="tab-content">
-                         <div id="download-list" class="transfer-list-fullscreen"></div>
+
+                    <!-- 4. Completed View (Initially Hidden) -->
+                    <div id="transfer-completed-view" class="hidden">
+                        <div class="completed-filter-bar">
+                            <div class="filter-segment active" data-filter="all">全部</div>
+                            <div class="filter-segment" data-filter="upload">上傳</div>
+                            <div class="filter-segment" data-filter="download">下載</div>
+                        </div>
+                        <div class="sort-bar">
+                            <div class="sort-item active" data-sort="time">時間 <i class="fas fa-sort-down"></i></div>
+                            <div class="sort-item" data-sort="name">名稱</div>
+                            <div class="sort-item" data-sort="type">類型</div>
+                        </div>
+                        <div id="list-completed" class="history-list"></div>
+                        <!-- Actions Removed -->
                     </div>
+
                 </div>
             </div>
 
