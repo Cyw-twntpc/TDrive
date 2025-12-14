@@ -53,11 +53,17 @@ const UIManager = {
      * @returns {string} The formatted size string.
      */
     formatBytes(bytes) {
-        if (bytes === 0) return '0 B';
+        if (typeof bytes !== 'number' || isNaN(bytes) || bytes <= 0) return '0 B';
+        
         const k = 1024;
         const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        
+        // Calculate index, but clamp it to valid array range.
+        // Math.log of value < 1 is negative, so we use Math.max(0, ...).
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        const index = Math.max(0, Math.min(i, sizes.length - 1));
+        
+        return parseFloat((bytes / Math.pow(k, index)).toFixed(1)) + ' ' + sizes[index];
     },
 
     /**

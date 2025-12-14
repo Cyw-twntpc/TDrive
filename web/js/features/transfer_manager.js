@@ -247,13 +247,11 @@ const TransferManager = {
         const titleEl = document.getElementById('sidebar-transfer-title');
         const speedEl = document.getElementById('sidebar-transfer-speed');
         const barEl = document.getElementById('sidebar-transfer-bar');
-        const iconEl = document.getElementById('sidebar-transfer-icon');
         
         panel.classList.remove('status-completed', 'status-failed', 'transfer-active', 'upload-active', 'download-active', 'mixed-active');
-        if(iconEl) iconEl.className = 'fas fa-sync-alt'; // Reset icon
         
         titleEl.innerHTML = '&nbsp;'; // Use space to maintain height
-        speedEl.textContent = '-- KB/s';
+        speedEl.textContent = '-- B/s';
         barEl.style.transform = 'scaleX(0)';
     },
     
@@ -303,7 +301,6 @@ const TransferManager = {
 
         // Determine State & Styling
         panel.classList.remove('status-completed', 'status-failed', 'transfer-active', 'upload-active', 'download-active', 'mixed-active');
-        const iconEl = document.getElementById('sidebar-transfer-icon');
         
         if (activeCount > 0) {
             panel.classList.add('transfer-active');
@@ -311,27 +308,29 @@ const TransferManager = {
             // Determine specific activity type
             if (activeUploads > 0 && activeDownloads === 0) {
                 panel.classList.add('upload-active');
-                iconEl.className = 'fas fa-cloud-upload-alt';
             } else if (activeDownloads > 0 && activeUploads === 0) {
                 panel.classList.add('download-active');
-                iconEl.className = 'fas fa-cloud-download-alt';
             } else {
                 panel.classList.add('mixed-active');
-                iconEl.className = 'fas fa-sync-alt';
             }
 
             titleEl.textContent = `正在傳輸 ${activeCount} 個項目`;
-            speedEl.textContent = `${this.UIManager.formatBytes(currentSpeed)}/s`;
+            
+            // [MODIFIED] Use '-- B/s' for zero or undefined global speed
+            const formattedSpeed = this.UIManager.formatBytes(currentSpeed);
+            if (currentSpeed > 0 && formattedSpeed !== '0 B') {
+                speedEl.textContent = `${formattedSpeed}/s`;
+            } else {
+                speedEl.textContent = '-- B/s';
+            }
         } else if (failedCount > 0) {
             panel.classList.add('status-failed');
-            iconEl.className = 'fas fa-exclamation-circle';
             titleEl.textContent = `${failedCount} 個項目失敗`;
             speedEl.textContent = '';
         } else {
             panel.classList.add('status-completed');
-            iconEl.className = 'fas fa-check-circle'; // Or keep sync-alt if preferred for idle
             titleEl.textContent = '傳輸完成';
-            speedEl.textContent = '-- KB/s'; 
+            speedEl.textContent = '-- B/s'; 
         }
 
         // Update Progress Bar
@@ -406,7 +405,14 @@ const TransferManager = {
 
         const percent = item.size > 0 ? (item.progress / item.size * 100) : 0;
         progressFill.style.width = `${percent}%`;
-        itemSpeed.textContent = item.speed > 0 ? `${this.UIManager.formatBytes(item.speed)}/s` : '';
+        
+        // [MODIFIED] Use '-- B/s' for zero or undefined speed
+        const formattedItemSpeed = this.UIManager.formatBytes(item.speed);
+        if (item.speed && item.speed > 0 && formattedItemSpeed !== '0 B') {
+            itemSpeed.textContent = `${formattedItemSpeed}/s`;
+        } else {
+            itemSpeed.textContent = '-- B/s';
+        }
 
         switch (item.status) {
             case 'completed':

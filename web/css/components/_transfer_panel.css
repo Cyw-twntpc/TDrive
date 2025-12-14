@@ -38,38 +38,26 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Default (Idle) State Image */
+    background-image: url('../../img/transfer.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
 }
 
-.transfer-icon-wrapper i {
-    will-change: transform, background-position;
-    transform: translateZ(0); /* Force GPU acceleration */
+/* 混合傳輸狀態：顯示 GIF 動畫 */
+.transfer-active.mixed-active .transfer-icon-wrapper {
+    background-image: url('../../img/sync.gif');
 }
 
-/* 傳輸進行時加速旋轉 */
-.transfer-active.mixed-active .transfer-icon-wrapper i {
-    animation: slow-spin 2s linear infinite;
-}
-
-/* 上傳狀態：隱藏字型圖示，顯示 GIF 動畫 */
-.transfer-active.upload-active .transfer-icon-wrapper i {
-    display: none;
-}
+/* 上傳狀態：顯示 GIF 動畫 */
 .transfer-active.upload-active .transfer-icon-wrapper {
     background-image: url('../../img/upload.gif');
-    background-size: contain;
-    background-repeat: no-repeat;
-    background-position: center;
 }
 
-/* 下載狀態：隱藏字型圖示，顯示 GIF 動畫 */
-.transfer-active.download-active .transfer-icon-wrapper i {
-    display: none;
-}
+/* 下載狀態：顯示 GIF 動畫 */
 .transfer-active.download-active .transfer-icon-wrapper {
     background-image: url('../../img/download.gif');
-    background-size: contain;
-    background-repeat: no-repeat;
-    background-position: center;
 }
 
 @keyframes slow-spin {
@@ -140,10 +128,16 @@
 .sidebar-transfer-status.status-completed .sidebar-progress-fill { background-color: var(--success-color); width: 100% !important; }
 .sidebar-transfer-status.status-failed .sidebar-progress-fill { background-color: var(--danger-color); }
 
-.status-completed .transfer-icon-wrapper { color: var(--success-color); }
+/* 完成狀態：顯示圖片 */
+.status-completed .transfer-icon-wrapper {
+    background-image: url('../../img/done.png');
+}
 .status-completed .sidebar-transfer-left { background-color: rgba(var(--success-color-rgb), 0.1); }
 
-.status-failed .transfer-icon-wrapper { color: var(--danger-color); }
+/* 失敗狀態：顯示圖片 */
+.status-failed .transfer-icon-wrapper {
+    background-image: url('../../img/error.png');
+}
 .status-failed .sidebar-transfer-left { background-color: rgba(var(--danger-color-rgb), 0.1); }
 
 
