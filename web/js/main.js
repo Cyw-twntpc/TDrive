@@ -13,6 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileListBodyEl = document.getElementById('file-list-body');
     const searchInput = document.querySelector('.search-bar input');
     const searchScopeToggle = document.getElementById('search-scope-toggle');
+    
+    // [新增] Nav Rail DOM Elements
+    const navRail = document.getElementById('nav-rail');
+    // const menuToggleBtn = document.getElementById('menu-toggle-btn'); // Removed
+    const sidebarNewBtn = document.getElementById('sidebar-new-btn');
+    const closeTransferPageBtn = document.getElementById('close-transfer-page-btn');
 
     /**
      * A central coordinator for rendering the file list and ensuring the transfer manager's UI is in sync.
@@ -21,6 +27,52 @@ document.addEventListener('DOMContentLoaded', () => {
         FileListHandler.sortAndRender(AppState);
         TransferManager.updateMainFileListUI();
     }
+    
+    // --- [新增] Navigation & Routing Logic ---
+
+    /**
+     * Updates the Nav Rail's expanded/collapsed state based on the current page and user interaction.
+     */
+    function updateNavState() {
+        // If not in 'files' page (e.g. transfer page), pin the rail open.
+        // Otherwise, let CSS :hover handle it (remove pinned class).
+        if (AppState.currentPage !== 'files') {
+            navRail.classList.add('expanded');
+        } else {
+            navRail.classList.remove('expanded');
+        }
+    }
+
+    /**
+     * Switches the main view to the specified page.
+     * @param {string} pageId - The ID of the page to show (e.g., 'files', 'transfer').
+     */
+    function switchPage(pageId) {
+        if (AppState.currentPage === pageId) return;
+        
+        // 1. Update State
+        AppState.currentPage = pageId;
+        
+        // 2. Toggle Page Views
+        document.querySelectorAll('.page-view').forEach(el => el.classList.add('hidden'));
+        const targetPage = document.getElementById(`page-${pageId}`);
+        if (targetPage) targetPage.classList.remove('hidden');
+
+        // 3. Update Nav Rail Active Item
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.page === pageId);
+        });
+
+        // 4. Update Nav Rail Expansion Logic
+        updateNavState();
+        
+        // 5. Specific Page Logic
+        if (pageId === 'transfer') {
+             // Ensure Transfer UI is updated when entering the page
+             TransferManager.updateAllUI();
+        }
+    }
+    window.switchPage = switchPage;
     
     // --- Data Handling & Navigation ---
 
@@ -208,12 +260,67 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     function setupEventListeners() {
         document.getElementById('logout-btn').addEventListener('click', () => ActionHandler.handleLogout());
-        document.getElementById('upload-btn').addEventListener('click', () => ActionHandler.handleUpload());
+        // [MODIFIED] Removed listeners for upload-btn and new-folder-btn as they are removed from HTML.
+        // Their functionality is now handled by sidebarNewBtn.
         document.getElementById('download-btn').addEventListener('click', () => ActionHandler.handleDownload());
         document.getElementById('move-btn').addEventListener('click', () => ActionHandler.handleMove());
-        document.getElementById('new-folder-btn').addEventListener('click', () => ActionHandler.handleNewFolder());
         document.getElementById('delete-btn').addEventListener('click', () => ActionHandler.handleDelete());
         
+        // [新增] Sidebar 'New' Button Logic
+        // For now, let's map it to Upload as primary, or show a context menu. 
+        // Based on user request "upload/new folder", we can trigger the upload dialog or a choice.
+        // Let's default to Upload for now, or maybe a simple choice menu if UIModals supported it.
+        // Given existing handlers, we'll trigger Upload. Ideally, this should open a small menu.
+        sidebarNewBtn.addEventListener('click', (e) => {
+             // Simple fallback: Left click = Upload, Right click (context) = New Folder?
+             // Or just trigger Upload for now as it's the most common action.
+             ActionHandler.handleUpload();
+        });
+        // Allow right click on New button to create folder?
+        sidebarNewBtn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            ActionHandler.handleNewFolder();
+        });
+
+        // [新增] Nav Rail Event Listeners
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                if (item.classList.contains('disabled')) return;
+                switchPage(item.dataset.page);
+            });
+        });
+
+        // [新增] Click to Dismiss Nav Rail (in files view)
+        navRail.addEventListener('click', (e) => {
+            // Only applicable in 'files' view (where it auto-collapses)
+            if (AppState.currentPage !== 'files') return;
+
+            // If clicked on a nav-item, do nothing (let item click handler work)
+            if (e.target.closest('.nav-item')) return;
+
+            // Otherwise (clicked empty space), force collapse
+            navRail.classList.add('temp-disabled');
+
+            // Restore functionality only when the user intentionally enters the rail area again.
+            // Using 'once: true' ensures this listener is self-cleaning.
+            navRail.addEventListener('mouseenter', () => {
+                navRail.classList.remove('temp-disabled');
+            }, { once: true });
+        });
+        
+        if (closeTransferPageBtn) {
+            closeTransferPageBtn.addEventListener('click', () => switchPage('files'));
+        }
+
+        // Sidebar Transfer Status Click -> Switch to Transfer Page
+        const sidebarStatus = document.getElementById('sidebar-transfer-status');
+        if (sidebarStatus) {
+            // Remove old listener if any (managed in TransferManager, but we override behavior here or there)
+            // TransferManager adds a listener to show modal. We need to intercept or change TransferManager.
+            // Since TransferManager is initialized LATER, its listener will be added later.
+            // We should modify TransferManager to call switchPage instead of showModal.
+        }
+
         searchScopeToggle.addEventListener('click', () => {
             AppState.searchScope = (AppState.searchScope === 'all') ? 'current' : 'all';
             searchScopeToggle.textContent = (AppState.searchScope === 'all') ? '所有資料夾' : '目前資料夾';

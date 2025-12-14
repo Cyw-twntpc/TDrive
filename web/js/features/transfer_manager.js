@@ -238,7 +238,10 @@ const TransferManager = {
 
     updateAllUI() {
         this.updateSummaryPanel();
-        this.updateDetailsModal();
+        // [MODIFIED] Update dashboard if transfer page is active
+        if (this.AppState.currentPage === 'transfer') {
+            this.renderDashboard();
+        }
         this.updateMainFileListUI();
     },
 
@@ -336,16 +339,61 @@ const TransferManager = {
         // Update Progress Bar
         const percent = totalSize > 0 ? (totalProgress / totalSize) : 0;
         barEl.style.transform = `scaleX(${percent})`;
-    },
-    
-    showDetailsModal() {
-        UIManager.toggleModal('transfer-details-modal', true);
-        this.updateDetailsModal();
+
+        // [新增] Update Dashboard Stats Cards if visible
+        if (this.AppState.currentPage === 'transfer') {
+            this.updateDashboardStats(activeUploads, activeDownloads, allTasks);
+        }
     },
 
-    updateDetailsModal() {
-        const modal = document.getElementById('transfer-details-modal');
-        if (modal.classList.contains('hidden')) return;
+    // [新增] Update Dashboard Statistics
+    updateDashboardStats(activeUploadCount, activeDownloadCount, allTasks) {
+        // Calculate detailed stats
+        let uploadSpeed = 0;
+        let downloadSpeed = 0;
+        
+        allTasks.forEach(task => {
+            if (['transferring', 'starting_folder'].includes(task.status)) {
+                if (this.uploads.has(task.id)) {
+                    uploadSpeed += task.speed || 0;
+                } else if (this.downloads.has(task.id)) {
+                    downloadSpeed += task.speed || 0;
+                }
+            }
+        });
+
+        // Update DOM
+        const upCountEl = document.getElementById('stat-upload-count');
+        const upSpeedEl = document.getElementById('stat-upload-speed');
+        if (upCountEl) upCountEl.textContent = activeUploadCount;
+        if (upSpeedEl) {
+            const speed = this.UIManager.formatBytes(uploadSpeed);
+            upSpeedEl.textContent = (uploadSpeed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
+        }
+
+        const downCountEl = document.getElementById('stat-download-count');
+        const downSpeedEl = document.getElementById('stat-download-speed');
+        if (downCountEl) downCountEl.textContent = activeDownloadCount;
+        if (downSpeedEl) {
+            const speed = this.UIManager.formatBytes(downloadSpeed);
+            downSpeedEl.textContent = (downloadSpeed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
+        }
+
+        const totalSpeedEl = document.getElementById('stat-total-speed');
+        if (totalSpeedEl) {
+            const totalSpeed = uploadSpeed + downloadSpeed;
+            const speed = this.UIManager.formatBytes(totalSpeed);
+            totalSpeedEl.textContent = (totalSpeed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
+        }
+    },
+    
+    // [REMOVED] showDetailsModal - logic moved to page switching in main.js
+    
+    // [RENAMED] updateDetailsModal -> renderDashboard
+    renderDashboard() {
+        // Only render if container exists and is visible (checked by updateAllUI, but double check doesn't hurt)
+        const container = document.getElementById('page-transfer');
+        if (!container || container.classList.contains('hidden')) return;
 
         const renderListRecursive = (map, element, indentLevel = 0, parentId = null) => {
             const sortedItems = [...map.values()].sort((a, b) => {
@@ -363,23 +411,29 @@ const TransferManager = {
         };
 
         const uploadListEl = document.getElementById('upload-list');
-        uploadListEl.innerHTML = '';
-        if (this.uploads.size === 0) {
-            uploadListEl.innerHTML = '<p class="empty-list-msg">無上傳任務</p>';
-        } else {
-            renderListRecursive(this.uploads, uploadListEl);
+        if(uploadListEl) {
+            uploadListEl.innerHTML = '';
+            if (this.uploads.size === 0) {
+                uploadListEl.innerHTML = '<p class="empty-list-msg">無上傳任務</p>';
+            } else {
+                renderListRecursive(this.uploads, uploadListEl);
+            }
         }
 
         const downloadListEl = document.getElementById('download-list');
-        downloadListEl.innerHTML = '';
-        if (this.downloads.size === 0) {
-            downloadListEl.innerHTML = '<p class="empty-list-msg">無下載任務</p>';
-        } else {
-            renderListRecursive(this.downloads, downloadListEl);
+        if(downloadListEl) {
+            downloadListEl.innerHTML = '';
+            if (this.downloads.size === 0) {
+                downloadListEl.innerHTML = '<p class="empty-list-msg">無下載任務</p>';
+            } else {
+                renderListRecursive(this.downloads, downloadListEl);
+            }
         }
 
-        document.getElementById('upload-count').textContent = `(${this.uploads.size})`;
-        document.getElementById('download-count').textContent = `(${this.downloads.size})`;
+        const upCount = document.getElementById('upload-count');
+        const downCount = document.getElementById('download-count');
+        if(upCount) upCount.textContent = `(${this.uploads.size})`;
+        if(downCount) downCount.textContent = `(${this.downloads.size})`;
     },
 
     _createTaskElement(item, indentLevel, parentId = null) {
@@ -387,6 +441,7 @@ const TransferManager = {
         row.dataset.id = item.id;
         if (parentId) row.dataset.parentId = parentId;
 
+        // [MODIFIED] Use flex-basis or margin for indentation in full list if needed, or keep same
         row.querySelector('.item-indent').style.width = `${indentLevel * 25}px`;
         const toggle = row.querySelector('.item-toggle');
         if (item.isFolder) {
@@ -452,13 +507,15 @@ const TransferManager = {
         const result = this.findTask(taskId);
         if (result && result.task && result.task.isFolder) {
             result.task.expanded = !result.task.expanded;
-            this.updateDetailsModal();
+            this.renderDashboard();
         }
     },
     
     updateMainFileListUI() {
+        // ... (unchanged)
         document.querySelectorAll('.file-item:not(.is-uploading)').forEach(el => {
-            const name = el.dataset.name;
+             // ...
+             const name = el.dataset.name;
             let task = null;
 
             const findTaskByNameAndParent = (taskMap) => {
@@ -482,6 +539,7 @@ const TransferManager = {
     },
 
     showFileFeedback(name, status) {
+        // ... (unchanged)
         const el = document.querySelector(`.file-item[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
         el.classList.remove('in-transfer');
@@ -491,6 +549,7 @@ const TransferManager = {
     },
 
     findTask(id) {
+        // ... (unchanged)
         const _findRecursive = (searchId, map, parent = null) => {
             for (const task of map.values()) {
                 if (task.id === searchId) {
@@ -509,6 +568,7 @@ const TransferManager = {
         return _findRecursive(id, this.uploads) || _findRecursive(id, this.downloads);
     },
     
+    // ... (rest unchanged until setupEventListeners)
     cancelItem(id) {
         const result = this.findTask(id);
         if (result) {
@@ -562,21 +622,34 @@ const TransferManager = {
     setDownloadDestination(path) { this.currentDownloadDestination = path; },
     
     setupEventListeners() {
-        // [MODIFIED] New Event Listener for Sidebar Transfer Status
+        // [MODIFIED] Sidebar Status click -> Switch to Transfer Page
         const sidebarStatus = document.getElementById('sidebar-transfer-status');
         if (sidebarStatus) {
-            sidebarStatus.addEventListener('click', () => this.showDetailsModal());
+            sidebarStatus.addEventListener('click', () => {
+                // Access global switchPage if possible, or trigger event
+                if(window.switchPage) {
+                    window.switchPage('transfer');
+                } else {
+                    console.error("switchPage function not found");
+                }
+            });
         }
 
-        document.getElementById('close-modal-btn').addEventListener('click', () => UIManager.toggleModal('transfer-details-modal', false));
-        document.querySelectorAll('.modal-tabs .tab-btn').forEach(btn => {
+        // [MODIFIED] Tab switching for the transfer page
+        // Note: The class names used in transfer-details-modal are reused in page-transfer
+        document.querySelectorAll('.transfer-tabs .tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelector('.modal-tabs .tab-btn.active').classList.remove('active');
+                document.querySelector('.transfer-tabs .tab-btn.active').classList.remove('active');
                 btn.classList.add('active');
                 document.querySelector('.tab-content.active').classList.remove('active');
                 document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
             });
         });
+
+        // Global controls
         document.getElementById('clear-completed-btn').addEventListener('click', () => this.clearCompleted());
+        document.getElementById('pause-all-btn').addEventListener('click', () => { /* TODO: Implement pause all */ });
+        document.getElementById('resume-all-btn').addEventListener('click', () => { /* TODO: Implement resume all */ });
     }
 };
+

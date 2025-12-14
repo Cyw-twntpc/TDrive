@@ -6,6 +6,238 @@
 .btn.btn-secondary { background-color: #6c757d; border-color: #6c757d; color: white; }
 .btn.btn-secondary:hover { background-color: #5a6268; border-color: #545b62; }
 
+/* [新增] 全寬主要按鈕 (Sidebar New Button) */
+.btn-primary-block {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 12px;
+    background-color: white;
+    color: var(--primary-color);
+    border: 1px solid #e0e4e9;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    transition: all 0.2s ease;
+    gap: 8px;
+}
+.btn-primary-block:hover {
+    background-color: #f8f9fa;
+    border-color: #d1d5db;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+    transform: translateY(-1px);
+}
+.btn-primary-block:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+/* [新增] 傳輸儀表板樣式 */
+.transfer-dashboard-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    background-color: #f8f9fa;
+    max-width: 1200px; /* Limit width for better readability on huge screens */
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* 數據卡片區域 */
+.dashboard-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+    border: 1px solid rgba(0,0,0,0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.08);
+}
+
+.stat-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-right: 20px;
+    flex-shrink: 0;
+}
+.stat-icon.upload { background-color: rgba(52, 199, 89, 0.1); color: var(--success-color); }
+.stat-icon.download { background-color: rgba(0, 122, 255, 0.1); color: var(--primary-color); }
+.stat-icon.total { background-color: rgba(255, 149, 0, 0.1); color: #ff9500; }
+
+.stat-info { display: flex; flex-direction: column; }
+.stat-label { font-size: 13px; color: var(--text-light-color); margin-bottom: 4px; font-weight: 500; }
+.stat-info h3 { margin: 0; font-size: 24px; font-weight: 700; color: var(--text-color); line-height: 1.2; }
+.stat-sub { font-size: 12px; color: var(--text-light-color); margin-top: 4px; }
+
+
+.transfer-header {
+    background-color: white;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+}
+.transfer-header h2 { margin: 0; font-size: 20px; color: var(--text-color); }
+.transfer-controls { display: flex; gap: 10px; }
+
+.transfer-tabs {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e9ecef;
+}
+.transfer-tabs .tab-btn {
+    padding: 12px 4px;
+    background: none;
+    border: none;
+    font-size: 15px;
+    color: var(--text-light-color);
+    cursor: pointer;
+    position: relative;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+.transfer-tabs .tab-btn:hover { color: var(--text-color); }
+.transfer-tabs .tab-btn.active {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+.transfer-tabs .tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+}
+.transfer-tabs .tab-btn span {
+    background-color: #e9ecef;
+    color: var(--text-light-color);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.transfer-tabs .tab-btn.active span {
+    background-color: var(--selected-bg-color);
+    color: var(--primary-color);
+}
+
+/* 全螢幕列表樣式重構 - 卡片式 */
+.transfer-list-fullscreen {
+    background: transparent; /* Remove container bg */
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+/* 列表項目 - 卡片化 */
+.transfer-list-fullscreen .transfer-item {
+    background: white;
+    border: 1px solid rgba(0,0,0,0.05);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    display: flex;
+    align-items: center;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.transfer-list-fullscreen .transfer-item:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    transform: translateY(-1px);
+    z-index: 1;
+}
+
+/* 項目內部佈局調整 */
+.transfer-list-fullscreen .file-icon {
+    font-size: 32px; /* Larger icon */
+    width: 40px;
+    margin-right: 20px;
+    opacity: 0.8;
+}
+
+.transfer-list-fullscreen .item-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin-right: 20px;
+}
+
+.transfer-list-fullscreen .item-name {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-color);
+}
+
+.transfer-list-fullscreen .item-details {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.transfer-list-fullscreen .item-progress-bar {
+    height: 6px; /* Thicker bar */
+    background-color: #f0f2f5;
+    border-radius: 3px;
+    width: 100%;
+}
+
+/* 右側速度與動作 */
+.transfer-list-fullscreen .item-status {
+    width: 120px; /* Fixed width for status/speed */
+    text-align: right;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-light-color);
+    margin: 0 20px;
+}
+.transfer-list-fullscreen .item-actions {
+    opacity: 0.4; /* Dim actions by default */
+    transition: opacity 0.2s;
+}
+.transfer-list-fullscreen .transfer-item:hover .item-actions {
+    opacity: 1;
+}
+.transfer-list-fullscreen .action-btn {
+    width: 36px;
+    height: 36px;
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+}
+.transfer-list-fullscreen .action-btn:hover {
+    background-color: white;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
 .btn-icon { background: none; border: none; font-size: 20px; color: #555; cursor: pointer; width: 40px; height: 40px; border-radius: 50%; transition: background-color 0.2s; display: flex; align-items: center; justify-content: center; }
 .btn-icon:hover { background-color: #f0f0f0; }
 /* 使用者頭像按鈕樣式 */

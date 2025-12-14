@@ -1,10 +1,183 @@
-.app-container { display: flex; height: 100vh; }
+.app-container { display: flex; height: 100vh; overflow: hidden; }
 
-/* 側邊欄 */
-.sidebar { width: 260px; background-color: var(--sidebar-bg); border-right: 1px solid var(--border-color); padding: 5px; display: flex; flex-direction: column; transition: width 0.3s ease; }
-.logo { padding-bottom: 20px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: center; align-items: center; }
-.logo img { max-width: 80%; height: auto; object-fit: contain; }
-.file-tree-nav { flex: 1; overflow-y: auto; }
+/* 側邊欄容器 */
+.sidebar { 
+    width: 260px; 
+    background-color: var(--sidebar-bg); 
+    border-right: 1px solid var(--border-color); 
+    display: flex; 
+    flex-direction: column; 
+    transition: width 0.3s ease;
+    flex-shrink: 0;
+    position: relative; /* Ensure z-index context */
+}
+
+.logo { 
+    padding: 20px 0; 
+    margin: 0;
+    border-bottom: 1px solid var(--border-color); 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    background-color: var(--sidebar-bg);
+    z-index: 101; /* Stay above Nav Rail if needed, or Nav Rail covers it? As per design, Nav Rail covers body */
+}
+.logo img { max-width: 140px; height: auto; object-fit: contain; }
+
+/* 側邊欄主體 (功能區) */
+.sidebar-body {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Contain the absolute Nav Rail */
+}
+
+/* 隱藏式導航軌 (Nav Rail) */
+.nav-rail {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 6px; /* [MODIFIED] Reduced to 6px */
+    background-color: transparent; /* Transparent body to show content behind, only line visible */
+    z-index: 200;
+    /* [MODIFIED] Slower transition */
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease, box-shadow 0.5s ease;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    /* [MODIFIED] Persistent Line Effect via Border */
+    border-right: 1px solid transparent; 
+}
+
+/* [新增] 暫時停用狀態 (用於點擊收合) */
+.nav-rail.temp-disabled {
+    width: 6px !important; /* [MODIFIED] Reduced to 6px */
+    background-color: transparent !important;
+    border-right-color: transparent !important;
+    box-shadow: none !important;
+    /* pointer-events: none;  <-- Do NOT use this, or we can't detect mouseleave to reset! */
+}
+/* Ensure inner content is hidden when temp-disabled */
+.nav-rail.temp-disabled .nav-items {
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+.nav-rail.temp-disabled::before {
+    width: 4px; /* Restore the blue line */
+    opacity: 1;
+}
+
+/* 視覺提示線條 (The Line) - 使用偽元素 */
+.nav-rail::before {
+    content: '';
+    position: absolute;
+    top: 0; /* [MODIFIED] Extend to top edge (Logo boundary) */
+    bottom: 0;
+    left: 0;
+    width: 4px; /* The visible line width */
+    background-color: var(--primary-color);
+    transition: width 0.3s ease, background-color 0.3s ease;
+    z-index: 201;
+}
+
+/* Hover or Expanded State */
+.nav-rail:hover, .nav-rail.expanded {
+    width: 100%;
+    background-color: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(8px);
+    border-right: 1px solid var(--border-color);
+    box-shadow: 4px 0 16px rgba(0,0,0,0.05);
+}
+
+/* When expanded, the line disappears or becomes part of the border/background */
+.nav-rail:hover::before, .nav-rail.expanded::before {
+    width: 0; /* Hide the specialized line, standard border takes over */
+    opacity: 0;
+}
+
+/* [REMOVED] nav-rail-header and menu-icon styles as requested */
+.nav-items {
+    list-style: none;
+    padding: 10px 12px;
+    margin: 60px 0 0 0; /* [MODIFIED] Add top margin to compensate for removed header, keeping items pushed down slightly */
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-radius: 8px;
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    font-size: 15px;
+    white-space: nowrap; /* Prevent text wrap */
+}
+
+.nav-item i {
+    width: 24px;
+    font-size: 18px;
+    margin-right: 12px;
+    text-align: center;
+    color: var(--text-light-color);
+}
+
+.nav-item:hover {
+    background-color: #f5f7fa;
+}
+
+.nav-item.active {
+    background-color: var(--selected-bg-color);
+    color: var(--primary-color);
+    font-weight: 600;
+}
+.nav-item.active i {
+    color: var(--primary-color);
+}
+.nav-item.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+
+/* 底層側邊欄內容 */
+.sidebar-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-left: 15px; /* Reserve space for collapsed rail border/sensory area */
+}
+
+.sidebar-actions {
+    padding: 15px 15px 10px 5px; /* Reduced left padding handled by container */
+}
+
+.file-tree-nav { 
+    flex: 1; 
+    overflow-y: auto; 
+    padding-right: 5px;
+    margin-bottom: 0; /* Remove bottom margin as transfer status is pinned */
+}
+
+/* Page Views */
+.page-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+}
+.page-view.hidden {
+    display: none !important;
+}
 
 /* 主要內容 & 頂部欄 */
 .main-content { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--main-content-bg); position: relative; }

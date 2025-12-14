@@ -31,6 +31,8 @@ const AppState = {
     userInfo: null,
     // Base64 data URI of the user's avatar.
     userAvatar: null,
+    // [新增] Currently active page identifier (e.g., 'files', 'transfer', 'trash')
+    currentPage: 'files',
     // --- Drag and Drop State ---
     // Whether a drag operation is currently in progress.
     isDragging: false,

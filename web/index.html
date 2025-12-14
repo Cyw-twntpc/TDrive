@@ -23,22 +23,57 @@
             <div class="logo unselectable">
                 <img src="title.png" alt="TDrive Logo">
             </div>
-            <nav class="file-tree-nav">
-                <ul id="file-tree"></ul>
-            </nav>
-            <div id="sidebar-transfer-status" class="sidebar-transfer-status">
-                <div class="sidebar-transfer-left">
-                     <div class="transfer-icon-wrapper"></div>
-                </div>
-                <div class="sidebar-transfer-right">
-                    <div class="transfer-info-row">
-                        <span id="sidebar-transfer-title"></span>
+            
+            <div class="sidebar-body">
+                <!-- Hidden Nav Rail (Overlay) -->
+                <nav id="nav-rail" class="nav-rail">
+                    <ul class="nav-items">
+                        <li class="nav-item active" data-page="files">
+                            <i class="fas fa-folder"></i>
+                            <span class="nav-text">我的檔案</span>
+                        </li>
+                        <li class="nav-item" data-page="transfer">
+                            <i class="fas fa-exchange-alt"></i>
+                            <span class="nav-text">傳輸管理</span>
+                        </li>
+                        <li class="nav-item disabled" data-page="shared" title="即將推出">
+                            <i class="fas fa-share-alt"></i>
+                            <span class="nav-text">分享連結</span>
+                        </li>
+                        <li class="nav-item disabled" data-page="trash" title="即將推出">
+                            <i class="fas fa-trash-alt"></i>
+                            <span class="nav-text">回收桶</span>
+                        </li>
+                    </ul>
+                </nav>
+
+                <!-- Base Sidebar Content -->
+                <div class="sidebar-content">
+                    <div class="sidebar-actions">
+                        <button id="sidebar-new-btn" class="btn-primary-block">
+                            <i class="fas fa-plus"></i> 新增
+                        </button>
                     </div>
-                    <div class="transfer-info-row">
-                        <span id="sidebar-transfer-speed">-- KB/s</span>
-                    </div>
-                    <div class="sidebar-progress-container">
-                        <div id="sidebar-transfer-bar" class="sidebar-progress-fill"></div>
+                    
+                    <nav class="file-tree-nav">
+                        <ul id="file-tree"></ul>
+                    </nav>
+                    
+                    <div id="sidebar-transfer-status" class="sidebar-transfer-status">
+                        <div class="sidebar-transfer-left">
+                             <div class="transfer-icon-wrapper"></div>
+                        </div>
+                        <div class="sidebar-transfer-right">
+                            <div class="transfer-info-row">
+                                <span id="sidebar-transfer-title"></span>
+                            </div>
+                            <div class="transfer-info-row">
+                                <span id="sidebar-transfer-speed">-- B/s</span>
+                            </div>
+                            <div class="sidebar-progress-container">
+                                <div id="sidebar-transfer-bar" class="sidebar-progress-fill"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -46,66 +81,124 @@
 
         <main class="main-content">
             <div id="global-progress-bar"><div class="runner"></div></div>
-            <header class="top-bar">
-                <div class="top-row">
-                    <div class="search-container">
-                        <div class="search-bar">
-                            <i class="fas fa-search"></i>
-                            <input type="text" placeholder="在 TDrive 中搜尋" spellcheck="false" autocomplete="off">
+            
+            <!-- Page Container: Files (Default) -->
+            <div id="page-files" class="page-view active">
+                <header class="top-bar">
+                    <div class="top-row">
+                        <div class="search-container">
+                            <div class="search-bar">
+                                <i class="fas fa-search"></i>
+                                <input type="text" placeholder="在 TDrive 中搜尋" spellcheck="false" autocomplete="off">
+                            </div>
+                            <button id="search-scope-toggle" class="search-scope-btn" title="切換搜尋範圍">全部資料夾</button>
                         </div>
-                        <button id="search-scope-toggle" class="search-scope-btn" title="切換搜尋範圍">全部資料夾</button>
+                        <div class="user-actions">
+                            <button id="help-btn" class="btn-icon" title="幫助" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
+                            <button id="settings-btn" class="btn-icon" title="設定" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
+                            <button id="user-btn" class="btn-icon" title="使用者資訊" data-popover="user-popover">
+                                <i class="fas fa-user-circle"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="user-actions">
-                        <button id="help-btn" class="btn-icon" title="幫助" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
-                        <button id="settings-btn" class="btn-icon" title="設定" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
-                        <button id="user-btn" class="btn-icon" title="使用者資訊" data-popover="user-popover">
-                            <i class="fas fa-user-circle"></i>
-                        </button>
+                    <div class="bottom-row">
+                        <nav id="breadcrumb" class="breadcrumb-nav"></nav>
+                        <div class="action-buttons">
+                            <!-- Upload/New Folder moved to Sidebar, keeping context actions here if needed or relying on context menu -->
+                            <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
+                            <button id="move-btn" class="btn"><i class="fas fa-arrow-right-to-bracket"></i> 移動</button>
+                            <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
+                        </div>
                     </div>
-                </div>
-                <div class="bottom-row">
-                    <nav id="breadcrumb" class="breadcrumb-nav"></nav>
-                    <div class="action-buttons">
-                        <button id="upload-btn" class="btn"><i class="fas fa-upload"></i> 上傳</button>
-                        <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
-                        <button id="move-btn" class="btn"><i class="fas fa-arrow-right-to-bracket"></i> 移動</button>
-                        <button id="new-folder-btn" class="btn"><i class="fas fa-folder-plus"></i> 新增資料夾</button>
-                        <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
-                    </div>
-                </div>
-            </header>
+                </header>
 
-            <section id="file-list-container" class="file-list-section">
-                <div class="file-list-header">
-                    <div class="file-item-col name sortable" data-sort="name">
-                        <div class="header-name-wrapper">
-                            <span>名稱</span>
-                            <span class="sort-icon"></span>
+                <section id="file-list-container" class="file-list-section">
+                    <div class="file-list-header">
+                        <div class="file-item-col name sortable" data-sort="name">
+                            <div class="header-name-wrapper">
+                                <span>名稱</span>
+                                <span class="sort-icon"></span>
+                            </div>
+                        </div>
+                        <div class="file-item-col date sortable" data-sort="date">
+                            <div class="header-name-wrapper">
+                                <span>修改日期</span>
+                                <span class="sort-icon"></span>
+                            </div>
+                        </div>
+                        <div class="file-item-col type sortable" data-sort="type">
+                            <div class="header-name-wrapper">
+                                <span>類型</span>
+                                <span class="sort-icon"></span>
+                            </div>
+                        </div>
+                        <div class="file-item-col size sortable" data-sort="size">
+                            <div class="header-name-wrapper">
+                                <span>檔案大小</span>
+                                <span class="sort-icon"></span>
+                            </div>
                         </div>
                     </div>
-                    <div class="file-item-col date sortable" data-sort="date">
-                        <div class="header-name-wrapper">
-                            <span>修改日期</span>
-                            <span class="sort-icon"></span>
+                    <div id="file-list-body" class="file-list-body">
+                    </div>
+                    <div id="selection-box"></div>
+                </section>
+            </div>
+
+            <!-- Page Container: Transfer Dashboard -->
+            <div id="page-transfer" class="page-view hidden">
+                <!-- Content will be injected by TransferManager -->
+                 <header class="top-bar transfer-header">
+                    <h2>傳輸管理器</h2>
+                    <div class="transfer-controls">
+                        <button id="pause-all-btn" class="btn"><i class="fas fa-pause"></i> 全部暫停</button>
+                        <button id="resume-all-btn" class="btn"><i class="fas fa-play"></i> 全部繼續</button>
+                        <button id="clear-completed-btn" class="btn"><i class="fas fa-check-circle"></i> 清除已完成</button>
+                        <button id="close-transfer-page-btn" class="btn-icon"><i class="fas fa-times"></i></button>
+                    </div>
+                </header>
+                <div class="transfer-dashboard-body">
+                    <!-- Dashboard Statistics Cards -->
+                    <div class="dashboard-stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon upload"><i class="fas fa-cloud-upload-alt"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">正在上傳</span>
+                                <h3 id="stat-upload-count">0</h3>
+                                <span class="stat-sub" id="stat-upload-speed">-- B/s</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon download"><i class="fas fa-cloud-download-alt"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">正在下載</span>
+                                <h3 id="stat-download-count">0</h3>
+                                <span class="stat-sub" id="stat-download-speed">-- B/s</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon total"><i class="fas fa-tachometer-alt"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">總體速度</span>
+                                <h3 id="stat-total-speed">-- B/s</h3>
+                                <span class="stat-sub">即時監控中</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="file-item-col type sortable" data-sort="type">
-                        <div class="header-name-wrapper">
-                            <span>類型</span>
-                            <span class="sort-icon"></span>
-                        </div>
+
+                    <div class="transfer-tabs">
+                        <button class="tab-btn active" data-tab="uploads">上傳中 <span id="upload-count"></span></button>
+                        <button class="tab-btn" data-tab="downloads">下載中 <span id="download-count"></span></button>
                     </div>
-                    <div class="file-item-col size sortable" data-sort="size">
-                        <div class="header-name-wrapper">
-                            <span>檔案大小</span>
-                            <span class="sort-icon"></span>
-                        </div>
+                    <div id="uploads-tab" class="tab-content active">
+                        <div id="upload-list" class="transfer-list-fullscreen"></div>
+                    </div>
+                    <div id="downloads-tab" class="tab-content">
+                         <div id="download-list" class="transfer-list-fullscreen"></div>
                     </div>
                 </div>
-                <div id="file-list-body" class="file-list-body">
-                </div>
-                <div id="selection-box"></div>
-            </section>
+            </div>
+
         </main>
     </div>
     
@@ -160,32 +253,6 @@
         <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;">登出</button>
     </div>
 
-    <div id="transfer-details-modal" class="modal-overlay hidden unselectable">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>傳輸管理器</h2>
-                <button id="close-modal-btn" class="close-btn"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="modal-body">
-                <div class="modal-tabs">
-                    <button class="tab-btn active" data-tab="uploads">上傳中 <span id="upload-count"></span></button>
-                    <button class="tab-btn" data-tab="downloads">下載中 <span id="download-count"></span></button>
-                </div>
-                <div id="uploads-tab" class="tab-content active">
-                    <div id="upload-list" class="transfer-list"></div>
-                </div>
-                <div id="downloads-tab" class="tab-content">
-                     <div id="download-list" class="transfer-list"></div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="pause-all-btn" class="btn"><i class="fas fa-pause"></i> 全部暫停</button>
-                <button id="resume-all-btn" class="btn"><i class="fas fa-play"></i> 全部繼續</button>
-                <button id="clear-completed-btn" class="btn"><i class="fas fa-check-circle"></i> 清除已完成項目</button>
-            </div>
-        </div>
-    </div>
-    
     <div id="confirm-modal" class="modal-overlay hidden unselectable">
         <div class="modal-content small-modal">
             <div class="modal-header">
