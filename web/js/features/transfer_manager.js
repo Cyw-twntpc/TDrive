@@ -3,6 +3,7 @@
  *
  * This object tracks all active, queued, and completed transfers, renders the
  * sidebar status indicator and the detailed transfer dashboard, and handles user interactions.
+ * * [Updated] Implements "Pulse Detection" & "Cosine Interpolation" for smooth chart visualization.
  */
 const TransferManager = {
     uploads: new Map(),
@@ -20,8 +21,18 @@ const TransferManager = {
     completedSort: { key: 'time', order: 'desc' }, // Sorting state for history
     completedFilter: 'all', // 'all', 'upload', 'download'
     
-    // [Chart Data]
-    // Handled by backend now, minimal state here
+    // [Chart Animation State]
+    // 負責管理前端補間動畫的狀態變數
+    chartState: {
+        points: [],           // 歷史點紀錄
+        startX: 0, startY: 0, // 動畫當前階段的起點
+        targetX: 0, targetY: 0, // 動畫當前階段的終點 (由後端 Pulse 決定)
+        currentX: 0, currentY: 0, // 實際畫在圖上的筆尖位置
+        startTime: 0,         // 動畫開始時間
+        duration: 1000,       // 動畫持續時間 (根據網速動態調整)
+        isAnimating: false    // 是否正在執行 requestAnimationFrame 迴圈
+    },
+    lastYMax: 1024 * 1024,    // 緩存 Y 軸最大值
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -35,35 +46,158 @@ const TransferManager = {
             if (window.tdrive_bridge.transfer_progress_updated) {
                 window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
             }
-            if (window.tdrive_bridge.transfer_chart_updated) {
-                window.tdrive_bridge.transfer_chart_updated.connect(this.onChartUpdate.bind(this));
-                console.log("TransferManager connected to 'transfer_chart_updated' signal.");
+            // Add a robust connection mechanism for transfer_chart_updated
+            const connectChartSignal = () => {
+                if (window.tdrive_bridge && window.tdrive_bridge.transfer_chart_updated) {
+                    window.tdrive_bridge.transfer_chart_updated.connect(this.onChartUpdate.bind(this));
+                    console.log("TransferManager connected to 'transfer_chart_updated' signal.");
+                    return true; // Connection successful
+                }
+                return false; // Not yet available
+            };
+
+            if (!connectChartSignal()) { // Try connecting once immediately
+                let retryCount = 0;
+                const maxRetries = 10;
+                const retryInterval = 100; // ms
+
+                const intervalId = setInterval(() => {
+                    if (connectChartSignal() || retryCount >= maxRetries) {
+                        clearInterval(intervalId);
+                        if (retryCount >= maxRetries) {
+                            console.warn("Failed to connect 'transfer_chart_updated' signal after multiple retries.");
+                        }
+                    }
+                    retryCount++;
+                }, retryInterval);
+            }
+            
+            // [New] Request initial traffic stats immediately
+            if (window.tdrive_bridge.get_initial_traffic_stats) {
+                window.tdrive_bridge.get_initial_traffic_stats((data) => {
+                    if (data) {
+                        // Pass a dummy 'idle' status so it just updates the text without triggering animation/color changes
+                        this.onChartUpdate({ ...data, status: 'idle' });
+                    }
+                });
             }
         }
     },
     
-    // --- Chart & Hero Update ---
+    // --- Chart & Hero Update (Animated) ---
     onChartUpdate(data) {
-        // data: { points: [{x,y}...], yMax, currentSpeed, totalProgress, todayTraffic, status }
+        // data: { type: 'pulse'|undefined, points: [], yMax, todayTraffic, status, x, y, dt }
         
         // 1. Update Traffic (Backend source is best for persistent totals)
-        const trafficEl = document.getElementById('hero-daily-traffic');
-        if (trafficEl) {
-            trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
+        if (data.todayTraffic !== undefined) {
+            const trafficEl = document.getElementById('hero-daily-traffic');
+            if (trafficEl) {
+                trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
+            }
         }
         
-        // 2. Handle Chart Color
+        // 2. Handle Chart Color & Status
         const chartSvg = document.querySelector('.hero-chart-svg');
+        
+        if (data.status === 'idle') {
+            // [New] Idle 狀態：重置圖表
+            if (chartSvg) chartSvg.classList.remove('completed');
+            this.renderSvgChart([], this.lastYMax); // Clear visual line
+            this.chartState.points = [];
+            this.chartState.isAnimating = false;
+            // Reset Speed Text
+            const speedEl = document.getElementById('hero-total-speed');
+            if(speedEl) speedEl.textContent = '-- B/s';
+            return;
+        }
+
         if (chartSvg) {
             if (data.status === 'completed') {
                 chartSvg.classList.add('completed');
+                // Optional: Stop animation or clear points here if needed
+                return; 
             } else {
                 chartSvg.classList.remove('completed');
             }
         }
         
-        // 3. Draw Chart
-        this.renderSvgChart(data.points, data.yMax);
+        // 3. Handle Pulse Signal (New Architecture)
+        if (data.type === 'pulse') {
+            this.handlePulse(data);
+        } else if (data.points) {
+            // Fallback for legacy static points if needed, or initial load
+            this.renderSvgChart(data.points, data.yMax);
+        }
+    },
+
+    handlePulse(data) {
+        const s = this.chartState;
+        const now = performance.now();
+
+        // [關鍵 1] 將目前動畫畫到的位置 ("筆尖") 設為下一段動畫的 "起點"
+        // 這樣可以保證線條是連續的，不會有斷層 (C0 Continuity)
+        s.startX = s.currentX;
+        s.startY = s.currentY;
+
+        // [關鍵 2] 將"上一個目標"推入歷史紀錄，形成軌跡
+        // 避免剛開始 target 為 0 時存入無效點
+        if (s.targetX > 0 || s.targetY > 0) {
+            s.points.push({ x: s.targetX, y: s.targetY });
+            // 限制歷史長度，避免效能問題
+            if (s.points.length > 50) s.points.shift();
+        }
+
+        // [關鍵 3] 設定新的目標
+        s.targetX = data.x;
+        s.targetY = data.y;
+        
+        // 更新 Y 軸最大值
+        if (data.yMax) this.lastYMax = data.yMax;
+
+        // [關鍵 4] 設定動畫時間
+        // 使用後端測量的 dt (脈衝間隔)。
+        // 限制範圍以防動畫過快(看不清)或過慢(像當機)。範圍：0.1秒 ~ 5秒
+        s.duration = Math.max(100, Math.min(5000, data.dt * 1000));
+        
+        s.startTime = now;
+
+        // 啟動前端渲染迴圈 (如果尚未啟動)
+        if (!s.isAnimating) {
+            s.isAnimating = true;
+            requestAnimationFrame(this.animateChart.bind(this));
+        }
+    },
+
+    animateChart(now) {
+        const s = this.chartState;
+        
+        // 1. 計算時間進度 t (0.0 ~ 1.0)
+        let t = (now - s.startTime) / s.duration;
+        
+        // 邊界檢查
+        if (t > 1) t = 1;
+        if (t < 0) t = 0;
+
+        // 2. [核心演算法] 餘弦插值 (Cosine Interpolation)
+        // mu 是一個 S 型曲線的係數 (0 -> 1)，實現 "緩入緩出" 效果
+        const mu = (1 - Math.cos(t * Math.PI)) / 2;
+
+        // 3. 根據 mu 計算當前筆尖位置
+        s.currentX = s.startX * (1 - mu) + s.targetX * mu;
+        s.currentY = s.startY * (1 - mu) + s.targetY * mu;
+
+        // 4. 準備繪圖數據：歷史點 + 當前筆尖
+        const drawPoints = [...s.points, { x: s.currentX, y: s.currentY }];
+        
+        // 5. 渲染 SVG
+        this.renderSvgChart(drawPoints, this.lastYMax);
+
+        // 6. 同步更新速度文字 (使用平滑後的數值，避免數字跳動太劇烈)
+
+        // 7. 迴圈控制
+        // 只要還有任務在跑，或者動畫還沒完全停下來，就繼續迴圈
+        // 為了保持流暢，我們持續運行
+        requestAnimationFrame(this.animateChart.bind(this));
     },
 
     renderSvgChart(points, yMax) {
@@ -77,20 +211,22 @@ const TransferManager = {
             return;
         }
 
-        // Map points to SVG coordinates (0-100)
-        // X is already 0-100
-        // Y needs to be scaled by yMax. 0 is bottom (100), yMax is top (0)
-        // Ensure yMax is valid to avoid NaN
-        const safeYMax = (yMax && yMax > 0) ? yMax : 1024; // Default 1KB if 0
+        // [防呆] 確保 yMax 有效
+        const safeYMax = (yMax && yMax > 0) ? yMax : 1024 * 1024;
         
         const svgPoints = points.map(p => {
-            const x = p.x; 
-            // Avoid div by zero
-            const normalizedY = p.y / safeYMax;
+            // [防呆] 嚴格檢查數值，防止 .toFixed 報錯
+            // 如果 p.x 是 null 或 undefined，就預設為 0
+            const rawX = (p && typeof p.x === 'number') ? p.x : 0;
+            const rawY = (p && typeof p.y === 'number') ? p.y : 0;
+
+            // X is already 0-100
+            // Y needs to be scaled by yMax. 0 is bottom (100), yMax is top (0)
+            const normalizedY = rawY / safeYMax;
             const y = 100 - (normalizedY * 100); 
             // Clamp y to be safe
             const clampedY = Math.max(0, Math.min(100, y));
-            return `${x.toFixed(2)},${clampedY.toFixed(2)}`;
+            return `${rawX.toFixed(2)},${clampedY.toFixed(2)}`;
         });
 
         // Line Path
@@ -99,7 +235,8 @@ const TransferManager = {
 
         // Area Path: close the loop to bottom right then bottom left
         // X goes from 0 to last_x.
-        const lastX = points[points.length-1].x;
+        const lastPoint = points[points.length-1];
+        const lastX = (lastPoint && typeof lastPoint.x === 'number') ? lastPoint.x : 0;
         const areaD = `${lineD} L ${lastX.toFixed(2)},100 L 0,100 Z`;
         chartArea.setAttribute('d', areaD);
     },
@@ -315,14 +452,15 @@ const TransferManager = {
     },
 
     updateDashboardHero(currentSpeed, activeCount, allTasks) {
-        // 1. Update Speed (Frontend Local Calc)
+        // [修改 1] 恢復由這裡更新速度文字
+        // 這裡的 currentSpeed 是由 updateSummaryPanel 遍歷所有任務加總得來的
         const speedEl = document.getElementById('hero-total-speed');
         if (speedEl) {
             const formattedSpeed = this.UIManager.formatBytes(currentSpeed);
             speedEl.textContent = (currentSpeed > 0) ? `${formattedSpeed}/s` : '-- B/s';
         }
         
-        // 2. ETA Calculation
+        // 2. ETA Calculation (這部分保持不變)
         const etaEl = document.getElementById('hero-eta');
         if (etaEl) {
             let totalRemaining = 0;
@@ -751,6 +889,5 @@ const TransferManager = {
         document.getElementById('global-cancel-btn')?.addEventListener('click', () => this.cancelAll());
         document.getElementById('global-pause-btn')?.addEventListener('click', () => this.pauseAll());
         document.getElementById('retry-all-btn')?.addEventListener('click', () => this.retryAll());
-        // document.getElementById('clear-history-btn')?.addEventListener('click', () => this.clearCompleted()); // Removed
     }
 };

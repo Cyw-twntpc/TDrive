@@ -258,3 +258,11 @@ class Bridge(QObject):
     @Slot(str, result=dict)
     def cancel_transfer(self, task_id):
         return self._service.cancel_transfer(task_id)
+
+    @Slot(result=dict)
+    def get_initial_traffic_stats(self):
+        """
+        Allows the frontend to query traffic stats upon initialization.
+        """
+        today_traffic = self._service.get_today_traffic_stats()
+        return {'todayTraffic': today_traffic}

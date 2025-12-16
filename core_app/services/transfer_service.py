@@ -48,19 +48,8 @@ class TransferService:
             if status in ['transferring', 'completed', 'starting_folder']:
                 delta = current - last_reported
                 if delta > 0:
-                    # Async call not awaited here (fire and forget-ish), 
-                    # but since update_transferred_bytes is lightweight and non-blocking logic, 
-                    # we can just run it. Ideally it should be sync or scheduled.
-                    # Since we are in a thread pool (from telegram_comms) or async loop?
-                    # telegram_comms callbacks run in the event loop.
-                    # monitor.update_transferred_bytes is async.
-                    # We need to schedule it.
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self.monitor.update_transferred_bytes(delta))
-                    except RuntimeError:
-                        # Fallback if no loop (shouldn't happen in this architecture)
-                        pass
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.monitor.update_transferred_bytes(delta))
                     
                     self._active_transfers_map[tid] = current
             
@@ -90,7 +79,12 @@ class TransferService:
 
     async def _stop_monitor_if_idle(self):
         # If no active tasks in shared_state, stop monitor
-        if not self.shared_state.active_tasks:
+        running_transfers = [
+            k for k in self.shared_state.active_tasks.keys() 
+            if not k.startswith("bg_task_")
+        ]
+
+        if not running_transfers:
             await self.monitor.stop()
 
     async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], concurrency_limit: int, progress_callback: Callable):
@@ -105,6 +99,8 @@ class TransferService:
             return
         
         # [Monitor] Update expected total
+        await self._start_monitor_if_needed()
+        
         total_size_added = 0
         for item in upload_items:
             try:
@@ -112,9 +108,7 @@ class TransferService:
                 total_size_added += sz
             except:
                 pass
-        
         await self.monitor.add_expected_bytes(total_size_added)
-        await self._start_monitor_if_needed()
 
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
@@ -211,6 +205,10 @@ class TransferService:
             except asyncio.CancelledError:
                 logger.warning(f"Upload task '{file_name}' (ID: {task_id}) was cancelled by the user.")
                 progress_callback(task_id, file_name, 0, total_size, 'cancelled', 0)
+                
+                transferred = self._active_transfers_map.get(task_id, 0)
+                # Ensure stats are removed from monitor
+                await self.monitor.remove_task_stats(total_size, transferred)
             except errors.ItemAlreadyExistsError as e:
                 logger.warning(f"Upload for '{file_name}' failed: {e}")
                 progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e))
@@ -238,8 +236,8 @@ class TransferService:
         
         # [Monitor] Update expected total
         total_size_added = sum(item.get('size', 0) for item in items)
-        await self.monitor.add_expected_bytes(total_size_added)
         await self._start_monitor_if_needed()
+        await self.monitor.add_expected_bytes(total_size_added)
 
         group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
@@ -394,6 +392,11 @@ class TransferService:
         except asyncio.CancelledError:
             logger.warning(f"Download task '{file_name}' (ID: {task_id}) was cancelled.")
             progress_callback(task_id, file_name, 0, 0, 'cancelled', 0, parent_task_id=parent_task_id)
+            
+            transferred = self._active_transfers_map.get(task_id, 0)
+            total_size = file_details.get("size", 0)
+            await self.monitor.remove_task_stats(total_size, transferred)
+            
             # Re-raise to notify the parent gather().
             raise
         except Exception as e:

@@ -1,6 +1,7 @@
 import os
 # Ensure that the PySide6 backend is used for Qt
 os.environ['QT_API'] = 'pyside6'
+os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '9222'
 
 import sys
 import ctypes

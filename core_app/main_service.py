@@ -184,6 +184,9 @@ class TDriveService:
         return await self._file_service.move_items(items, target_folder_id)
 
     # --- Transfer Service ---
+    def get_today_traffic_stats(self) -> int:
+        return self._transfer_service.monitor.get_today_traffic()
+
     def set_chart_callback(self, callback: Callable):
         self._transfer_service.set_chart_callback(callback)
 
