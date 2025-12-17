@@ -5,7 +5,7 @@ dialogs, such as file and folder selection dialogs.
 This module abstracts the direct calls to PySide6's QFileDialog, making it
 easier to call these common dialogs from various parts of the application.
 """
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QFileDialog, QApplication
 
 def core_select_files(multiple: bool = False, title: str = "Select File(s)", initial_dir: str = "") -> list[str]:
     """
@@ -21,11 +21,12 @@ def core_select_files(multiple: bool = False, title: str = "Select File(s)", ini
         dialog is canceled.
     """
     start_dir = initial_dir if initial_dir else ""
+    parent = QApplication.activeWindow()
     
     if multiple:
         # getOpenFileNames returns a tuple: (list_of_filenames, filter_string)
         file_paths, _ = QFileDialog.getOpenFileNames(
-            None, 
+            parent, 
             title, 
             start_dir, 
             "All Files (*)"
@@ -34,7 +35,7 @@ def core_select_files(multiple: bool = False, title: str = "Select File(s)", ini
     else:
         # getOpenFileName returns a tuple: (filename, filter_string)
         file_path, _ = QFileDialog.getOpenFileName(
-            None, 
+            parent, 
             title, 
             start_dir, 
             "All Files (*)"
@@ -54,9 +55,10 @@ def core_select_directory(title: str = "Select Folder", initial_dir: str = "") -
         dialog is canceled.
     """
     start_dir = initial_dir if initial_dir else ""
+    parent = QApplication.activeWindow()
     
     folder_path = QFileDialog.getExistingDirectory(
-        None, 
+        parent, 
         title, 
         start_dir
     )

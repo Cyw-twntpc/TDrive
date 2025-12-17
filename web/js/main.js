@@ -166,25 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Ensure Root is in the path (it should be always open)
         const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
         if (rootFolder && targetPathIds.length === 0) {
-             // If we are at Root, path is empty. If we are below Root, Root is in path.
-             // Just ensuring consistent array structure.
              if (folderId !== rootFolder.id) targetPathIds.unshift(rootFolder.id);
-             // If folderId IS root, targetPathIds remains empty (no parents to expand), which is correct.
-             // Wait, if folderId is Root, we don't need to expand anything except Root itself?
-             // Root is special, it's always visible.
-             // But our compareAndSwitch starts from Root. 
-             // If targetPathIds is empty, compareAndSwitch might close Root's children? Yes.
-             // That's correct behavior: "Close everything else".
-             
-             // Actually, if we are AT Root, we want Root expanded? 
-             // "只展開父資料夾" -> Root has no parent. So nothing to expand.
-             // BUT Root's children should be visible? Yes, that means Root is expanded.
-             // Root is always expanded in `render`. `close` logic shouldn't close Root unless we want to.
-             // Our `compareAndSwitch` starts comparing from Root's children.
-             // If targetPathIds is empty, it means we don't require any child of Root to be open.
-             // So Root stays open (it's the container), but its sub-folders (L1) close. Correct.
         } else if (rootFolder && targetPathIds[0] !== rootFolder.id) {
-             // Should not happen if tree is valid, but safety check.
              targetPathIds.unshift(rootFolder.id);
         }
 
@@ -213,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const rawFolderTree = await ApiService.getFolderTreeData();
         
-        // The main progress bar can stop here; `navigateTo` will manage its own progress indication.
+        // The main progress bar can stop here; `MapsTo` will manage its own progress indication.
         UIManager.stopProgress(); 
 
         if (!Array.isArray(rawFolderTree)) {
@@ -266,21 +249,23 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('move-btn').addEventListener('click', () => ActionHandler.handleMove());
         document.getElementById('delete-btn').addEventListener('click', () => ActionHandler.handleDelete());
         
-        // [新增] Sidebar 'New' Button Logic
-        // For now, let's map it to Upload as primary, or show a context menu. 
-        // Based on user request "upload/new folder", we can trigger the upload dialog or a choice.
-        // Let's default to Upload for now, or maybe a simple choice menu if UIModals supported it.
-        // Given existing handlers, we'll trigger Upload. Ideally, this should open a small menu.
-        sidebarNewBtn.addEventListener('click', (e) => {
-             // Simple fallback: Left click = Upload, Right click (context) = New Folder?
-             // Or just trigger Upload for now as it's the most common action.
-             ActionHandler.handleUpload();
+        // [新增] Popover 選單項目監聽器
+        document.getElementById('new-upload-file-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent popover from closing immediately
+            document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden')); // Close popover
+            ActionHandler.handleFileUpload();
         });
-        // Allow right click on New button to create folder?
-        sidebarNewBtn.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
+        document.getElementById('new-upload-folder-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent popover from closing immediately
+            document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden')); // Close popover
+            ActionHandler.handleFolderUploadPlaceholder();
+        });
+        document.getElementById('new-create-folder-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent popover from closing immediately
+            document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden')); // Close popover
             ActionHandler.handleNewFolder();
         });
+        // [MODIFIED] Removed original sidebarNewBtn listeners as its function is now via popover.
 
         // [新增] Nav Rail Event Listeners
         document.querySelectorAll('.nav-item').forEach(item => {
@@ -302,7 +287,6 @@ document.addEventListener('DOMContentLoaded', () => {
             navRail.classList.add('temp-disabled');
 
             // Restore functionality only when the user intentionally enters the rail area again.
-            // Using 'once: true' ensures this listener is self-cleaning.
             navRail.addEventListener('mouseenter', () => {
                 navRail.classList.remove('temp-disabled');
             }, { once: true });
@@ -315,10 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Sidebar Transfer Status Click -> Switch to Transfer Page
         const sidebarStatus = document.getElementById('sidebar-transfer-status');
         if (sidebarStatus) {
-            // Remove old listener if any (managed in TransferManager, but we override behavior here or there)
-            // TransferManager adds a listener to show modal. We need to intercept or change TransferManager.
-            // Since TransferManager is initialized LATER, its listener will be added later.
-            // We should modify TransferManager to call switchPage instead of showModal.
+            // Logic handled via switchPage or TransferManager
         }
 
         searchScopeToggle.addEventListener('click', () => {
@@ -337,21 +318,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // Use event delegation to handle actions on dynamically created file list items.
         fileListBodyEl.addEventListener('item-rename', e => ActionHandler.handleRename(e.detail));
         fileListBodyEl.addEventListener('item-move', e => {
-            // Select only the clicked item for a direct move action.
             document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
             e.target.closest('.file-item')?.classList.add('selected');
             AppState.selectedItems = [e.detail];
             ActionHandler.handleMove();
         });
         fileListBodyEl.addEventListener('item-download', e => {
-            // Select only the clicked item for a direct download action.
             document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
             e.target.closest('.file-item')?.classList.add('selected');
             AppState.selectedItems = [e.detail];
             ActionHandler.handleDownload();
         });
         fileListBodyEl.addEventListener('item-delete', e => {
-            // Select only the clicked item for a direct delete action.
             AppState.selectedItems = [e.detail];
             ActionHandler.handleDelete();
         });
@@ -399,7 +377,16 @@ document.addEventListener('DOMContentLoaded', () => {
         FileListHandler.init(renderListAndSyncManager, () => {});
         UIManager.setupPopovers();
         SettingsHandler.setupEventListeners();
-        TransferManager.initialize(AppState, ApiService, UIManager, refreshAll);
+        
+        // [Modified] Initialize TransferManager with optimized callback
+        TransferManager.initialize(AppState, ApiService, UIManager, async () => {
+             // Optimized refresh: Just reload current folder contents to show changes
+             if (AppState.currentFolderId !== null) {
+                 const requestId = Date.now().toString();
+                 AppState.currentViewRequestId = requestId;
+                 ApiService.getFolderContents(AppState.currentFolderId, requestId);
+             }
+        });
 
         // 4. Fetch initial data and render the UI.
         await refreshAll();
@@ -408,7 +395,39 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 5. Set up final global event listeners.
         setupEventListeners();
+        
+        // [Added] Global Drag and Drop
+        setupGlobalDragAndDrop();
     }
 
     initialize();
 });
+
+/**
+ * Sets up global drag-and-drop listeners on the document body
+ * to handle file uploads when files are dropped anywhere on the app.
+ */
+function setupGlobalDragAndDrop() {
+    const dropZone = document.body;
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Optional: Add visual feedback (e.g., highlight the window)
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            // Delegate the file handling to ActionHandler
+            ActionHandler.handleFileUpload(e.dataTransfer.files);
+        }
+    });
+}

@@ -22,7 +22,6 @@ class Bridge(QObject):
     # --- Authentication and State Signals ---
     login_event = Signal(dict)  # Reports progress/status during the QR login flow.
     transfer_progress_updated = Signal(dict)  # Updates transfer progress for uploads/downloads.
-    transfer_chart_updated = Signal(dict) # [New] Emits speed vs completion chart data.
     connection_status_changed = Signal(str)  # Notifies of changes in the Telegram client's connection state.
     login_and_initialization_complete = Signal()  # Emitted after successful login and initialization.
 
@@ -39,9 +38,6 @@ class Bridge(QObject):
         self._service = tdrive_service
         self._loop = loop
         self._is_busy = False # A simple mutex to prevent re-entrant critical async operations.
-        
-        # Connect the service's chart monitor to the bridge signal
-        self._service.set_chart_callback(self.transfer_chart_updated.emit)
         
         logger.debug("Bridge initialized.")
 
@@ -257,7 +253,23 @@ class Bridge(QObject):
 
     @Slot(str, result=dict)
     def cancel_transfer(self, task_id):
+        # Removes task permanently (same as clicking 'X')
         return self._service.cancel_transfer(task_id)
+
+    @Slot(str, result=dict)
+    def pause_transfer(self, task_id):
+        # Pauses task (keeps in state)
+        return self._service.pause_transfer(task_id)
+
+    @Slot(str, result=dict)
+    def resume_transfer(self, task_id):
+        # Resumes task (reuses progress signal)
+        return self._service.resume_transfer(task_id, self.transfer_progress_updated.emit)
+
+    @Slot(result=dict)
+    def get_incomplete_transfers(self):
+        # Gets list of paused/failed tasks for startup
+        return self._service.get_incomplete_transfers()
 
     @Slot(result=dict)
     def get_initial_traffic_stats(self):

@@ -4,6 +4,7 @@
  * This object tracks all active, queued, and completed transfers, renders the
  * sidebar status indicator and the detailed transfer dashboard, and handles user interactions.
  * * [Updated] Implements "Pulse Detection" & "Cosine Interpolation" for smooth chart visualization.
+ * * [Updated] Supports Resume/Pause functionality and State Restoration on startup.
  */
 const TransferManager = {
     uploads: new Map(),
@@ -21,19 +22,6 @@ const TransferManager = {
     completedSort: { key: 'time', order: 'desc' }, // Sorting state for history
     completedFilter: 'all', // 'all', 'upload', 'download'
     
-    // [Chart Animation State]
-    // 負責管理前端補間動畫的狀態變數
-    chartState: {
-        points: [],           // 歷史點紀錄
-        startX: 0, startY: 0, // 動畫當前階段的起點
-        targetX: 0, targetY: 0, // 動畫當前階段的終點 (由後端 Pulse 決定)
-        currentX: 0, currentY: 0, // 實際畫在圖上的筆尖位置
-        startTime: 0,         // 動畫開始時間
-        duration: 1000,       // 動畫持續時間 (根據網速動態調整)
-        isAnimating: false    // 是否正在執行 requestAnimationFrame 迴圈
-    },
-    lastYMax: 1024 * 1024,    // 緩存 Y 軸最大值
-    
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
         this.AppState = AppState;
@@ -46,200 +34,71 @@ const TransferManager = {
             if (window.tdrive_bridge.transfer_progress_updated) {
                 window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
             }
-            // Add a robust connection mechanism for transfer_chart_updated
-            const connectChartSignal = () => {
-                if (window.tdrive_bridge && window.tdrive_bridge.transfer_chart_updated) {
-                    window.tdrive_bridge.transfer_chart_updated.connect(this.onChartUpdate.bind(this));
-                    console.log("TransferManager connected to 'transfer_chart_updated' signal.");
-                    return true; // Connection successful
-                }
-                return false; // Not yet available
-            };
-
-            if (!connectChartSignal()) { // Try connecting once immediately
-                let retryCount = 0;
-                const maxRetries = 10;
-                const retryInterval = 100; // ms
-
-                const intervalId = setInterval(() => {
-                    if (connectChartSignal() || retryCount >= maxRetries) {
-                        clearInterval(intervalId);
-                        if (retryCount >= maxRetries) {
-                            console.warn("Failed to connect 'transfer_chart_updated' signal after multiple retries.");
-                        }
-                    }
-                    retryCount++;
-                }, retryInterval);
-            }
             
-            // [New] Request initial traffic stats immediately
-            if (window.tdrive_bridge.get_initial_traffic_stats) {
-                window.tdrive_bridge.get_initial_traffic_stats((data) => {
-                    if (data) {
-                        // Pass a dummy 'idle' status so it just updates the text without triggering animation/color changes
-                        this.onChartUpdate({ ...data, status: 'idle' });
+            // Get initial traffic stats - just update the hero daily traffic text
+            if (this.ApiService.getInitialTrafficStats) {
+                this.ApiService.getInitialTrafficStats().then(data => {
+                    if (data && data.todayTraffic !== undefined) {
+                        const trafficEl = document.getElementById('hero-daily-traffic');
+                        if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
                     }
                 });
+            }
+
+            // [New] Restore incomplete transfers from backend state
+            this.ApiService.getIncompleteTransfers().then(data => {
+                if (data) {
+                    this.restoreTasks(data.uploads, 'upload');
+                    this.restoreTasks(data.downloads, 'download');
+                    this.updateAllUI();
+                }
+            });
+        }
+    },
+
+    // [New] Restore tasks from backend state
+    restoreTasks(taskMap, type) {
+        if (!taskMap) return;
+        const CHUNK_SIZE = 33554432; // 32MB (1024*1024*32)
+
+        for (const [taskId, info] of Object.entries(taskMap)) {
+            // Estimate progress based on completed parts for both uploads and downloads
+            let estimatedProgress = 0;
+            if (info.transferred_parts && Array.isArray(info.transferred_parts)) {
+                estimatedProgress = info.transferred_parts.length * CHUNK_SIZE;
+                if (estimatedProgress > info.total_size) estimatedProgress = info.total_size;
+            }
+
+            const task = {
+                id: taskId,
+                name: (type === 'upload') ? info.file_path.split(/[\\/]/).pop() : info.file_details.name,
+                size: info.total_size || 0,
+                progress: estimatedProgress,
+                speed: 0,
+                status: info.status || 'paused', // Default to paused if undefined
+                isFolder: false, // Controller mostly handles flat files for now
+                localPath: (type === 'upload') ? info.file_path : info.save_path,
+                parentFolderId: info.parent_id || null, // Only relevant for uploads
+                feedbackShown: false,
+                alertShown: false,
+                startTime: info.created_at * 1000,
+                completedAt: null
+            };
+
+            // If backend says transferring (zombie), force pause
+            if (task.status === 'transferring') task.status = 'paused';
+
+            if (type === 'upload') {
+                this.uploads.set(taskId, task);
+            } else {
+                task.db_id = info.db_id;
+                this.downloads.set(taskId, task);
             }
         }
     },
     
-    // --- Chart & Hero Update (Animated) ---
-    onChartUpdate(data) {
-        // data: { type: 'pulse'|undefined, points: [], yMax, todayTraffic, status, x, y, dt }
-        
-        // 1. Update Traffic (Backend source is best for persistent totals)
-        if (data.todayTraffic !== undefined) {
-            const trafficEl = document.getElementById('hero-daily-traffic');
-            if (trafficEl) {
-                trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
-            }
-        }
-        
-        // 2. Handle Chart Color & Status
-        const chartSvg = document.querySelector('.hero-chart-svg');
-        
-        if (data.status === 'idle') {
-            // [New] Idle 狀態：重置圖表
-            if (chartSvg) chartSvg.classList.remove('completed');
-            this.renderSvgChart([], this.lastYMax); // Clear visual line
-            this.chartState.points = [];
-            this.chartState.isAnimating = false;
-            // Reset Speed Text
-            const speedEl = document.getElementById('hero-total-speed');
-            if(speedEl) speedEl.textContent = '-- B/s';
-            return;
-        }
-
-        if (chartSvg) {
-            if (data.status === 'completed') {
-                chartSvg.classList.add('completed');
-                // Optional: Stop animation or clear points here if needed
-                return; 
-            } else {
-                chartSvg.classList.remove('completed');
-            }
-        }
-        
-        // 3. Handle Pulse Signal (New Architecture)
-        if (data.type === 'pulse') {
-            this.handlePulse(data);
-        } else if (data.points) {
-            // Fallback for legacy static points if needed, or initial load
-            this.renderSvgChart(data.points, data.yMax);
-        }
-    },
-
-    handlePulse(data) {
-        const s = this.chartState;
-        const now = performance.now();
-
-        // [關鍵 1] 將目前動畫畫到的位置 ("筆尖") 設為下一段動畫的 "起點"
-        // 這樣可以保證線條是連續的，不會有斷層 (C0 Continuity)
-        s.startX = s.currentX;
-        s.startY = s.currentY;
-
-        // [關鍵 2] 將"上一個目標"推入歷史紀錄，形成軌跡
-        // 避免剛開始 target 為 0 時存入無效點
-        if (s.targetX > 0 || s.targetY > 0) {
-            s.points.push({ x: s.targetX, y: s.targetY });
-            // 限制歷史長度，避免效能問題
-            if (s.points.length > 50) s.points.shift();
-        }
-
-        // [關鍵 3] 設定新的目標
-        s.targetX = data.x;
-        s.targetY = data.y;
-        
-        // 更新 Y 軸最大值
-        if (data.yMax) this.lastYMax = data.yMax;
-
-        // [關鍵 4] 設定動畫時間
-        // 使用後端測量的 dt (脈衝間隔)。
-        // 限制範圍以防動畫過快(看不清)或過慢(像當機)。範圍：0.1秒 ~ 5秒
-        s.duration = Math.max(100, Math.min(5000, data.dt * 1000));
-        
-        s.startTime = now;
-
-        // 啟動前端渲染迴圈 (如果尚未啟動)
-        if (!s.isAnimating) {
-            s.isAnimating = true;
-            requestAnimationFrame(this.animateChart.bind(this));
-        }
-    },
-
-    animateChart(now) {
-        const s = this.chartState;
-        
-        // 1. 計算時間進度 t (0.0 ~ 1.0)
-        let t = (now - s.startTime) / s.duration;
-        
-        // 邊界檢查
-        if (t > 1) t = 1;
-        if (t < 0) t = 0;
-
-        // 2. [核心演算法] 餘弦插值 (Cosine Interpolation)
-        // mu 是一個 S 型曲線的係數 (0 -> 1)，實現 "緩入緩出" 效果
-        const mu = (1 - Math.cos(t * Math.PI)) / 2;
-
-        // 3. 根據 mu 計算當前筆尖位置
-        s.currentX = s.startX * (1 - mu) + s.targetX * mu;
-        s.currentY = s.startY * (1 - mu) + s.targetY * mu;
-
-        // 4. 準備繪圖數據：歷史點 + 當前筆尖
-        const drawPoints = [...s.points, { x: s.currentX, y: s.currentY }];
-        
-        // 5. 渲染 SVG
-        this.renderSvgChart(drawPoints, this.lastYMax);
-
-        // 6. 同步更新速度文字 (使用平滑後的數值，避免數字跳動太劇烈)
-
-        // 7. 迴圈控制
-        // 只要還有任務在跑，或者動畫還沒完全停下來，就繼續迴圈
-        // 為了保持流暢，我們持續運行
-        requestAnimationFrame(this.animateChart.bind(this));
-    },
-
-    renderSvgChart(points, yMax) {
-        const chartArea = document.getElementById('hero-chart-area');
-        const chartLine = document.getElementById('hero-chart-line');
-        if (!chartArea || !chartLine) return; 
-        
-        if (!points || points.length === 0) {
-            chartLine.setAttribute('d', '');
-            chartArea.setAttribute('d', '');
-            return;
-        }
-
-        // [防呆] 確保 yMax 有效
-        const safeYMax = (yMax && yMax > 0) ? yMax : 1024 * 1024;
-        
-        const svgPoints = points.map(p => {
-            // [防呆] 嚴格檢查數值，防止 .toFixed 報錯
-            // 如果 p.x 是 null 或 undefined，就預設為 0
-            const rawX = (p && typeof p.x === 'number') ? p.x : 0;
-            const rawY = (p && typeof p.y === 'number') ? p.y : 0;
-
-            // X is already 0-100
-            // Y needs to be scaled by yMax. 0 is bottom (100), yMax is top (0)
-            const normalizedY = rawY / safeYMax;
-            const y = 100 - (normalizedY * 100); 
-            // Clamp y to be safe
-            const clampedY = Math.max(0, Math.min(100, y));
-            return `${rawX.toFixed(2)},${clampedY.toFixed(2)}`;
-        });
-
-        // Line Path
-        const lineD = `M ${svgPoints.join(' L ')}`;
-        chartLine.setAttribute('d', lineD);
-
-        // Area Path: close the loop to bottom right then bottom left
-        // X goes from 0 to last_x.
-        const lastPoint = points[points.length-1];
-        const lastX = (lastPoint && typeof lastPoint.x === 'number') ? lastPoint.x : 0;
-        const areaD = `${lineD} L ${lastX.toFixed(2)},100 L 0,100 Z`;
-        chartArea.setAttribute('d', areaD);
-    },
+    // --- Chart & Hero Update (Direct Mode) ---
+    // Removed onChartUpdate and renderSvgChart
 
     // --- Task Management ---
     addDownload(item) {
@@ -261,7 +120,8 @@ const TransferManager = {
         if (this.uploads.has(task_id)) return;
         const task = { 
             id: task_id, name: fileData.name, size: fileData.size || 0, 
-            progress: 0, speed: 0, status: 'queued', isFolder: false,
+            progress: 0, speed: 0, status: 'queued', 
+            isFolder: fileData.isFolder || false, // Accept isFolder from fileData
             localPath: fileData.localPath, parentFolderId: fileData.parentFolderId,
             feedbackShown: false, alertShown: false,
             startTime: Date.now(), completedAt: null
@@ -287,6 +147,12 @@ const TransferManager = {
         // Record completion time
         if (data.status === 'completed' && !task.completedAt) {
             task.completedAt = Date.now();
+        }
+
+        // [New] Update global traffic stats from progress event
+        if (data.todayTraffic !== undefined) {
+            const trafficEl = document.getElementById('hero-daily-traffic');
+            if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
         }
 
         if (data.status === 'starting_folder' && task.isFolder) {
@@ -325,6 +191,7 @@ const TransferManager = {
     },
 
     updateParentProgress(parentTask) {
+        // ... (Same as before) ...
         if (!parentTask || !parentTask.isFolder) return;
         const _calculateFolderStats = (folderNode) => {
             let totalProgress = 0; let completedFiles = 0; let isTransferring = false;
@@ -360,9 +227,12 @@ const TransferManager = {
     tick() {
         this.updateAllUI();
         const allTransfers = [...this.uploads.values(), ...this.downloads.values()];
+        // Check if all are strictly 'completed' or removed.
+        // Paused/Failed tasks should keep the ticker alive to show them in list?
+        // Actually, we can stop ticker if no *active* changes are expected, 
+        // but 'starting_folder' or 'queued' might need polling if backend delays.
+        // Simple logic: stop if map is empty.
         if (allTransfers.length === 0) {
-            // All tasks cleared/finished. Stop local ticker.
-            // Do NOT reset chart here; chart is controlled by backend signal or keeps last state.
             clearInterval(this.updateInterval);
             this.updateInterval = null;
             this.setPanelToReadyState();
@@ -405,11 +275,10 @@ const TransferManager = {
             if (task.status !== 'cancelled') {
                 totalSize += task.size;
                 totalProgress += (task.status === 'completed') ? task.size : task.progress;
+                // [Modified] Paused tasks count towards total size/progress but don't count as 'active' for speed
                 if (['transferring', 'starting_folder', 'queued'].includes(task.status)) {
                     activeCount++;
-                    // Sum speed locally for consistency
                     currentSpeed += (task.speed || 0);
-                    
                     if (this.uploads.has(task.id)) activeUploads++;
                     else if (this.downloads.has(task.id)) activeDownloads++;
                 } else if (task.status === 'failed') failedCount++;
@@ -430,6 +299,11 @@ const TransferManager = {
             panel.classList.add('status-failed');
             titleEl.textContent = `${failedCount} 個項目失敗`;
             speedEl.textContent = '';
+        } else if (allTasks.some(t => t.status === 'paused')) {
+            // New State: Paused
+            panel.classList.add('transfer-active'); // Keep bar visible
+            titleEl.textContent = '傳輸已暫停';
+            speedEl.textContent = '-- B/s';
         } else {
             panel.classList.add('status-completed');
             titleEl.textContent = '傳輸完成';
@@ -438,7 +312,6 @@ const TransferManager = {
         const percent = totalSize > 0 ? (totalProgress / totalSize) : 0;
         barEl.style.transform = `scaleX(${percent})`;
 
-        // Pass calculated local speed to hero updater
         this.updateDashboardHero(currentSpeed, activeCount, allTasks);
     },
 
@@ -452,15 +325,12 @@ const TransferManager = {
     },
 
     updateDashboardHero(currentSpeed, activeCount, allTasks) {
-        // [修改 1] 恢復由這裡更新速度文字
-        // 這裡的 currentSpeed 是由 updateSummaryPanel 遍歷所有任務加總得來的
         const speedEl = document.getElementById('hero-total-speed');
         if (speedEl) {
             const formattedSpeed = this.UIManager.formatBytes(currentSpeed);
             speedEl.textContent = (currentSpeed > 0) ? `${formattedSpeed}/s` : '-- B/s';
         }
         
-        // 2. ETA Calculation (這部分保持不變)
         const etaEl = document.getElementById('hero-eta');
         if (etaEl) {
             let totalRemaining = 0;
@@ -473,7 +343,7 @@ const TransferManager = {
                 const seconds = Math.ceil(totalRemaining / currentSpeed);
                 if (!isFinite(seconds) || isNaN(seconds)) {
                     etaEl.textContent = '--:--:--';
-                } else if (seconds > 86400) { // > 24 hours
+                } else if (seconds > 86400) { 
                     etaEl.textContent = '> 1 天';
                 } else {
                     etaEl.textContent = new Date(seconds * 1000).toISOString().substr(11, 8);
@@ -511,9 +381,9 @@ const TransferManager = {
             
             if (task.status === 'failed') {
                 failedTasks.push(task);
-            } else if (['transferring', 'starting_folder'].includes(task.status)) {
+            } else if (['transferring', 'starting_folder', 'paused'].includes(task.status)) { // Include paused in active list
                 activeTasks.push(task);
-            } else if (['queued', 'paused', 'pending'].includes(task.status)) {
+            } else if (['queued', 'pending'].includes(task.status)) {
                 queuedTasks.push(task);
             }
         }
@@ -522,7 +392,6 @@ const TransferManager = {
         this._renderSection('failed', failedTasks, this._createFailedCard.bind(this));
         this._renderSection('queued', queuedTasks, this._createQueuedCard.bind(this));
         
-        // [MODIFIED] Hide empty sections
         const activeSection = document.getElementById('section-active');
         const failedSection = document.getElementById('section-failed');
         const queuedSection = document.getElementById('section-queued');
@@ -531,7 +400,6 @@ const TransferManager = {
         if (failedSection) failedSection.classList.toggle('hidden', failedTasks.length === 0);
         if (queuedSection) queuedSection.classList.toggle('hidden', queuedTasks.length === 0);
 
-        // Update counts
         const countActive = document.getElementById('count-active');
         const countFailed = document.getElementById('count-failed');
         const countQueued = document.getElementById('count-queued');
@@ -565,6 +433,18 @@ const TransferManager = {
         toRemove.forEach(id => existingCards.get(id).remove());
     },
 
+    toggleTaskState(id) {
+        const result = this.findTask(id);
+        if (!result) return;
+        const { status } = result.task;
+        
+        if (['transferring', 'queued', 'starting_folder'].includes(status)) {
+            this.pauseTask(id);
+        } else if (['paused', 'failed'].includes(status)) {
+            this.resumeTask(id);
+        }
+    },
+
     _createActiveCard(task) {
         const el = document.createElement('div');
         el.className = 'task-card-lg';
@@ -573,6 +453,12 @@ const TransferManager = {
         const pathInfo = task.localPath ? 
             `<i class="fas fa-file-upload" style="color:#9ca3af;"></i> ${task.localPath}` : 
             `<i class="fas fa-cloud-download-alt" style="color:#9ca3af;"></i> 下載至 ${this.currentDownloadDestination || '預設路徑'}`;
+
+        // [Modified] Toggle Pause/Resume icon based on status
+        const isPaused = task.status === 'paused';
+        const pauseIcon = isPaused ? 'fa-play' : 'fa-pause';
+        const pauseTitle = isPaused ? '繼續' : '暫停';
+        const pauseClass = isPaused ? 'btn-resume' : 'btn-pause';
 
         el.innerHTML = `
             <div class="card-row-main">
@@ -587,7 +473,7 @@ const TransferManager = {
                     </div>
                 </div>
                 <div class="card-actions">
-                    <button class="icon-btn btn-pause" title="暫停"><i class="fas fa-pause"></i></button>
+                    <button class="icon-btn btn-toggle ${pauseClass}" title="${pauseTitle}"><i class="fas ${pauseIcon}"></i></button>
                     <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
                     ${task.isFolder ? '<button class="icon-btn btn-expand"><i class="fas fa-chevron-down"></i></button>' : ''}
                 </div>
@@ -639,6 +525,12 @@ const TransferManager = {
 
     _bindCardActions(el, task) {
         el.querySelector('.btn-cancel')?.addEventListener('click', () => this.cancelItem(task.id));
+        
+        // [New] Toggle Handler for Active Card (replaces separate pause/resume bindings)
+        el.querySelector('.btn-toggle')?.addEventListener('click', () => this.toggleTaskState(task.id));
+        
+        // [New] Retry Handler for Failed Card
+        el.querySelector('.btn-retry')?.addEventListener('click', () => this.resumeTask(task.id));
     },
 
     _updateCard(type, el, task) {
@@ -650,18 +542,43 @@ const TransferManager = {
             const sizeStr = `${this.UIManager.formatBytes(task.progress)} / ${this.UIManager.formatBytes(task.size)}`;
             el.querySelector('.meta-size').textContent = sizeStr;
             
-            const speed = this.UIManager.formatBytes(task.speed);
-            const speedStr = (task.speed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
-            let eta = '';
-            if (task.speed > 0 && (task.size - task.progress) > 0) {
-                const sec = Math.ceil((task.size - task.progress) / task.speed);
-                eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec/60)+' 分' : sec+' 秒'}`;
+            // [Modified] Display status text when paused/queued
+            const metaSpeed = el.querySelector('.meta-speed');
+            if (task.status === 'paused') {
+                metaSpeed.textContent = '已暫停';
+                metaSpeed.style.color = '#f59e0b';
+                // Update Button State if needed (toggle icon)
+                const btn = el.querySelector('.btn-pause');
+                if (btn) {
+                    btn.className = 'icon-btn btn-resume';
+                    btn.innerHTML = '<i class="fas fa-play"></i>';
+                    btn.title = '繼續';
+                    // Rebind logic is hard here without recreating, simpler to recreate card in render loop
+                }
+            } else if (['queued', 'pending'].includes(task.status)) {
+                metaSpeed.textContent = '等待中...';
+            } else {
+                metaSpeed.style.color = ''; // Reset color
+                const speed = this.UIManager.formatBytes(task.speed);
+                const speedStr = (task.speed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
+                let eta = '';
+                if (task.speed > 0 && (task.size - task.progress) > 0) {
+                    const sec = Math.ceil((task.size - task.progress) / task.speed);
+                    eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec/60)+' 分' : sec+' 秒'}`;
+                }
+                metaSpeed.textContent = speedStr + eta;
+                
+                // Ensure button is Pause
+                const btn = el.querySelector('.btn-resume');
+                if (btn) {
+                    btn.className = 'icon-btn btn-pause';
+                    btn.innerHTML = '<i class="fas fa-pause"></i>';
+                    btn.title = '暫停';
+                }
             }
-            el.querySelector('.meta-speed').textContent = speedStr + eta;
         }
     },
 
-    // [MODIFIED] Sort and Render Completed List with Path and Filter
     _renderCompletedList() {
         const listEl = document.getElementById('list-completed');
         if (!listEl) return; 
@@ -681,7 +598,6 @@ const TransferManager = {
             if (t.status === 'completed') allCompleted.push(t);
         });
 
-        // Sort based on state
         const { key, order } = this.completedSort;
         allCompleted.sort((a, b) => {
             let valA, valB;
@@ -708,9 +624,8 @@ const TransferManager = {
             const badgeClass = 'sm-badge'; 
             const badgeText = isUp ? '上傳成功' : '下載成功';
             
-            // [MODIFIED] Add path info
             const pathInfo = isUp ? 
-                `上傳至: TDrive` : // Ideally we have the cloud path
+                `上傳至: TDrive` :
                 `下載至: ${task.localPath || this.currentDownloadDestination || '預設路徑'}`;
 
             row.innerHTML = `
@@ -726,16 +641,14 @@ const TransferManager = {
         });
     },
     
-    // [New] Toggle Sort
     sortCompleted(key) {
         if (this.completedSort.key === key) {
             this.completedSort.order = (this.completedSort.order === 'asc') ? 'desc' : 'asc';
         } else {
             this.completedSort.key = key;
-            this.completedSort.order = 'desc'; // Default desc for new key
+            this.completedSort.order = 'desc'; 
         }
         
-        // Update UI Icons
         document.querySelectorAll('.sort-item').forEach(el => {
             el.classList.toggle('active', el.dataset.sort === key);
             const icon = el.querySelector('i');
@@ -743,7 +656,7 @@ const TransferManager = {
                 if (el.dataset.sort === key) {
                     icon.className = this.completedSort.order === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
                 } else {
-                    icon.className = 'fas fa-sort'; // Neutral
+                    icon.className = 'fas fa-sort'; 
                 }
             }
         });
@@ -771,12 +684,48 @@ const TransferManager = {
         setTimeout(() => el.classList.remove(flashClass), 1000);
     },
     
+    // --- Control Actions ---
+
+    pauseTask(id) {
+        const result = this.findTask(id);
+        if (result && ['transferring', 'queued', 'starting_folder'].includes(result.task.status)) {
+            // Optimistic update
+            result.task.status = 'paused';
+            result.task.speed = 0;
+            this.tick(); // Force UI update
+            
+            this.ApiService.pauseTransfer(id).then(res => {
+                if (!res.success) console.warn(`Pause failed: ${res.message}`);
+            });
+        }
+    },
+
+    resumeTask(id) {
+        const result = this.findTask(id);
+        if (result && ['paused', 'failed'].includes(result.task.status)) {
+            // Optimistic update
+            result.task.status = 'queued'; // Waiting for backend
+            result.task.message = null; // Clear error msg
+            this.tick();
+            
+            this.ApiService.resumeTransfer(id).then(res => {
+                if (!res.success) {
+                    result.task.status = 'failed'; // Revert if call fails
+                    result.task.message = res.message;
+                    this.tick();
+                }
+            });
+            this.startUpdater(); // Ensure ticker is running
+        }
+    },
+
     cancelItem(id) {
         const result = this.findTask(id);
         if (result) {
-            if (['transferring', 'queued'].includes(result.task.status)) {
-                this.ApiService.cancelTransfer(id).then(res => { if (!res.success) console.warn(`Failed to cancel ${id}`); });
-            }
+            // Call backend to cancel/remove
+            this.ApiService.cancelTransfer(id).then(res => { if (!res.success) console.warn(`Failed to cancel ${id}`); });
+            
+            // Remove from local map
             const map = result.parent ? result.parent.children : result.map;
             map.delete(result.task.id);
             this.tick();
@@ -789,6 +738,8 @@ const TransferManager = {
                 if (task.isFolder && task.children) {
                     _cancelRecursively(task.children);
                 }
+                // Call cancel for each task
+                // (Optimized: Could add 'cancelAll' endpoint in backend, but iteration works)
                 this.cancelItem(task.id);
             });
         };
@@ -796,25 +747,24 @@ const TransferManager = {
         _cancelRecursively(this.downloads);
     },
 
-    retryAll() {
-        const _retryLoop = (map) => {
+    resumeAll() {
+        // Renamed from retryAll to cover both paused and failed
+        const _resumeLoop = (map) => {
             map.forEach(task => {
-                if (task.status === 'failed') {
-                    task.status = 'queued';
-                    task.progress = 0;
+                if (['paused', 'failed'].includes(task.status)) {
+                    this.resumeTask(task.id);
                 }
             });
         };
-        _retryLoop(this.uploads);
-        _retryLoop(this.downloads);
-        this.startUpdater();
+        _resumeLoop(this.uploads);
+        _resumeLoop(this.downloads);
     },
 
     pauseAll() {
         const _pauseLoop = (map) => {
             map.forEach(task => {
                 if (['transferring', 'starting_folder', 'queued'].includes(task.status)) {
-                    console.log(`Pausing task ${task.id} (Mock)`);
+                    this.pauseTask(task.id);
                 }
             });
         };
@@ -888,6 +838,8 @@ const TransferManager = {
 
         document.getElementById('global-cancel-btn')?.addEventListener('click', () => this.cancelAll());
         document.getElementById('global-pause-btn')?.addEventListener('click', () => this.pauseAll());
-        document.getElementById('retry-all-btn')?.addEventListener('click', () => this.retryAll());
+        
+        // Updated: 'retry-all' now maps to resumeAll
+        document.getElementById('retry-all-btn')?.addEventListener('click', () => this.resumeAll());
     }
 };

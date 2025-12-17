@@ -50,9 +50,22 @@
                 <!-- Base Sidebar Content -->
                 <div class="sidebar-content">
                     <div class="sidebar-actions">
-                        <button id="sidebar-new-btn" class="btn-primary-block">
+                        <button id="sidebar-new-btn" class="btn-primary-block" data-popover="new-menu-popover">
                             <i class="fas fa-plus"></i> 新增
                         </button>
+                        <div id="new-menu-popover" class="popover hidden unselectable">
+                            <ul style="list-style: none; padding: 0;">
+                                <li id="new-upload-file-btn" class="popover-item">
+                                    <i class="fas fa-file-upload"></i> 上傳檔案
+                                </li>
+                                <li id="new-upload-folder-btn" class="popover-item">
+                                    <i class="fas fa-folder-plus"></i> 上傳資料夾
+                                </li>
+                                <li id="new-create-folder-btn" class="popover-item">
+                                    <i class="fas fa-plus"></i> 新增資料夾
+                                </li>
+                            </ul>
+                        </div>
                     </div>
                     
                     <nav class="file-tree-nav">
@@ -151,16 +164,7 @@
                     
                     <!-- 1. Hero Section -->
                     <div class="hero-section">
-                        <svg class="hero-chart-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            <defs>
-                                <linearGradient id="chart-gradient" x1="0" x2="0" y1="0" y2="1">
-                                    <stop offset="0%" stop-color="var(--primary-color)" stop-opacity="0.2"/>
-                                    <stop offset="100%" stop-color="var(--primary-color)" stop-opacity="0"/>
-                                </linearGradient>
-                            </defs>
-                            <path id="hero-chart-area" d="" fill="url(#chart-gradient)" stroke="none" />
-                            <path id="hero-chart-line" d="" fill="none" stroke="var(--primary-color)" stroke-width="2" vector-effect="non-scaling-stroke" />
-                        </svg>
+
                         <div class="hero-content">
                             <div class="hero-stat-block">
                                 <h2 id="hero-total-speed">-- B/s</h2>

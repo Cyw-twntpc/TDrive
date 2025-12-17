@@ -8,6 +8,7 @@ from .services.auth_service import AuthService
 from .services.file_service import FileService
 from .services.folder_service import FolderService
 from .services.transfer_service import TransferService
+from .services.monitor_service import TransferMonitorService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class TDriveService:
         self._file_service = FileService(self._shared_state)
         self._folder_service = FolderService(self._shared_state)
         self._transfer_service = TransferService(self._shared_state)
+        self._transfer_service.monitor = TransferMonitorService()
 
         logger.info("TDriveService initialized successfully.")
 
@@ -47,7 +49,7 @@ class TDriveService:
         """
         Creates an adapter function to transform backend progress arguments
         into a dictionary format expected by the frontend.
-        
+        Also injects global traffic stats.
         """
         # 使用 closure 變數來記錄每個任務上一次發送訊號的時間
         last_emit_time = {} 
@@ -64,7 +66,6 @@ class TDriveService:
             if should_emit:
                 last_emit_time[task_id] = current_time
                 
-                # 如果任務結束，可以清理掉記錄以節省記憶體
                 if status in ['completed', 'failed', 'cancelled']:
                     last_emit_time.pop(task_id, None)
 
@@ -75,6 +76,7 @@ class TDriveService:
                     "size": total,
                     "status": status,
                     "speed": speed,
+                    "todayTraffic": self._transfer_service.monitor.get_today_traffic()
                 }
                 if message:
                     data["message"] = message
@@ -115,6 +117,7 @@ class TDriveService:
         """
         Gracefully shuts down the service, including disconnecting the client.
         """
+        self._transfer_service.monitor.close()
         client = self._shared_state.client
         if client and client.is_connected():
             logger.info("Disconnecting from Telegram...")
@@ -187,16 +190,9 @@ class TDriveService:
     def get_today_traffic_stats(self) -> int:
         return self._transfer_service.monitor.get_today_traffic()
 
-    def set_chart_callback(self, callback: Callable):
-        self._transfer_service.set_chart_callback(callback)
-
     def upload_files(self, parent_id: int, local_paths: List[Dict], concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
         """
         Initiates file uploads as background tasks.
-        
-        This method returns immediately with a success message. The actual upload
-        process runs in the background, and progress is reported via the
-        provided `progress_callback`.
         """
         adapter_callback = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.upload_files(parent_id, local_paths, concurrency_limit, adapter_callback)
@@ -206,9 +202,6 @@ class TDriveService:
     def download_items(self, items: List[Dict], destination_dir: str, concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
         """
         Initiates item downloads as background tasks.
-        
-        Similar to upload, this returns immediately. Progress is reported
-        via the `progress_callback`.
         """
         adapter_callback = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.download_items(items, destination_dir, concurrency_limit, adapter_callback)
@@ -216,4 +209,23 @@ class TDriveService:
         return {"success": True, "message": "Download tasks have been started."}
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
+        """Permanently cancels and removes a transfer."""
         return self._transfer_service.cancel_transfer(task_id)
+
+    def pause_transfer(self, task_id: str) -> Dict[str, Any]:
+        """Pauses a transfer without removing it from state."""
+        self._transfer_service.pause_transfer(task_id)
+        return {"success": True, "message": "Task paused."}
+
+    def resume_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
+        """
+        Resumes a paused or failed transfer.
+        """
+        adapter_callback = self._create_progress_adapter(progress_callback)
+        task_coro = self._transfer_service.resume_transfer(task_id, adapter_callback)
+        self._schedule_background_task(task_coro)
+        return {"success": True, "message": "Resuming transfer..."}
+
+    def get_incomplete_transfers(self) -> Dict[str, Any]:
+        """Retrieves list of paused/failed transfers for startup."""
+        return self._transfer_service.controller.get_incomplete_transfers()

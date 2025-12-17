@@ -77,8 +77,6 @@ const ApiService = {
         return await window.tdrive_bridge.move_items(items, targetFolderId);
     },
 
-    // --- Transfer Service Wrappers ---
-
     createFolder: (parentId, folderName) => ApiService._callBridge('create_folder', parentId, folderName),
 
     // --- Native OS Dialogs ---
@@ -88,6 +86,13 @@ const ApiService = {
     // --- File Transfers ---
     uploadFiles: (parentId, files, concurrency) => ApiService._callBridge('upload_files', parentId, files, concurrency),
     downloadItems: (items, destination, concurrency) => ApiService._callBridge('download_items', items, destination, concurrency),
+    
+    // Control Methods
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),
+    pauseTransfer: (taskId) => ApiService._callBridge('pause_transfer', taskId),
+    resumeTransfer: (taskId) => ApiService._callBridge('resume_transfer', taskId),
+    
+    // Startup & State Methods
+    getIncompleteTransfers: () => ApiService._callBridge('get_incomplete_transfers'),
+    getInitialTrafficStats: () => ApiService._callBridge('get_initial_traffic_stats'),
 };
-

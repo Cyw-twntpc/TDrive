@@ -626,7 +626,7 @@ const ActionHandler = {
     /**
      * Handles the file upload action. Prompts the user to select files and initiates the upload process.
      */
-    async handleUpload() {
+    async handleFileUpload() {
         UIManager.toggleModal('blocking-overlay', true);
         try {
             const localPaths = await this._apiService.selectFiles(true, "選擇要上傳的檔案");
@@ -649,7 +649,8 @@ const ActionHandler = {
                     localPath: path,
                     name: fileName,
                     task_id: crypto.randomUUID(),
-                    parentFolderId: parentId
+                    parentFolderId: parentId,
+                    isFolder: false // Explicitly mark as file
                 };
                 this._transferManager.addUpload(fileToUploadData);
                 filesToUpload.push(fileToUploadData);
@@ -672,6 +673,13 @@ const ActionHandler = {
         } finally {
             UIManager.toggleModal('blocking-overlay', false);
         }
+    },
+
+    /**
+     * Placeholder for folder upload action.
+     */
+    async handleFolderUploadPlaceholder() {
+        await this._uiModals.showAlert('提示', '上傳資料夾功能正在開發中，敬請期待！');
     },
 
     /**

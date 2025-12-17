@@ -59,27 +59,30 @@
 }
 
 .file-item-col.name {
-    flex: 3.5;
-    min-width: 200px;
+    flex: 2 1 0px; /* Force basis to 0 to ignore content width strictly */
+    min-width: 150px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    padding-right: 24px;
+    overflow: hidden;
 }
 
 .file-item-col.date {
-    flex: 2;
+    flex: 1; /* Adjust flex-grow */
+    flex-shrink: 0; /* Prevent from shrinking too much */
     min-width: 160px;
 }
 
 .file-item-col.type {
-    flex: 1.5;
-    min-width: 140px;
+    flex: 0.5; /* Adjust flex-grow */
+    flex-shrink: 0; /* Prevent from shrinking too much */
+    min-width: 100px;
 }
 
 .file-item-col.size {
-    flex: 1;
+    flex: 0.5; /* Adjust flex-grow */
+    flex-shrink: 0; /* Prevent from shrinking too much */
     justify-content: flex-end;
     min-width: 100px;
 }
@@ -92,12 +95,12 @@
 .name-col-main {
     display: flex;
     align-items: center;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: hidden; /* Ensure content inside is hidden if it exceeds bounds */
+    text-overflow: ellipsis; /* Should apply to the visible part if white-space: nowrap is also present */
+    white-space: nowrap; /* Keep content on a single line */
     position: relative;
     flex-grow: 1;
-    min-width: 0;
+    min-width: 0; /* Critical for flex item truncation */
 }
 
 .name-col-main i {
@@ -110,28 +113,31 @@
 }
 
 .name-and-path {
-    overflow: hidden;
+    overflow: hidden; /* Ensure content inside is hidden if it exceeds bounds */
     display: flex;
-    flex-direction: column;
-    min-width: 0;
+    flex-direction: column; /* Allows name and path to stack if needed */
+    min-width: 0; /* Critical for flex item truncation */
     flex-grow: 1;
 }
 
 .name-wrapper {
     display: flex;
     align-items: center;
-    min-width: 0;
+    min-width: 0; /* Critical for flex item truncation */
+    overflow: hidden; /* Ensure content inside is hidden */
+    white-space: nowrap; /* Keep content on a single line */
 }
 
 .name-part-base {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex-shrink: 1;
+    flex-shrink: 1; /* Allow to shrink */
+    min-width: 0; /* Ensure it can shrink to zero if needed */
 }
 
 .name-part-ext {
-    flex-shrink: 0;
+    flex-shrink: 0; /* Prevent extension from shrinking */
     white-space: nowrap;
 }
 

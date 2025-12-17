@@ -61,24 +61,6 @@
     justify-content: space-between;
     padding: 0 30px;
 }
-.hero-chart-svg {
-    position: absolute; bottom: 0; left: 0; width: 100%; height: 70%; pointer-events: none; opacity: 0.8;
-}
-.hero-chart-svg #hero-chart-line,
-.hero-chart-svg #hero-chart-area {
-    transition: d 0.05s linear;
-}
-/* Chart Completed State - Green Theme */
-.hero-chart-svg.completed #hero-chart-line {
-    stroke: var(--success-color) !important;
-}
-.hero-chart-svg.completed stop[offset="0%"] {
-    stop-color: var(--success-color) !important;
-}
-.hero-chart-svg.completed stop[offset="100%"] {
-    stop-color: var(--success-color) !important;
-}
-
 .hero-content { position: relative; z-index: 1; display: flex; gap: 40px; }
 .hero-stat-block h2 { margin: 0; font-size: 28px; color: var(--primary-color); }
 .hero-stat-block p { margin: 4px 0 0; font-size: 13px; color: var(--text-light-color); font-weight: 500; text-transform: uppercase; }
@@ -141,9 +123,6 @@
 
 .progress-track { height: 6px; background: #f3f4f6; border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
 .progress-fill { height: 100%; background: var(--primary-color); width: 0; position: relative; }
-/* Shimmer */
-.progress-fill::after { content: ''; position: absolute; top:0; left:0; bottom:0; right:0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent); animation: shimmer 1.5s infinite; }
-@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
 .meta-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-light-color); font-weight: 500; }
 
@@ -338,4 +317,43 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 #critical-error .modal-body strong {
     color: var(--text-color);
+}
+.sidebar-actions {
+    padding: 15px 15px 10px 5px; /* Reduced left padding handled by container */
+    position: relative; /* Add position relative for popover positioning */
+}
+
+/* New Menu Popover specific styles */
+#new-menu-popover {
+    left: 0;
+    top: calc(100% - 10px); /* Adjust to compensate for sidebar-actions' padding-bottom */
+    width: 100%; /* Match the width of the parent (sidebar-actions) */
+    padding: 10px 0; /* Adjust padding for menu items */
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); /* Slightly more prominent shadow */
+}
+
+/* [新增] Popover Item 獨立樣式 (替代 .nav-item 以避免衝突) */
+.popover-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 15px; /* Same padding as adjusted before */
+    gap: 12px;
+    border-radius: 8px; /* Consistent with nav-item */
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    font-size: 15px;
+    white-space: nowrap;
+    margin: 0 10px; /* Add margin for better spacing inside popover */
+}
+
+.popover-item i {
+    width: 24px;
+    font-size: 18px;
+    text-align: center;
+    color: var(--text-light-color);
+}
+
+.popover-item:hover {
+    background-color: #f5f7fa;
 }
