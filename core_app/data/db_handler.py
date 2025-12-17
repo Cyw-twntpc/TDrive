@@ -299,6 +299,7 @@ class DatabaseHandler:
                     (parent_id, name, time.time(), 0)
                 )
                 self._increment_db_version(cursor)
+                return cursor.lastrowid # Return the ID of the newly created folder
         except sqlite3.IntegrityError:
             raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{name}' 的資料夾。")
         finally:

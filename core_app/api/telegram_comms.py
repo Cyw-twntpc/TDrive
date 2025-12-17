@@ -115,7 +115,8 @@ async def get_group(client, app_api_id: int) -> int | None:
 async def upload_file_with_info(client, group_id: int, file_path: str, original_file_hash: str, task_id: str, 
                                 progress_callback: Callable | None = None, resume_context: List = None,
                                 chunk_callback: Callable[[int, int, str], None] = None,
-                                update_transferred_bytes: Callable[[int], None] = None) -> list:
+                                update_transferred_bytes: Callable[[int], None] = None,
+                                parent_id: str | None = None) -> list:
     """
     Streams, encrypts, and uploads a file with fully async I/O.
     
@@ -164,7 +165,7 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
                 last_call_bytes = current
                 last_update_time = now
                 if progress_callback:
-                    progress_callback(task_id, file_name, uploaded_bytes + current, total_size, 'transferring', speed)
+                    progress_callback(task_id, file_name, uploaded_bytes + current, total_size, 'transferring', speed, parent_id=parent_id)
 
         # 建立生成器，傳入 completed_parts 以便跳過已完成部分
         generator = fp.stream_split_and_encrypt(file_path, key, completed_parts)
@@ -218,9 +219,8 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
         # Sort results by part number before returning
         split_files_info.sort(key=lambda x: x[0])
 
-        # 完成回調
         if progress_callback:
-            progress_callback(task_id, file_name, total_size, total_size, 'completed', 0)
+            progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, parent_id=parent_id)
         
         logger.info(f"File '{file_name}' uploaded successfully.")
         return split_files_info
@@ -228,7 +228,7 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
     except Exception as e:
         logger.error(f"Upload failed: {e}", exc_info=True)
         if progress_callback:
-            progress_callback(task_id, file_name, 0, 0, 'failed', 0)
+            progress_callback(task_id, file_name, 0, 0, 'failed', 0, parent_id=parent_id)
         raise
 
 async def download_file(client, group_id: int, file_details: dict, download_dir: str, task_id: str, 
@@ -375,7 +375,8 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
 
 async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_message):
     """
-    Handles the actual process of uploading, pinning, and cleaning up old database backups.
+    Handles the actual process of uploading and cleaning up old database backups.
+    Uses a hashtag search mechanism instead of pinned messages to avoid flood wait limits.
     """
     logger.info("Uploading local database to the cloud...")
     if not os.path.exists(db_path):
@@ -390,20 +391,21 @@ async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_mess
         
         db = DatabaseHandler(db_path)
         version = db.get_db_version()
-        caption = f"db_version:{version}"
+        # Include the unique hashtag for easy retrieval
+        caption = f"#tdrive_db_backup db_version:{version}"
 
+        logger.info(f"Uploading new database backup (Version: {version})...")
+        await client.send_file(group_id, file=temp_zip_path, caption=caption)
+        
+        # Clean up the old backup message if it exists
         if remote_db_message:
-            logger.info("Removing old pinned database backup...")
+            logger.info("Removing old database backup message...")
             try:
-                await client.unpin_message(group_id, remote_db_message.id)
                 await client.delete_messages(group_id, [remote_db_message.id])
             except Exception as e:
                 logger.warning(f"Could not remove old database backup, proceeding anyway: {e}")
 
-        logger.info(f"Uploading new database backup (Version: {version})...")
-        new_message = await client.send_file(group_id, file=temp_zip_path, caption=caption)
-        await client.pin_message(group_id, new_message.id, notify=False)
-        logger.info(f"New database backup (Version: {version}) has been uploaded and pinned.")
+        logger.info(f"New database backup (Version: {version}) has been uploaded.")
 
     except Exception as e:
         logger.error(f"An error occurred during database upload: {e}", exc_info=True)
@@ -413,7 +415,7 @@ async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_mess
 
 async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path: str = './file/tdrive.db'):
     """
-    Synchronizes the local database with the remote backup in the pinned messages.
+    Synchronizes the local database with the remote backup using hashtag search.
 
     Modes:
     - 'sync': Compares local and remote versions and syncs the newer one.
@@ -421,7 +423,9 @@ async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path:
     """
     async with update_lock:
         telethon_group_id = int(f"-100{group_id}") if group_id > 0 else group_id
-        messages = await client.get_messages(telethon_group_id, limit=1, filter=InputMessagesFilterPinned)
+        
+        # Search for the latest message with the specific hashtag
+        messages = await client.get_messages(telethon_group_id, limit=1, search='#tdrive_db_backup')
         remote_db_message = messages[0] if messages else None
 
         if mode == 'upload':
@@ -449,7 +453,10 @@ async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path:
             
             if remote_db_message and remote_db_message.text and "db_version:" in remote_db_message.text:
                 try:
-                    remote_version = int(remote_db_message.text.split("db_version:", 1)[1].split(',')[0].strip())
+                    # Robust parsing for " ... db_version:123 ..."
+                    text_parts = remote_db_message.text.split("db_version:")
+                    if len(text_parts) > 1:
+                        remote_version = int(text_parts[1].split()[0].strip()) # Take the first token after 'db_version:'
                 except (ValueError, IndexError):
                     logger.warning("Could not parse version from remote database backup caption.")
             else:

@@ -52,15 +52,268 @@ class TransferService:
         tasks_to_run = []
         for item in upload_items:
             tasks_to_run.append(
-                self._upload_single_file(client, group_id, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback)
+                self._upload_single_file(
+                    client, group_id, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback,
+                    parent_task_id=item.get('parent_task_id') # Pass parent_task_id if present
+                )
             )
             
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
-        self.monitor.close()
+        # self.monitor.close() 
+
+    async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, concurrency_limit: int, progress_callback: Callable):
+        """
+        Recursively uploads a folder and its contents.
+        1. Scans for total size/count.
+        2. Notifies frontend of the main folder task.
+        3. Walks the tree, creating DB folders and batch uploading files.
+        """
+        base_folder_name = os.path.basename(local_folder_path)
+        if not base_folder_name:
+            base_folder_name = os.path.basename(os.path.dirname(local_folder_path))
+
+        logger.info(f"Starting recursive upload for local folder: '{local_folder_path}' to remote parent_id: {parent_id}")
+
+        # --- Phase 1: Pre-scan (Dry Run) ---
+        total_size = 0
+        total_files = 0
+        file_paths_to_upload = [] # Store file paths for later
+        for root, _, files in os.walk(local_folder_path):
+            for f in files:
+                full_file_path = os.path.join(root, f)
+                file_paths_to_upload.append(full_file_path)
+                try:
+                    total_size += os.path.getsize(full_file_path)
+                except OSError as e:
+                    logger.warning(f"Could not get size for '{full_file_path}': {e}. Skipping size in total.")
+        total_files = len(file_paths_to_upload)
+        logger.info(f"Pre-scan complete: {total_files} files, total size: {total_size} bytes.")
+
+
+        main_task_id = str(uuid.uuid4())
+        
+        # Notify frontend: Main Folder Task Started
+        # 'starting_folder' status tells frontend to create a folder card
+        progress_callback(
+            main_task_id, base_folder_name, 0, total_size, 'starting_folder', 0, 
+            total_files=total_files, is_folder=True, type='upload' # Explicitly mark as upload
+        )
+        logger.debug(f"Frontend notified for main folder task: {main_task_id} ('{base_folder_name}')")
+
+        # --- Phase 2: Execution ---
+        loop = asyncio.get_running_loop()
+        
+        # Create root folder in DB
+        root_id = None
+        try:
+            root_id = await loop.run_in_executor(None, self.db.add_folder, parent_id, base_folder_name)
+            logger.info(f"Created remote root folder '{base_folder_name}' with ID: {root_id}")
+        except errors.ItemAlreadyExistsError:
+            # If exists, find it to merge
+            logger.info(f"Remote root folder '{base_folder_name}' already exists. Attempting to retrieve ID.")
+            existing = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
+            found = next((f for f in existing['folders'] if f['name'] == base_folder_name), None)
+            if found:
+                root_id = found['id']
+                logger.info(f"Retrieved existing remote root folder '{base_folder_name}' with ID: {root_id}")
+            else:
+                logger.error(f"Folder '{base_folder_name}' reported as existing but not found in parent {parent_id}. Contents: {[f['name'] for f in existing['folders']]}")
+            
+        if not root_id:
+            msg = "無法建立或存取根資料夾(已存在但無法讀取)。"
+            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=msg)
+            logger.error(f"Folder upload for '{local_folder_path}' failed: {msg}")
+            return
+
+        path_to_id_map = {local_folder_path: root_id}
+
+        # 2. Walk the directory
+        try:
+            for root, dirs, files in os.walk(local_folder_path):
+                logger.debug(f"Processing local directory: '{root}'")
+                current_remote_id = path_to_id_map.get(root)
+                if current_remote_id is None:
+                    logger.warning(f"Skipping '{root}' and its contents because remote parent ID is missing. This should not happen.")
+                    continue
+
+                # Create subdirectories
+                for dir_name in dirs:
+                    full_dir_path = os.path.join(root, dir_name)
+                    new_folder_id = None
+                    try:
+                        new_folder_id = await loop.run_in_executor(None, self.db.add_folder, current_remote_id, dir_name)
+                        path_to_id_map[full_dir_path] = new_folder_id
+                        logger.debug(f"Created remote subfolder '{dir_name}' (ID: {new_folder_id}) under parent ID: {current_remote_id}")
+                    except errors.ItemAlreadyExistsError:
+                        logger.info(f"Remote subfolder '{dir_name}' already exists under parent ID: {current_remote_id}. Attempting to retrieve ID.")
+                        contents = await loop.run_in_executor(None, self.db.get_folder_contents, current_remote_id)
+                        found = next((f for f in contents['folders'] if f['name'] == dir_name), None)
+                        if found:
+                            path_to_id_map[full_dir_path] = found['id']
+                            new_folder_id = found['id']
+                            logger.debug(f"Retrieved existing remote subfolder '{dir_name}' with ID: {new_folder_id}")
+                        else:
+                            logger.error(f"Subfolder '{dir_name}' reported as existing but not found in parent {current_remote_id}. Contents: {[f['name'] for f in contents['folders']]}")
+                    except Exception as e:
+                        logger.error(f"Error creating remote subfolder '{dir_name}' under parent ID {current_remote_id}: {e}", exc_info=True)
+
+                # Upload files in this directory
+                if files:
+                    logger.info(f"Preparing to upload {len(files)} files from local '{root}' to remote ID: {current_remote_id}")
+                    upload_items = []
+                    for file_name in files:
+                        file_path = os.path.join(root, file_name)
+                        upload_items.append({
+                            'local_path': file_path,
+                            'task_id': str(uuid.uuid4()),
+                            'parent_task_id': main_task_id # Link to main folder task
+                        })
+                    
+                    # Await the batch upload for this directory before moving to the next
+                    # This ensures structure is preserved and limits global concurrency issues
+                    await self.upload_files(current_remote_id, upload_items, concurrency_limit, progress_callback)
+                    logger.info(f"Finished uploading {len(files)} files from local '{root}'.")
+
+        except Exception as e:
+            logger.error(f"Recursive upload process interrupted for {local_folder_path}: {e}", exc_info=True)
+            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=f"資料夾上傳中斷: {str(e)}")
+            return
+
+        # Finalize
+        await utils.trigger_db_upload_in_background(self.shared_state)
+        logger.info(f"Recursive upload for '{local_folder_path}' (main_task_id: {main_task_id}) completed.")
+        progress_callback(main_task_id, base_folder_name, total_size, total_size, 'completed', 0)
 
     async def _upload_single_file(self, client, group_id: int, parent_id: int, file_path: str, task_id: str, 
                                   semaphore: asyncio.Semaphore, progress_callback: Callable, 
-                                  resume_context: List = None, pre_calculated_hash: str = None):
+                                  resume_context: List = None, pre_calculated_hash: str = None,
+                                  parent_task_id: str = None):
+        """
+        Worker for uploading. Supports both fresh uploads and resumes.
+        """
+        file_name = os.path.basename(file_path)
+        
+        # Define chunk callback for real-time state saving
+        def chunk_cb(part_num, msg_id, part_hash):
+            self.controller.update_progress(task_id, part_num, [part_num, msg_id, part_hash])
+
+        async with semaphore:
+            try:
+                current_task = asyncio.current_task()
+                self.shared_state.active_tasks[task_id] = current_task
+            except RuntimeError:
+                logger.warning(f"Could not get current task for task_id: {task_id}.")
+
+            client = await utils.ensure_client_connected(self.shared_state)
+            if not client or not os.path.exists(file_path):
+                msg = "用戶端已斷線或本機檔案不存在。"
+                self.controller.mark_failed(task_id, msg)
+                progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg, parent_id=parent_task_id)
+                return
+
+            total_size = os.path.getsize(file_path)
+            loop = asyncio.get_running_loop()
+
+            try:
+                original_file_hash = pre_calculated_hash
+                split_files_info = []
+
+                if resume_context:
+                    # --- RESUME PATH ---
+                    logger.info(f"Resuming upload for {file_name}...")
+                    
+                    if not original_file_hash:
+                        logger.warning("Resume requested but hash missing. Re-calculating...")
+                        original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
+                    
+                    split_files_info = await telegram_comms.upload_file_with_info(
+                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
+                        resume_context=resume_context,
+                        chunk_callback=chunk_cb, 
+                        update_transferred_bytes=self.monitor.update_transferred_bytes,
+                        parent_id=parent_task_id # Pass parent ID for frontend aggregation
+                    )
+                
+                else:
+                    # --- FRESH UPLOAD PATH ---
+                    # 1. DB Check (Name collision)
+                    folder_contents = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
+                    if any(f['name'] == file_name for f in folder_contents['files']):
+                        raise errors.ItemAlreadyExistsError(f"目標位置已存在名為 '{file_name}' 的項目。")
+
+                    # 2. Hash Calculation
+                    original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
+                    
+                    # Update Controller with Hash immediately
+                    self.controller.add_upload_task(task_id, file_path, parent_id, total_size, original_file_hash, [])
+
+                    # 3. Deduplication (Sec-Upload)
+                    existing_file_obj = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
+                    
+                    if existing_file_obj:
+                        logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
+                        try:
+                            await loop.run_in_executor(
+                                None, 
+                                lambda: self.db.add_file(
+                                    parent_id, file_name, existing_file_obj["size"], 
+                                    existing_file_obj["hash"], time.time(), existing_file_obj["split_files"]
+                                )
+                            )
+                            progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功", parent_id=parent_task_id)
+                            self.controller.remove_task(task_id) # Done
+                            await utils.trigger_db_upload_in_background(self.shared_state)
+                            return
+                        except Exception as e:
+                            logger.error(f"Sec-upload DB add failed for {file_name}: {e}")
+                            raise # Re-raise to be caught by outer try-except block
+
+                    progress_callback(task_id, file_name, 0, total_size, 'transferring', 0, parent_id=parent_task_id)
+                    
+                    # 4. Actual Upload
+                    split_files_info = await telegram_comms.upload_file_with_info(
+                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
+                        chunk_callback=chunk_cb, 
+                        update_transferred_bytes=self.monitor.update_transferred_bytes,
+                        parent_id=parent_task_id # Pass parent ID
+                    )
+
+                # --- FINALIZE ---
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.db.add_file(
+                        parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info
+                    )
+                )
+                
+                self.controller.remove_task(task_id) # Removed from state on success
+                await utils.trigger_db_upload_in_background(self.shared_state)
+
+            except asyncio.CancelledError:
+                # Check actual state in controller to distinguish pause vs cancel
+                task_info = self.controller.get_task(task_id)
+                if task_info and task_info.get('status') == 'paused':
+                    logger.info(f"Upload task '{file_name}' paused.")
+                    transferred = len(task_info.get('transferred_parts', [])) * CHUNK_SIZE
+                    progress_callback(task_id, file_name, transferred, total_size, 'paused', 0, parent_id=parent_task_id)
+                else:
+                    logger.warning(f"Upload task '{file_name}' was cancelled.")
+                    # Ensure controller state is updated if not already
+                    self.controller.remove_task(task_id)
+                    progress_callback(task_id, file_name, 0, total_size, 'cancelled', 0, parent_id=parent_task_id)
+            
+            except errors.ItemAlreadyExistsError as e:
+                self.controller.mark_failed(task_id, str(e))
+                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e), parent_id=parent_task_id)
+            
+            except Exception as e:
+                logger.error(f"Upload error '{file_name}': {e}", exc_info=True)
+                self.controller.mark_failed(task_id, str(e))
+                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未知的內部錯誤。", parent_id=parent_task_id)
+            
+            finally:
+                if task_id in self.shared_state.active_tasks:
+                    del self.shared_state.active_tasks[task_id]
         """
         Worker for uploading. Supports both fresh uploads and resumes.
         """

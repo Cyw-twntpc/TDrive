@@ -85,6 +85,7 @@ const ApiService = {
 
     // --- File Transfers ---
     uploadFiles: (parentId, files, concurrency) => ApiService._callBridge('upload_files', parentId, files, concurrency),
+    uploadFolder: (parentId, folderPath, concurrency) => ApiService._callBridge('upload_folder', parentId, folderPath, concurrency),
     downloadItems: (items, destination, concurrency) => ApiService._callBridge('download_items', items, destination, concurrency),
     
     // Control Methods

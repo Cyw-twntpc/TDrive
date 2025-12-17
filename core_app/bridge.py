@@ -247,6 +247,13 @@ class Bridge(QObject):
         # Progress is reported via the `transfer_progress_updated` signal.
         return self._service.upload_files(parent_id, local_paths, concurrency_limit, self.transfer_progress_updated.emit)
 
+    @Slot(int, str, int, result=dict)
+    def upload_folder(self, parent_id, folder_path, concurrency_limit):
+        """
+        Slot to initiate a recursive folder upload.
+        """
+        return self._service.upload_folder(parent_id, folder_path, concurrency_limit, self.transfer_progress_updated.emit)
+
     @Slot(list, str, int, result=dict)
     def download_items(self, items, destination_dir, concurrency_limit):
         return self._service.download_items(items, destination_dir, concurrency_limit, self.transfer_progress_updated.emit)

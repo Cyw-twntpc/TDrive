@@ -258,7 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('new-upload-folder-btn')?.addEventListener('click', (e) => {
             e.stopPropagation(); // Prevent popover from closing immediately
             document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden')); // Close popover
-            ActionHandler.handleFolderUploadPlaceholder();
+            ActionHandler.handleFolderUpload();
         });
         document.getElementById('new-create-folder-btn')?.addEventListener('click', (e) => {
             e.stopPropagation(); // Prevent popover from closing immediately
@@ -380,12 +380,10 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // [Modified] Initialize TransferManager with optimized callback
         TransferManager.initialize(AppState, ApiService, UIManager, async () => {
-             // Optimized refresh: Just reload current folder contents to show changes
-             if (AppState.currentFolderId !== null) {
-                 const requestId = Date.now().toString();
-                 AppState.currentViewRequestId = requestId;
-                 ApiService.getFolderContents(AppState.currentFolderId, requestId);
-             }
+             // When a transfer (especially folder upload) completes, we need to ensure
+             // the global folder tree structure is updated, not just the current view.
+             // Otherwise, navigating to a newly created folder will fail because it's missing from folderMap.
+             await refreshAll();
         });
 
         // 4. Fetch initial data and render the UI.

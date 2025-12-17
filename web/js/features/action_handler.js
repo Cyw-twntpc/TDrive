@@ -676,10 +676,53 @@ const ActionHandler = {
     },
 
     /**
-     * Placeholder for folder upload action.
+     * Handles the folder upload action.
      */
-    async handleFolderUploadPlaceholder() {
-        await this._uiModals.showAlert('提示', '上傳資料夾功能正在開發中，敬請期待！');
+    async handleFolderUpload() {
+        UIManager.toggleModal('blocking-overlay', true);
+        try {
+            const folderPath = await this._apiService.selectDirectory("選擇要上傳的資料夾");
+            if (!folderPath) return;
+
+            const parentId = this._appState.currentFolderId;
+            // folderPath is an absolute path string on Windows
+            // Extract the last part as the folder name
+            const folderName = folderPath.split(/[\\/]/).pop();
+
+            const isDuplicate = this._appState.currentFolderContents.files.some(f => f.name === folderName) || 
+                                this._appState.currentFolderContents.folders.some(f => f.name === folderName);
+            
+            if (isDuplicate) {
+                this._uiModals.showAlert('上傳失敗', `此資料夾中已存在名為 "${folderName}" 的項目。`);
+                return;
+            }
+
+            // We don't have a task_id yet (backend generates it for main folder), 
+            // but we need one for the UI placeholder.
+            // Backend's 'starting_folder' event will come with the real ID.
+            // However, TransferManager logic relies on ID. 
+            // Solution: We don't add to TransferManager here manually for the *folder*.
+            // We let the backend's 'starting_folder' event trigger the addition of the folder card.
+            // But we SHOULD add a placeholder in the file list.
+            
+            // Wait, TransferManager.addUpload is for files mostly.
+            // Let's rely on backend events to populate the Transfer Dashboard.
+            // But for the File List (main view), we want immediate feedback.
+            
+            const tempId = 'temp_folder_' + Date.now();
+            const placeholderItem = {
+                id: tempId, name: folderName,
+                modif_date: new Date().toISOString().slice(0, 10),
+                size: '---', raw_size: 0, isUploading: true, type: 'folder'
+            };
+            this._appState.currentFolderContents.folders.push(placeholderItem);
+            FileListHandler.sortAndRender(this._appState); 
+
+            this._apiService.uploadFolder(parentId, folderPath, this._transferManager.getConcurrencyLimit());
+
+        } finally {
+            UIManager.toggleModal('blocking-overlay', false);
+        }
     },
 
     /**

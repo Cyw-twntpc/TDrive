@@ -134,12 +134,56 @@ const TransferManager = {
         let task;
         let parentTask = null;
 
+        // 1. Try to find existing parent task if parent_id is provided
         if (data.parent_id) {
-            parentTask = this.downloads.get(data.parent_id);
-            if (parentTask && parentTask.children) task = parentTask.children.get(data.id);
-            else return;
+            parentTask = this.downloads.get(data.parent_id) || this.uploads.get(data.parent_id);
+            if (parentTask && parentTask.children) {
+                task = parentTask.children.get(data.id);
+                
+                // [New] Dynamic Child Creation for Uploads
+                if (!task && (parentTask === this.uploads.get(data.parent_id))) {
+                    // Create placeholder child task for upload
+                    task = {
+                        id: data.id,
+                        name: data.name,
+                        size: data.size || data.total || 0, // 'total' is passed by adapter as size
+                        progress: 0,
+                        speed: 0,
+                        status: 'queued',
+                        isFolder: false,
+                        parentFolderId: parentTask.parentFolderId, // Inherit logical parent
+                        feedbackShown: false,
+                        alertShown: false,
+                        startTime: Date.now()
+                    };
+                    parentTask.children.set(data.id, task);
+                }
+            }
         } else {
             task = this.downloads.get(data.id) || this.uploads.get(data.id);
+        }
+
+        // [New] Dynamic Parent Creation for Upload Folder
+        if (!task && data.status === 'starting_folder' && data.type === 'upload') {
+            task = {
+                id: data.id,
+                name: data.name,
+                size: data.size || 0, // total_size passed from backend
+                progress: 0,
+                speed: 0,
+                status: 'starting_folder',
+                isFolder: true,
+                children: new Map(),
+                total_files: data.total_files || 0,
+                completed_files: 0,
+                expanded: true,
+                feedbackShown: false,
+                alertShown: false,
+                startTime: Date.now(),
+                completedAt: null
+            };
+            this.uploads.set(data.id, task);
+            this.startUpdater();
         }
 
         if (!task) return;
@@ -157,23 +201,28 @@ const TransferManager = {
 
         if (data.status === 'starting_folder' && task.isFolder) {
             Object.assign(task, data);
-            task.children = new Map();
-            const folderNodes = new Map(); folderNodes.set('', task);
-            const sortedChildren = (data.children || []).sort((a, b) => a.relative_path.replace(/\\/g, '/').length - b.relative_path.replace(/\\/g, '/').length);
-            sortedChildren.forEach(childInfo => {
-                const pathParts = childInfo.relative_path.replace(/\\/g, '/').split('/');
-                const parentPath = pathParts.join('/');
-                const parentNode = folderNodes.get(parentPath);
-                if (!parentNode) return;
-                const isFolder = childInfo.type === 'folder';
-                const newNode = {
-                    ...childInfo, isFolder, status: isFolder ? 'pending' : 'queued',
-                    progress: 0, size: childInfo.size || 0, children: isFolder ? new Map() : null,
-                    expanded: true, alertShown: false
-                };
-                parentNode.children.set(childInfo.id, newNode);
-                if (isFolder) folderNodes.set(childInfo.relative_path, newNode);
-            });
+            // If children map doesn't exist (should be created above), create it
+            if (!task.children) task.children = new Map();
+            
+            // Handle pre-populated children (mostly for downloads, uploads use dynamic addition)
+            if (data.children && Array.isArray(data.children)) {
+                const folderNodes = new Map(); folderNodes.set('', task);
+                const sortedChildren = (data.children || []).sort((a, b) => a.relative_path.replace(/\\/g, '/').length - b.relative_path.replace(/\\/g, '/').length);
+                sortedChildren.forEach(childInfo => {
+                    const pathParts = childInfo.relative_path.replace(/\\/g, '/').split('/');
+                    const parentPath = pathParts.join('/');
+                    const parentNode = folderNodes.get(parentPath);
+                    if (!parentNode) return;
+                    const isFolder = childInfo.type === 'folder';
+                    const newNode = {
+                        ...childInfo, isFolder, status: isFolder ? 'pending' : 'queued',
+                        progress: 0, size: childInfo.size || 0, children: isFolder ? new Map() : null,
+                        expanded: true, alertShown: false
+                    };
+                    parentNode.children.set(childInfo.id, newNode);
+                    if (isFolder) folderNodes.set(childInfo.relative_path, newNode);
+                });
+            }
         } else {
             Object.assign(task, data);
         }
