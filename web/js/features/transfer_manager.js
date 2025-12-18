@@ -106,6 +106,7 @@ const TransferManager = {
         const task = { 
             id: item.task_id, db_id: item.db_id, name: item.name, size: item.size || 0, 
             progress: 0, speed: 0, status: 'queued', isFolder: item.type === 'folder',
+            destinationDir: this.currentDownloadDestination, // Store destination for duplicate checking
             parentFolderId: this.AppState.currentFolderId, children: item.type === 'folder' ? new Map() : null,
             total_files: item.type === 'folder' ? 0 : 1, completed_files: 0, expanded: true, 
             feedbackShown: false, alertShown: false, itemData: item,

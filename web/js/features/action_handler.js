@@ -88,13 +88,41 @@ const ActionHandler = {
         }
 
         this._transferManager.setDownloadDestination(destinationDir);
-        const itemsToDownload = this._appState.selectedItems.map(item => ({
-            db_id: item.id,
-            task_id: crypto.randomUUID(),
-            type: item.type,
-            name: item.name,
-            size: item.raw_size
-        }));
+        
+        const itemsToDownload = [];
+        let duplicateCount = 0;
+
+        for (const item of this._appState.selectedItems) {
+            // Check for duplicate download task (Same DB ID and Same Destination)
+            let isDuplicate = false;
+            for (const task of this._transferManager.downloads.values()) {
+                // Check if task is active (not completed/failed/cancelled) and matches ID AND Destination
+                if (['queued', 'transferring', 'paused', 'starting_folder'].includes(task.status) && 
+                    task.db_id === item.id &&
+                    task.destinationDir === destinationDir) {
+                    
+                    isDuplicate = true;
+                    break;
+                }
+            }
+
+            if (isDuplicate) {
+                duplicateCount++;
+                continue;
+            }
+
+            itemsToDownload.push({
+                db_id: item.id,
+                task_id: crypto.randomUUID(),
+                type: item.type,
+                name: item.name,
+                size: item.raw_size
+            });
+        }
+
+        if (duplicateCount > 0) {
+            this._uiModals.showAlert("提示", `${duplicateCount} 個項目已在下載佇列中，將被略過。`, 'btn-secondary');
+        }
 
         if (itemsToDownload.length > 0) {
             itemsToDownload.forEach(item => this._transferManager.addDownload(item));

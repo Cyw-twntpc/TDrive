@@ -174,6 +174,8 @@ class FileService:
                     chunk = all_message_ids_to_delete[i:i + 100]
                     await client.delete_messages(group_id, chunk)
                 logger.info("Successfully deleted chunks from Telegram.")
+            else:
+                logger.info("No remote chunks need to delete from Telegram.")
 
             return {"success": True, "message": f"成功刪除 {len(items)} 個項目。"}
 

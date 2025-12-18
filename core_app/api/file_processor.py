@@ -49,39 +49,6 @@ def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Option
 
     logger.debug(f"Finished stream splitting for '{file_path}'.")
 
-def prepare_download_file(file_path: str, expected_size: int):
-    """
-    Ensures the destination file exists and has the correct size before downloading.
-    
-    - If file doesn't exist: Creates it and pre-allocates space (fills with zeros).
-    - If file exists and size matches: Leaves it as is (Resume mode).
-    - If file exists but size mismatches: Resets (overwrites) the file.
-    
-    This allows subsequent writes to use 'r+b' mode safely.
-    """
-    # Check if file exists and verify size
-    if os.path.exists(file_path):
-        current_size = os.path.getsize(file_path)
-        if current_size == expected_size:
-            logger.info(f"File '{file_path}' exists with correct size ({expected_size} bytes). Ready for resume.")
-            return
-        else:
-            logger.warning(f"File '{file_path}' exists but size mismatch ({current_size} vs {expected_size}). Resetting file.")
-    
-    # Create directory if needed
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    
-    try:
-        # Pre-allocate file with zeros
-        with open(file_path, 'wb') as f:
-            if expected_size > 0:
-                f.seek(expected_size - 1)
-                f.write(b'\0')
-        logger.info(f"Pre-allocated file '{file_path}' with size {expected_size}.")
-    except IOError as e:
-        logger.error(f"Failed to prepare download file '{file_path}': {e}")
-        raise
-
 def decrypt_bytes_and_write(encrypted_bytes: bytes, output_path: str, key: bytes, offset: int):
     """
     Decrypts bytes from memory and writes them to a specific offset in the output file.
@@ -101,3 +68,56 @@ def decrypt_bytes_and_write(encrypted_bytes: bytes, output_path: str, key: bytes
             f_out.write(decrypted_content)
     except IOError as e:
         raise IOError(f"An error occurred while writing to output file '{output_path}': {e}") from e
+
+def get_unique_filepath(directory: str, filename: str) -> str:
+    """
+    Generates a unique file path by appending (N) if a file with the same name
+    already exists in the directory.
+
+    Example: "file.txt" -> "file (1).txt" -> "file (2).txt"
+    """
+    base_name, ext = os.path.splitext(filename)
+    counter = 0
+    unique_filename = filename
+    final_path = os.path.join(directory, unique_filename)
+
+    while os.path.exists(final_path):
+        counter += 1
+        unique_filename = f"{base_name} ({counter}){ext}"
+        final_path = os.path.join(directory, unique_filename)
+        
+    return final_path
+
+def prepare_download_file(file_path: str, expected_size: int):
+    """
+    Ensures the destination file exists and has the correct size before downloading.
+    This function expects 'file_path' to be the final, unique path determined by the caller.
+    
+    - If file exists and size matches: Leaves it as is (Resume mode).
+    - If file exists but size mismatches: Resets (overwrites) the file.
+    """
+    # Create directory if needed
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    # If file exists and size matches, it's ready for resume.
+    if os.path.exists(file_path):
+        current_size = os.path.getsize(file_path)
+        if current_size == expected_size:
+            logger.info(f"File '{file_path}' exists with correct size ({expected_size} bytes). Ready for resume.")
+            return
+        else:
+            logger.warning(f"File '{file_path}' exists but size mismatch ({current_size} vs {expected_size}). Resetting file for full download.")
+            # If size mismatch, truncate to 0 and re-create for a fresh download.
+            with open(file_path, 'wb') as f:
+                f.truncate(0)
+    
+    try:
+        # Pre-allocate file with zeros
+        with open(file_path, 'wb') as f:
+            if expected_size > 0:
+                f.seek(expected_size - 1)
+                f.write(b'\0')
+        logger.info(f"Pre-allocated file '{file_path}' with size {expected_size}.")
+    except IOError as e:
+        logger.error(f"Failed to prepare download file '{file_path}': {e}")
+        raise

@@ -5,8 +5,8 @@ This module encapsulates the logic for finding or creating the storage group,
 streaming file uploads and downloads, and synchronizing the local database with
 a remote backup stored in the group's pinned messages.
 """
-from telethon.tl.types import InputMessagesFilterPinned
 from telethon.tl.functions.channels import CreateChannelRequest
+from telethon.tl.functions.messages import SetHistoryTTLRequest
 import os
 import zipfile
 import time
@@ -60,6 +60,30 @@ def _save_group_id(api_id: int, group_id: int):
     except Exception as e:
         logger.error(f"Failed to save group_id: {e}", exc_info=True)
 
+async def _ensure_no_ttl(client, group_id: int):
+    """
+    Checks if auto-delete (TTL) is enabled on the group and disables it if so.
+    This prevents accidental data loss.
+    """
+    try:
+        # Get the entity (chat/channel)
+        entity = await client.get_entity(group_id)
+        
+        # Check if 'ttl_period' attribute exists and is > 0
+        current_ttl = getattr(entity, 'ttl_period', 0)
+        
+        if current_ttl and current_ttl > 0:
+            logger.info(f"Auto-delete is enabled (TTL: {current_ttl}s) for group {group_id}. Disabling it...")
+            # Set TTL to 0 to disable auto-delete
+            await client(SetHistoryTTLRequest(peer=entity, period=0))
+            logger.info("Auto-delete successfully disabled.")
+        else:
+            logger.debug(f"Auto-delete check passed for group {group_id} (TTL is 0 or unset).")
+            
+    except Exception as e:
+        # Log warning but don't fail the entire startup process
+        logger.warning(f"Failed to check or disable auto-delete (TTL) for group {group_id}: {e}")
+
 async def get_group(client, app_api_id: int) -> int | None:
     """
     Finds or creates the dedicated 'TDrive' storage group.
@@ -70,6 +94,7 @@ async def get_group(client, app_api_id: int) -> int | None:
     3.  If still not found, create a new private megagroup named 'TDrive'.
     """
     name = "TDrive"
+    group_id = None
 
     # 1. Try to read the group_id from the local cache first.
     try:
@@ -81,9 +106,13 @@ async def get_group(client, app_api_id: int) -> int | None:
                 decrypted_data = cr.decrypt_secure_data(info.get("secure_data_blob"), str(app_api_id))
                 if decrypted_data and decrypted_data.get('group_id'):
                     logger.info(f"Found Group ID in cache: {decrypted_data['group_id']}")
-                    return decrypted_data['group_id']
+                    group_id = decrypted_data['group_id']
     except Exception as e:
         logger.warning(f"Failed to read cached group_id: {e}", exc_info=True)
+
+    if group_id:
+        await _ensure_no_ttl(client, group_id)
+        return group_id
 
     # 2. If not cached, search through dialogs on the server.
     logger.info("Searching for 'TDrive' group on the server...")
@@ -92,6 +121,7 @@ async def get_group(client, app_api_id: int) -> int | None:
         if dialog.is_group and dialog.name == name:
             logger.info(f"Found Group ID on server: {dialog.id}. Caching it locally.")
             _save_group_id(app_api_id, dialog.id)
+            await _ensure_no_ttl(client, dialog.id)
             return dialog.id
 
     # 3. If not found anywhere, create a new group.
@@ -107,6 +137,7 @@ async def get_group(client, app_api_id: int) -> int | None:
         group_id = int(f"-100{channel.id}")
         _save_group_id(app_api_id, group_id)
         logger.info(f"Successfully created new group with ID: {group_id}")
+        await _ensure_no_ttl(client, group_id)
         return group_id
     except Exception as e:
         logger.error(f"Fatal error while creating group: {e}", exc_info=True)
@@ -373,7 +404,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
             progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
         raise
 
-async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_message):
+async def _perform_db_upload(client, group_id: int, db_path: str):
     """
     Handles the actual process of uploading and cleaning up old database backups.
     Uses a hashtag search mechanism instead of pinned messages to avoid flood wait limits.
@@ -395,17 +426,28 @@ async def _perform_db_upload(client, group_id: int, db_path: str, remote_db_mess
         caption = f"#tdrive_db_backup db_version:{version}"
 
         logger.info(f"Uploading new database backup (Version: {version})...")
-        await client.send_file(group_id, file=temp_zip_path, caption=caption)
-        
-        # Clean up the old backup message if it exists
-        if remote_db_message:
-            logger.info("Removing old database backup message...")
-            try:
-                await client.delete_messages(group_id, [remote_db_message.id])
-            except Exception as e:
-                logger.warning(f"Could not remove old database backup, proceeding anyway: {e}")
-
+        new_message = await client.send_file(group_id, file=temp_zip_path, caption=caption)
         logger.info(f"New database backup (Version: {version}) has been uploaded.")
+        
+        # Clean up ALL old backup messages to ensure only the latest exists
+        logger.info("Scanning for and removing old database backups...")
+        try:
+            # Search for all backup messages
+            # Note: Telethon's search might not immediately index the new message, 
+            # but we filter by ID just in case.
+            old_messages = await client.get_messages(group_id, limit=50, search='#tdrive_db_backup')
+            
+            ids_to_delete = [msg.id for msg in old_messages if msg.id != new_message.id]
+            
+            if ids_to_delete:
+                logger.info(f"Deleting {len(ids_to_delete)} old backup message(s)...")
+                await client.delete_messages(group_id, ids_to_delete)
+                logger.info("Old backups removed.")
+            else:
+                logger.info("No old backups found to delete.")
+
+        except Exception as e:
+            logger.warning(f"Could not remove old database backups, proceeding anyway: {e}")
 
     except Exception as e:
         logger.error(f"An error occurred during database upload: {e}", exc_info=True)
@@ -429,7 +471,7 @@ async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path:
         remote_db_message = messages[0] if messages else None
 
         if mode == 'upload':
-            await _perform_db_upload(client, group_id, db_path, remote_db_message)
+            await _perform_db_upload(client, group_id, db_path)
             return
 
         if mode == 'sync':
@@ -466,7 +508,7 @@ async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path:
             
             if local_version > remote_version:
                 logger.info("Local database is newer. Uploading to cloud...")
-                await _perform_db_upload(client, group_id, db_path, remote_db_message)
+                await _perform_db_upload(client, group_id, db_path)
             
             elif remote_version > local_version:
                 logger.info("Remote database is newer. Downloading from cloud...")

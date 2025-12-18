@@ -52,24 +52,36 @@ class DatabaseHandler:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER,
             name TEXT NOT NULL,
-            total_size REAL DEFAULT 0, -- Using REAL for consistency with file sizes
-            modif_date REAL, -- Unix timestamp for modification date
+            total_size REAL DEFAULT 0,
+            modif_date REAL,
             FOREIGN KEY (parent_id) REFERENCES folders (id) ON DELETE CASCADE,
             UNIQUE (parent_id, name)
         )
         ''')
 
-        # File metadata table
+        # Files table (Content Entity)
+        # Stores the unique file content and its properties (hash, size).
+        # De-duplicated by hash.
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            parent_id INTEGER NOT NULL,
+            hash TEXT UNIQUE NOT NULL,
+            size REAL NOT NULL
+        )
+        ''')
+
+        # File-Folder Mapping table (File Structure/Metadata)
+        # Maps a logical file (name) in a specific folder to its content (files table).
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS file_folder_map (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_id INTEGER NOT NULL,
+            file_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            size REAL NOT NULL,
-            hash TEXT NOT NULL,
-            modif_date REAL, -- Unix timestamp for modification date
-            FOREIGN KEY (parent_id) REFERENCES folders (id) ON DELETE CASCADE,
-            UNIQUE (parent_id, name)
+            modif_date REAL,
+            FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE,
+            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE RESTRICT, -- RESTRICT prevents deleting files content if still referenced by map
+            UNIQUE (folder_id, name)
         )
         ''')
 
@@ -81,7 +93,7 @@ class DatabaseHandler:
             part_num INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
             part_hash TEXT NOT NULL,
-            FOREIGN KEY (file_id) REFERENCES files (id),
+            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE,
             UNIQUE (file_id, part_num)
         )
         ''')
@@ -190,12 +202,17 @@ class DatabaseHandler:
                     "modif_date": self._format_timestamp(row['modif_date'])
                 })
 
-            # Find matching files
-            cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE",
-                           (folder_id, search_pattern))
+            # Find matching files (JOIN files and file_folder_map)
+            cursor.execute("""
+                SELECT m.id, m.folder_id, m.name, f.size, m.modif_date 
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id = ? AND m.name LIKE ? COLLATE NOCASE
+            """, (folder_id, search_pattern))
+            
             for row in cursor.fetchall():
                 files.append({
-                    "id": row['id'], "parent_id": folder_id, "name": row['name'],
+                    "id": row['id'], "parent_id": row['folder_id'], "name": row['name'],
                     "raw_size": row['size'], "size": self._format_size(row['size']),
                     "modif_date": self._format_timestamp(row['modif_date'])
                 })
@@ -204,6 +221,38 @@ class DatabaseHandler:
         finally:
             if conn:
                 conn.close()
+
+    def _check_name_collision(self, cursor: sqlite3.Cursor, folder_id: int, name: str, item_type: str, exclude_id: int | None = None):
+        """
+        Checks if an item with the same name already exists in the specified folder.
+        Raises ItemAlreadyExistsError if a collision is found.
+        
+        Args:
+            cursor: Active database cursor.
+            folder_id: The ID of the folder to check within.
+            name: The name to check.
+            item_type: 'folder' or 'file'.
+            exclude_id: Optional ID to exclude from the check (used for rename operations).
+        """
+        if item_type == 'folder':
+            query = "SELECT id FROM folders WHERE parent_id = ? AND name = ?"
+            params = [folder_id, name]
+            if exclude_id is not None:
+                query += " AND id != ?"
+                params.append(exclude_id)
+        elif item_type == 'file':
+            query = "SELECT id FROM file_folder_map WHERE folder_id = ? AND name = ?"
+            params = [folder_id, name]
+            if exclude_id is not None:
+                query += " AND id != ?"
+                params.append(exclude_id)
+        else:
+            raise ValueError("item_type must be 'file' or 'folder'")
+
+        cursor.execute(query, params)
+        if cursor.fetchone():
+             raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{name}' 的{'資料夾' if item_type == 'folder' else '檔案'}。")
+
 
     # --- Public API ---
 
@@ -225,7 +274,14 @@ class DatabaseHandler:
                     "modif_date": self._format_timestamp(row['modif_date'])
                 })
 
-            cursor.execute("SELECT id, name, size, modif_date FROM files WHERE parent_id = ?", (folder_id,))
+            # JOIN files table to get size
+            cursor.execute("""
+                SELECT m.id, m.name, f.size, m.modif_date 
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id = ?
+            """, (folder_id,))
+            
             for row in cursor.fetchall():
                 files.append({
                     "id": row['id'], "name": row['name'], "raw_size": row['size'],
@@ -251,40 +307,20 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
-    def find_file_by_hash(self, file_hash):
-        conn = None
+    def find_file_by_hash(self, file_hash: str) -> int | None:
+        """
+        Checks if a file with the given hash already exists in the 'files' table.
+        Returns the file_id if found, otherwise None.
+        """
+        conn = self._get_conn()
         try:
-            conn = self._get_conn()
             cursor = conn.cursor()
-            cursor.execute("SELECT id, parent_id, name, size, hash, modif_date FROM files WHERE hash = ?", (file_hash,))
-            file_row = cursor.fetchone()
+            cursor.execute("SELECT id FROM files WHERE hash = ?", (file_hash,))
+            row = cursor.fetchone()
+            return row['id'] if row else None
         finally:
             if conn:
                 conn.close()
-
-        if file_row:
-            chunks_data = []
-            conn_chunks = None
-            try:
-                conn_chunks = self._get_conn()
-                cursor_chunks = conn_chunks.cursor()
-                cursor_chunks.execute("SELECT part_num, message_id, part_hash FROM chunks WHERE file_id = ?", (file_row['id'],))
-                for chunk_row in cursor_chunks.fetchall():
-                    chunks_data.append([chunk_row['part_num'], chunk_row['message_id'], chunk_row['part_hash']])
-            finally:
-                if conn_chunks:
-                    conn_chunks.close()
-
-            return {
-                "id": file_row['id'],
-                "parent_id": file_row['parent_id'],
-                "name": file_row['name'],
-                "size": file_row['size'],
-                "hash": file_row['hash'],
-                "modif_date": file_row['modif_date'],
-                "split_files": chunks_data
-            }
-        return None
     
     def add_folder(self, parent_id, name):
         if not self._is_valid_item_name(name):
@@ -294,71 +330,131 @@ class DatabaseHandler:
         try:
             with conn:
                 cursor = conn.cursor()
+                self._check_name_collision(cursor, parent_id, name, 'folder')
+
                 cursor.execute(
                     "INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)",
                     (parent_id, name, time.time(), 0)
                 )
                 self._increment_db_version(cursor)
                 return cursor.lastrowid # Return the ID of the newly created folder
-        except sqlite3.IntegrityError:
-            raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{name}' 的資料夾。")
         finally:
             if conn:
                 conn.close()
 
-    def add_file(self, folder_id: int, name: str, size: float, file_hash: str, modif_date_ts: float, chunks_data: list):
-        """Adds a new file and its associated chunks to the database."""
+    def add_file(self, folder_id: int, name: str, modif_date_ts: float, file_id: int | None = None, file_hash: str | None = None, size: float | None = None, chunks_data: list | None = None):
+        """
+        Adds a file entry to the database.
+        
+        If 'file_id' is provided, it links the new entry to existing content (deduplication/copy).
+        If 'file_id' is None, it creates a new content entry in 'files' and 'chunks' tables 
+        using 'file_hash', 'size', and 'chunks_data'.
+        """
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"The file name '{name}' contains invalid characters.")
 
         conn = self._get_conn()
         try:
-            with conn: # Using 'with' statement for automatic transaction management.
+            with conn:
                 cursor = conn.cursor()
                 
+                # Check for name collision first
+                self._check_name_collision(cursor, folder_id, name, 'file')
+                
+                target_file_id = file_id
+                target_size = size
+
+                if target_file_id is None:
+                    # Case 1: New file content
+                    if file_hash is None or size is None:
+                        raise ValueError("file_hash and size are required when creating new file content.")
+                    
+                    # Insert into files table (content) - modif_date in files table tracks when content was first added
+                    cursor.execute(
+                        "INSERT INTO files (hash, size) VALUES (?, ?)",
+                        (file_hash, size)
+                    )
+                    target_file_id = cursor.lastrowid
+                    target_size = size
+                    
+                    if chunks_data:
+                        chunk_records = [(target_file_id, c[0], c[1], c[2]) for c in chunks_data]
+                        cursor.executemany("INSERT INTO chunks (file_id, part_num, message_id, part_hash) VALUES (?, ?, ?, ?)", chunk_records)
+                else:
+                    # Case 2: Existing content (Deduplication)
+                    # We need the size to update folder statistics
+                    cursor.execute("SELECT size FROM files WHERE id = ?", (target_file_id,))
+                    row = cursor.fetchone()
+                    if not row:
+                        raise errors.PathNotFoundError(f"Referenced file content ID {target_file_id} not found.")
+                    target_size = row['size']
+
+                # Create the structure mapping
                 cursor.execute(
-                    "INSERT INTO files (parent_id, name, size, hash, modif_date) VALUES (?, ?, ?, ?, ?)",
-                    (folder_id, name, size, file_hash, modif_date_ts)
+                    "INSERT INTO file_folder_map (folder_id, file_id, name, modif_date) VALUES (?, ?, ?, ?)",
+                    (folder_id, target_file_id, name, modif_date_ts)
                 )
-                new_file_id = cursor.lastrowid
-                
-                if chunks_data:
-                    chunk_records = [(new_file_id, c[0], c[1], c[2]) for c in chunks_data]
-                    cursor.executemany("INSERT INTO chunks (file_id, part_num, message_id, part_hash) VALUES (?, ?, ?, ?)", chunk_records)
-                
-                self._update_folder_size_recursively(cursor, folder_id, size)
+
+                self._update_folder_size_recursively(cursor, folder_id, target_size)
                 self._increment_db_version(cursor)
-        except sqlite3.IntegrityError:
-            raise errors.ItemAlreadyExistsError(f"A file with the name '{name}' already exists in this location.")
+                
+                return target_file_id
         finally:
             if conn:
                 conn.close()
 
-    def remove_file(self, file_id: int) -> list:
+    def remove_file(self, map_id: int) -> list:
         """
-        Removes a file and its chunks from the database.
+        Removes a file mapping from a folder. If the file content is no longer
+        referenced by any other folder, the content and chunks are also removed.
         
+        Args:
+            map_id: The ID of the record in 'file_folder_map' to remove.
+
         Returns:
-            A list of message_ids associated with the file's chunks, which
-            should be deleted from the remote storage.
+            A list of message_ids associated with the file's chunks if the content
+            was deleted (no longer referenced). Returns empty list if content remains.
         """
         conn = self._get_conn()
         try:
             with conn:
                 cursor = conn.cursor()
                 
-                cursor.execute("SELECT parent_id, size FROM files WHERE id = ?", (file_id,))
-                file_info = cursor.fetchone()
-                if not file_info:
-                    raise errors.PathNotFoundError(f"File with ID '{file_id}' not found.")
+                # Get info about the map and the underlying file content
+                cursor.execute("""
+                    SELECT m.folder_id, m.file_id, f.size 
+                    FROM file_folder_map m
+                    JOIN files f ON m.file_id = f.id
+                    WHERE m.id = ?
+                """, (map_id,))
                 
-                cursor.execute("SELECT message_id FROM chunks WHERE file_id = ?", (file_id,))
-                message_ids = [row['message_id'] for row in cursor.fetchall()]
+                map_info = cursor.fetchone()
+                if not map_info:
+                    raise errors.PathNotFoundError(f"File map with ID '{map_id}' not found.")
+                
+                folder_id = map_info['folder_id']
+                file_id = map_info['file_id']
+                size = map_info['size']
 
-                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
-                # Deleting chunks and other related data is handled by 'ON DELETE CASCADE'
+                # Delete the mapping
+                cursor.execute("DELETE FROM file_folder_map WHERE id = ?", (map_id,))
                 
-                self._update_folder_size_recursively(cursor, file_info['parent_id'], -file_info['size'])
+                # Update folder size
+                self._update_folder_size_recursively(cursor, folder_id, -size)
+                
+                # Check if the content is still referenced
+                cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (file_id,))
+                still_referenced = cursor.fetchone() is not None
+
+                message_ids = []
+                if not still_referenced:
+                    # Content is orphan, delete it
+                    cursor.execute("SELECT message_id FROM chunks WHERE file_id = ?", (file_id,))
+                    message_ids = [row['message_id'] for row in cursor.fetchall()]
+
+                    # ON DELETE CASCADE will handle chunks
+                    cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+
                 self._increment_db_version(cursor)
                 
                 return message_ids
@@ -371,8 +467,8 @@ class DatabaseHandler:
         Recursively removes a folder and all its contents (subfolders and files).
 
         Returns:
-            A list of all message_ids from all deleted files, which should be
-            deleted from the remote storage.
+            A list of all message_ids from all deleted files (that are not referenced elsewhere),
+            which should be deleted from the remote storage.
         """
         conn = self._get_conn()
         try:
@@ -384,7 +480,7 @@ class DatabaseHandler:
                 if not folder_info:
                     raise errors.PathNotFoundError(f"Folder with ID '{folder_id}' not found.")
 
-                # Use a Common Table Expression (CTE) to recursively find all descendant folders.
+                # 1. Find all descendant folder IDs (including self)
                 get_descendants_query = """
                 WITH RECURSIVE folder_hierarchy(id) AS (
                     SELECT ?
@@ -396,22 +492,44 @@ class DatabaseHandler:
                 cursor.execute(get_descendants_query, (folder_id,))
                 all_folder_ids = [row['id'] for row in cursor.fetchall()]
                 
-                id_placeholders = ','.join(['?'] * len(all_folder_ids))
+                if not all_folder_ids:
+                    return []
+
+                folder_placeholders = ','.join(['?'] * len(all_folder_ids))
+
+                # 2. Find all file maps in these folders to get content IDs
+                cursor.execute(f"SELECT file_id FROM file_folder_map WHERE folder_id IN ({folder_placeholders})", all_folder_ids)
+                affected_content_ids = list(set([row['file_id'] for row in cursor.fetchall()]))
+
+                # 3. Delete folders (CASCADE logic handled manually or via foreign keys if set, but map has restrict usually)
+                # First delete maps to avoid foreign key constraints if any
+                cursor.execute(f"DELETE FROM file_folder_map WHERE folder_id IN ({folder_placeholders})", all_folder_ids)
                 
-                cursor.execute(f"SELECT id FROM files WHERE parent_id IN ({id_placeholders})", all_folder_ids)
-                all_file_ids = [row['id'] for row in cursor.fetchall()]
+                # Then delete folders
+                cursor.execute(f"DELETE FROM folders WHERE id IN ({folder_placeholders})", all_folder_ids)
 
                 all_message_ids = []
-                if all_file_ids:
-                    file_id_placeholders = ','.join(['?'] * len(all_file_ids))
-                    cursor.execute(f"SELECT message_id FROM chunks WHERE file_id IN ({file_id_placeholders})", all_file_ids)
-                    all_message_ids = [row['message_id'] for row in cursor.fetchall()]
-                    
-                    cursor.execute(f"DELETE FROM chunks WHERE file_id IN ({file_id_placeholders})", all_file_ids)
-                    cursor.execute(f"DELETE FROM files WHERE id IN ({file_id_placeholders})", all_file_ids)
-
-                cursor.execute(f"DELETE FROM folders WHERE id IN ({id_placeholders})", all_folder_ids)
                 
+                # 4. Check for orphan content
+                if affected_content_ids:
+                    content_placeholders = ','.join(['?'] * len(affected_content_ids))
+                    
+                    # Find which of these content IDs are still referenced by other maps
+                    cursor.execute(f"SELECT DISTINCT file_id FROM file_folder_map WHERE file_id IN ({content_placeholders})", affected_content_ids)
+                    referenced_content_ids = set([row['file_id'] for row in cursor.fetchall()])
+                    
+                    orphan_content_ids = [fid for fid in affected_content_ids if fid not in referenced_content_ids]
+
+                    if orphan_content_ids:
+                        orphan_placeholders = ','.join(['?'] * len(orphan_content_ids))
+                        
+                        # Get message IDs for these orphans
+                        cursor.execute(f"SELECT message_id FROM chunks WHERE file_id IN ({orphan_placeholders})", orphan_content_ids)
+                        all_message_ids = [row['message_id'] for row in cursor.fetchall()]
+                        
+                        # Delete orphans
+                        cursor.execute(f"DELETE FROM files WHERE id IN ({orphan_placeholders})", orphan_content_ids)
+
                 if folder_info['parent_id'] is not None:
                     self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])
                 
@@ -436,11 +554,9 @@ class DatabaseHandler:
                     raise errors.PathNotFoundError(f"找不到 ID 為 '{folder_id}' 的資料夾。")
                 
                 parent_id = folder_info['parent_id']
-                # Check for name collision in the same directory.
-                cursor.execute("SELECT id FROM folders WHERE parent_id = ? AND name = ? AND id != ?",
-                               (parent_id, new_name, folder_id))
-                if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{new_name}' 的項目。")
+                
+                # Check for name collision
+                self._check_name_collision(cursor, parent_id, new_name, 'folder', exclude_id=folder_id)
 
                 cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?",
                                (new_name, time.time(), folder_id))
@@ -449,8 +565,8 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
-    def rename_file(self, file_id: int, new_name: str):
-        """Renames a file."""
+    def rename_file(self, map_id: int, new_name: str):
+        """Renames a file mapping."""
         if not self._is_valid_item_name(new_name):
             raise errors.InvalidNameError(f"檔案名稱 '{new_name}' 包含無效字元。")
 
@@ -458,40 +574,44 @@ class DatabaseHandler:
         try:
             with conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT parent_id FROM files WHERE id = ?", (file_id,))
-                file_info = cursor.fetchone()
-                if not file_info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 '{file_id}' 的檔案。")
-                parent_id = file_info['parent_id']
+                cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (map_id,))
+                map_info = cursor.fetchone()
+                if not map_info:
+                    raise errors.PathNotFoundError(f"找不到 ID 為 '{map_id}' 的檔案。")
+                folder_id = map_info['folder_id']
 
-                cursor.execute("SELECT id FROM files WHERE parent_id = ? AND name = ? AND id != ?",
-                               (parent_id, new_name, file_id))
-                if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"此位置已存在名為 '{new_name}' 的項目。")
+                # Check for name collision
+                self._check_name_collision(cursor, folder_id, new_name, 'file', exclude_id=map_id)
 
-                cursor.execute("UPDATE files SET name = ?, modif_date = ? WHERE id = ?",
-                               (new_name, time.time(), file_id))
+                cursor.execute("UPDATE file_folder_map SET name = ?, modif_date = ? WHERE id = ?",
+                               (new_name, time.time(), map_id))
                 self._increment_db_version(cursor)
         finally:
             if conn:
                 conn.close()
 
-    def move_file(self, file_id: int, new_parent_id: int):
+    def move_file(self, map_id: int, new_parent_id: int):
         """Moves a file to a new folder."""
         conn = self._get_conn()
         try:
             with conn:
                 cursor = conn.cursor()
                 
-                # Get file info
-                cursor.execute("SELECT parent_id, name, size FROM files WHERE id = ?", (file_id,))
-                file_info = cursor.fetchone()
-                if not file_info:
-                    raise errors.PathNotFoundError(f"File with ID '{file_id}' not found.")
+                # Get file map info and content size
+                cursor.execute("""
+                    SELECT m.folder_id, m.name, m.file_id, f.size 
+                    FROM file_folder_map m
+                    JOIN files f ON m.file_id = f.id
+                    WHERE m.id = ?
+                """, (map_id,))
                 
-                old_parent_id = file_info['parent_id']
-                file_name = file_info['name']
-                file_size = file_info['size']
+                map_info = cursor.fetchone()
+                if not map_info:
+                    raise errors.PathNotFoundError(f"File with ID '{map_id}' not found.")
+                
+                old_parent_id = map_info['folder_id']
+                file_name = map_info['name']
+                file_size = map_info['size']
                 
                 if old_parent_id == new_parent_id:
                     return # No change needed
@@ -503,13 +623,11 @@ class DatabaseHandler:
                         raise errors.PathNotFoundError(f"Destination folder with ID '{new_parent_id}' not found.")
 
                 # Check for name collision in destination
-                cursor.execute("SELECT id FROM files WHERE parent_id = ? AND name = ?", (new_parent_id, file_name))
-                if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"A file named '{file_name}' already exists in the destination folder.")
+                self._check_name_collision(cursor, new_parent_id, file_name, 'file')
 
-                # Update parent_id
-                cursor.execute("UPDATE files SET parent_id = ?, modif_date = ? WHERE id = ?", 
-                               (new_parent_id, time.time(), file_id))
+                # Update parent_id in mapping
+                cursor.execute("UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
+                               (new_parent_id, time.time(), map_id))
                 
                 # Update sizes
                 self._update_folder_size_recursively(cursor, old_parent_id, -file_size)
@@ -558,9 +676,7 @@ class DatabaseHandler:
                         current_check_id = res['parent_id'] if res else None
 
                 # Check for name collision
-                cursor.execute("SELECT id FROM folders WHERE parent_id = ? AND name = ?", (new_parent_id, folder_name))
-                if cursor.fetchone():
-                    raise errors.ItemAlreadyExistsError(f"A folder named '{folder_name}' already exists in the destination folder.")
+                self._check_name_collision(cursor, new_parent_id, folder_name, 'folder')
 
                 # Update parent_id
                 cursor.execute("UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
@@ -575,35 +691,46 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
-    def get_file_details(self, file_id: int) -> dict | None:
+    def get_file_details(self, map_id: int) -> dict | None:
         """
         Retrieves all necessary details for a single file to begin a download,
         including its chunks.
+        
+        Args:
+            map_id: The ID of the file mapping to download.
         """
         conn = None
         try:
             conn = self._get_conn()
             cursor = conn.cursor()
             
-            cursor.execute("SELECT id, name, size, hash FROM files WHERE id = ?", (file_id,))
+            cursor.execute("""
+                SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash 
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.id = ?
+            """, (map_id,))
             file_row = cursor.fetchone()
 
             if not file_row:
-                logger.warning(f"Could not find file details for ID: {file_id}")
+                logger.warning(f"Could not find file details for Map ID: {map_id}")
                 return None
+            
+            file_id = file_row['file_id']
 
             cursor.execute("SELECT part_num, message_id, part_hash FROM chunks WHERE file_id = ? ORDER BY part_num", (file_id,))
             chunks_data = cursor.fetchall()
 
             return {
-                "id": file_row['id'],
+                "id": file_row['map_id'], # Keep consistent with UI expecting the item ID
+                "file_id": file_id, # Include content ID for reference
                 "name": file_row['name'],
                 "size": file_row['size'],
                 "hash": file_row['hash'],
                 "chunks": [{"part_num": r['part_num'], "message_id": r['message_id'], "part_hash": r['part_hash']} for r in chunks_data]
             }
         except Exception as e:
-            logger.error(f"Error fetching details for file {file_id}: {e}", exc_info=True)
+            logger.error(f"Error fetching details for file map {map_id}: {e}", exc_info=True)
             return None
         finally:
             if conn:
@@ -635,24 +762,27 @@ class DatabaseHandler:
               )
             SELECT
               fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
-              NULL as size, NULL as hash
+              NULL as size, NULL as hash, NULL as file_id
             FROM folder_hierarchy fh WHERE fh.id != :folder_id
             UNION ALL
             SELECT
-              f.id, 'file' as type, f.name,
-              CASE WHEN fh.id = :folder_id THEN f.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || f.name END as relative_path,
-              f.size, f.hash
-            FROM files f JOIN folder_hierarchy fh ON f.parent_id = fh.id;
+              m.id, 'file' as type, m.name,
+              CASE WHEN fh.id = :folder_id THEN m.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || m.name END as relative_path,
+              f.size, f.hash, f.id as file_id
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            JOIN folder_hierarchy fh ON m.folder_id = fh.id;
             """
             cursor.execute(query, {"folder_id": folder_id, "root_name": root_folder_name})
             items = [dict(row) for row in cursor.fetchall()]
             
-            file_ids = tuple([item['id'] for item in items if item['type'] == 'file'])
+            # Get unique content IDs for chunk retrieval
+            content_ids = list(set([item['file_id'] for item in items if item['type'] == 'file']))
             
             chunks_map = {}
-            if file_ids:
-                chunk_query = f"SELECT file_id, part_num, message_id, part_hash FROM chunks WHERE file_id IN ({','.join(['?'] * len(file_ids))}) ORDER BY file_id, part_num"
-                cursor.execute(chunk_query, file_ids)
+            if content_ids:
+                chunk_query = f"SELECT file_id, part_num, message_id, part_hash FROM chunks WHERE file_id IN ({','.join(['?'] * len(content_ids))}) ORDER BY file_id, part_num"
+                cursor.execute(chunk_query, content_ids)
                 for chunk_row in cursor.fetchall():
                     f_id = chunk_row['file_id']
                     if f_id not in chunks_map: chunks_map[f_id] = []
@@ -660,7 +790,8 @@ class DatabaseHandler:
 
             for item in items:
                 if item['type'] == 'file':
-                    item['chunks'] = chunks_map.get(item['id'], [])
+                    # Map chunks using content ID (file_id)
+                    item['chunks'] = chunks_map.get(item['file_id'], [])
 
             return {"folder_name": root_folder_name, "items": items}
 

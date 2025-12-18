@@ -15,6 +15,7 @@ from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
 from core_app.services.monitor_service import TransferMonitorService
 from core_app.api.file_processor import CHUNK_SIZE
+from core_app.api import file_processor as fp
 
 logger = logging.getLogger(__name__)
 
@@ -248,16 +249,15 @@ class TransferService:
                     self.controller.add_upload_task(task_id, file_path, parent_id, total_size, original_file_hash, [])
 
                     # 3. Deduplication (Sec-Upload)
-                    existing_file_obj = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
+                    existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
                     
-                    if existing_file_obj:
+                    if existing_file_id:
                         logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
                         try:
                             await loop.run_in_executor(
                                 None, 
                                 lambda: self.db.add_file(
-                                    parent_id, file_name, existing_file_obj["size"], 
-                                    existing_file_obj["hash"], time.time(), existing_file_obj["split_files"]
+                                    parent_id, file_name, time.time(), file_id=existing_file_id
                                 )
                             )
                             progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功", parent_id=parent_task_id)
@@ -282,7 +282,8 @@ class TransferService:
                 await loop.run_in_executor(
                     None,
                     lambda: self.db.add_file(
-                        parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info
+                        parent_id, file_name, time.time(), 
+                        file_hash=original_file_hash, size=total_size, chunks_data=split_files_info
                     )
                 )
                 
@@ -310,129 +311,6 @@ class TransferService:
                 logger.error(f"Upload error '{file_name}': {e}", exc_info=True)
                 self.controller.mark_failed(task_id, str(e))
                 progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未知的內部錯誤。", parent_id=parent_task_id)
-            
-            finally:
-                if task_id in self.shared_state.active_tasks:
-                    del self.shared_state.active_tasks[task_id]
-        """
-        Worker for uploading. Supports both fresh uploads and resumes.
-        """
-        file_name = os.path.basename(file_path)
-        
-        # Define chunk callback for real-time state saving
-        def chunk_cb(part_num, msg_id, part_hash):
-            self.controller.update_progress(task_id, part_num, [part_num, msg_id, part_hash])
-
-        async with semaphore:
-            try:
-                current_task = asyncio.current_task()
-                self.shared_state.active_tasks[task_id] = current_task
-            except RuntimeError:
-                logger.warning(f"Could not get current task for task_id: {task_id}.")
-
-            client = await utils.ensure_client_connected(self.shared_state)
-            if not client or not os.path.exists(file_path):
-                msg = "用戶端已斷線或本機檔案不存在。"
-                self.controller.mark_failed(task_id, msg)
-                progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg)
-                return
-
-            total_size = os.path.getsize(file_path)
-            loop = asyncio.get_running_loop()
-
-            try:
-                original_file_hash = pre_calculated_hash
-                split_files_info = []
-
-                if resume_context:
-                    # --- RESUME PATH ---
-                    logger.info(f"Resuming upload for {file_name}...")
-                    
-                    # [Removed Chart Logic] No longer need to pre-calculate for monitor baseline.
-                    # The progress_callback will handle the initial progress.
-                    if not original_file_hash:
-                        logger.warning("Resume requested but hash missing. Re-calculating...")
-                        original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
-                    
-                    # Skip DB checks for resume
-                    split_files_info = await telegram_comms.upload_file_with_info(
-                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
-                        resume_context=resume_context,
-                        chunk_callback=chunk_cb, 
-                        update_transferred_bytes=self.monitor.update_transferred_bytes
-                    )
-                
-                else:
-                    # --- FRESH UPLOAD PATH ---
-                    # 1. DB Check (Name collision)
-                    folder_contents = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
-                    if any(f['name'] == file_name for f in folder_contents['files']):
-                        raise errors.ItemAlreadyExistsError(f"目標位置已存在名為 '{file_name}' 的項目。")
-
-                    # 2. Hash Calculation
-                    original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
-                    
-                    # Update Controller with Hash immediately
-                    self.controller.add_upload_task(task_id, file_path, parent_id, total_size, original_file_hash, [])
-
-                    # 3. Deduplication (Sec-Upload)
-                    existing_file_obj = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
-                    
-                    if existing_file_obj:
-                        logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
-                        await loop.run_in_executor(
-                            None, 
-                            lambda: self.db.add_file(
-                                parent_id, file_name, existing_file_obj["size"], 
-                                existing_file_obj["hash"], time.time(), existing_file_obj["split_files"]
-                            )
-                        )
-                        progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功")
-                        self.controller.remove_task(task_id) # Done
-                        await utils.trigger_db_upload_in_background(self.shared_state)
-                        return
-
-                    progress_callback(task_id, file_name, 0, total_size, 'transferring', 0)
-                    
-                    # 4. Actual Upload
-                    split_files_info = await telegram_comms.upload_file_with_info(
-                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
-                        chunk_callback=chunk_cb, 
-                        update_transferred_bytes=self.monitor.update_transferred_bytes
-                    )
-
-                # --- FINALIZE ---
-                await loop.run_in_executor(
-                    None,
-                    lambda: self.db.add_file(
-                        parent_id, file_name, total_size, original_file_hash, time.time(), split_files_info
-                    )
-                )
-                
-                self.controller.remove_task(task_id) # Removed from state on success
-                await utils.trigger_db_upload_in_background(self.shared_state)
-
-            except asyncio.CancelledError:
-                # Check actual state in controller to distinguish pause vs cancel
-                task_info = self.controller.get_task(task_id)
-                if task_info and task_info.get('status') == 'paused':
-                    logger.info(f"Upload task '{file_name}' paused.")
-                    transferred = len(task_info.get('transferred_parts', [])) * CHUNK_SIZE
-                    progress_callback(task_id, file_name, transferred, total_size, 'paused', 0)
-                else:
-                    logger.warning(f"Upload task '{file_name}' was cancelled.")
-                    # Ensure controller state is updated if not already
-                    self.controller.remove_task(task_id)
-                    progress_callback(task_id, file_name, 0, total_size, 'cancelled', 0)
-            
-            except errors.ItemAlreadyExistsError as e:
-                self.controller.mark_failed(task_id, str(e))
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e))
-            
-            except Exception as e:
-                logger.error(f"Upload error '{file_name}': {e}", exc_info=True)
-                self.controller.mark_failed(task_id, str(e))
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未知的內部錯誤。")
             
             finally:
                 if task_id in self.shared_state.active_tasks:
@@ -480,8 +358,11 @@ class TransferService:
                     if item_type == 'file':
                          file_details = await loop.run_in_executor(None, self.db.get_file_details, item_db_id)
                          if file_details:
+                             # [New] Get unique path to avoid conflict
+                             final_file_path = await loop.run_in_executor(None, fp.get_unique_filepath, dest_path, file_details['name'])
+                             
                              self.controller.add_download_task(
-                                 main_task_id, item_db_id, dest_path, item.get('size', 0), file_details
+                                 main_task_id, item_db_id, final_file_path, item.get('size', 0), file_details
                              )
                 
                 if item_type == 'file':
@@ -492,8 +373,17 @@ class TransferService:
                     if not file_details: 
                         raise errors.PathNotFoundError("File not found.")
                     
+                    # For Resume: use save_path from controller if available, else re-calculate?
+                    # Resume path already has the unique name if it was set in 'add_download_task'
+                    task_info = self.controller.get_task(main_task_id)
+                    if task_info and task_info.get('save_path'):
+                        final_download_path = task_info['save_path']
+                    else:
+                        # Fallback (should normally be covered by controller)
+                        final_download_path = await loop.run_in_executor(None, fp.get_unique_filepath, dest_path, file_details['name'])
+
                     await self._download_file_from_details(
-                        client, group_id, main_task_id, file_details, dest_path, progress_callback,
+                        client, group_id, main_task_id, file_details, final_download_path, progress_callback,
                         completed_parts=completed_parts or set()
                     )
                     
@@ -523,7 +413,7 @@ class TransferService:
 
     async def _download_folder(self, client, group_id: int, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
         """
-        Downloads a folder. If files exist (from previous run), they will be skipped/resumed.
+        Downloads a folder.
         """
         loop = asyncio.get_running_loop()
         folder_contents = await loop.run_in_executor(None, self.db.get_folder_contents_recursive, folder_item['db_id'])
@@ -539,12 +429,16 @@ class TransferService:
         child_info_for_frontend = []
         for f_or_d in folder_contents['items']:
             # [Fix] Use deterministic ID for files to support resume across restarts
+            # Note: DB returns 'id' (Map ID). We map it to 'db_id' for consistency with other parts of the app.
+            original_id = f_or_d['id']
+            
             if f_or_d['type'] == 'file':
-                item_task_id = f"dl_file_{f_or_d['db_id']}"
+                item_task_id = f"dl_file_{original_id}"
             else:
                 item_task_id = f"dl_{uuid.uuid4()}" 
             
-            child_info = {**f_or_d, 'id': item_task_id}
+            # Preserve the original DB ID as 'db_id' before overwriting 'id' with task_id
+            child_info = {**f_or_d, 'db_id': original_id, 'id': item_task_id}
             child_info_for_frontend.append(child_info)
             if f_or_d['type'] == 'folder':
                 os.makedirs(os.path.join(local_root_path, f_or_d['relative_path']), exist_ok=True)
@@ -559,7 +453,9 @@ class TransferService:
                 # Register sub-task in controller to ensure progress is saved
                 file_details = await loop.run_in_executor(None, self.db.get_file_details, child['db_id'])
                 if file_details:
+                    # Construct full path for file inside folder structure
                     dest_file_path = os.path.join(local_root_path, os.path.dirname(child['relative_path']), child['name'])
+                    
                     # Use the generated UUID (child['id']) as the task_id
                     self.controller.add_download_task(
                         child['id'], child['db_id'], dest_file_path, child['size'], file_details
@@ -569,7 +465,7 @@ class TransferService:
                     self._download_file_from_details(
                         client, group_id, child['id'], 
                         child, 
-                        os.path.join(local_root_path, os.path.dirname(child['relative_path'])), 
+                        dest_file_path, # Pass the full path, not just dir
                         progress_callback, parent_task_id=main_task_id
                     )
                 )
@@ -577,9 +473,12 @@ class TransferService:
         await asyncio.gather(*download_tasks, return_exceptions=True)
         progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
 
-    async def _download_file_from_details(self, client, group_id: int, task_id: str, file_details: Dict, destination: str, 
+    async def _download_file_from_details(self, client, group_id: int, task_id: str, file_details: Dict, destination_path: str, 
                                           progress_callback: Callable, parent_task_id: str = None, completed_parts: set = None):
-        """Helper to download a file."""
+        """
+        Helper to download a file.
+        destination_path: The FULL path to the file (including filename).
+        """
         file_name = file_details['name']
         total_size = file_details.get("size", 0)
         
@@ -596,7 +495,35 @@ class TransferService:
             self.controller.update_progress(task_id, part_num)
 
         coro = telegram_comms.download_file(
-            client, group_id, file_details, destination,
+            client, group_id, file_details, os.path.dirname(destination_path), # telegram_comms still expects dir, but we handle path in prepare
+            task_id=task_id, progress_callback=progress_callback,
+            completed_parts=completed_parts,
+            chunk_callback=chunk_cb,
+            update_transferred_bytes=self.monitor.update_transferred_bytes
+        )
+        
+        # Wait, telegram_comms.download_file constructs path with os.path.join(download_dir, file_name).
+        # We need to change telegram_comms.download_file signature or trick it.
+        # But we agreed to only change transfer_service and file_processor first.
+        # Actually, telegram_comms.download_file is imported. I cannot change it here.
+        # But wait, I have 'file_details' which contains 'name'.
+        # If I want to download to 'file (1).txt', I can temporarily modify file_details['name']?
+        # NO, that would break checksum verification potentially? No, hash is hash.
+        # BUT, `telegram_comms.download_file` uses `file_name` to create `final_path`.
+        
+        # Let's verify `telegram_comms.download_file`.
+        # final_path = os.path.join(download_dir, file_name)
+        
+        # So I MUST pass the directory as the first part of destination_path, and ensure file_name matches.
+        # Or I modify telegram_comms.download_file to accept `override_filename` or `full_path`.
+        # I cannot change telegram_comms in this step based on the strict plan.
+        
+        # Workaround: Update `file_details` copy with the unique name.
+        file_details_copy = file_details.copy()
+        file_details_copy['name'] = os.path.basename(destination_path)
+        
+        coro = telegram_comms.download_file(
+            client, group_id, file_details_copy, os.path.dirname(destination_path),
             task_id=task_id, progress_callback=progress_callback,
             completed_parts=completed_parts,
             chunk_callback=chunk_cb,
@@ -633,6 +560,9 @@ class TransferService:
             )
         
         elif task_info['type'] == 'download':
+            # For resume, we must use the saved unique path
+            final_path = task_info['save_path']
+            
             item_mock = {
                 'db_id': task_info['db_id'],
                 'type': 'file', 
@@ -641,7 +571,7 @@ class TransferService:
                 'size': task_info['total_size']
             }
             await self._download_single_item(
-                client, group_id, task_id, item_mock, task_info['save_path'],
+                client, group_id, task_id, item_mock, os.path.dirname(final_path),
                 self._resume_semaphore, progress_callback,
                 resume=True,
                 completed_parts=set(task_info['transferred_parts'])
@@ -686,4 +616,3 @@ class TransferService:
         
         logger.info(f"Task {task_id} cancelled and removed.")
         return {"success": True, "message": "任務已取消並移除。"}
-    
