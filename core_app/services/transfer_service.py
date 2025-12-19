@@ -47,14 +47,13 @@ class TransferService:
                 progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法開始上傳。")
             return
         
-        group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
         
         tasks_to_run = []
         for item in upload_items:
             tasks_to_run.append(
                 self._upload_single_file(
-                    client, group_id, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback,
+                    client, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback,
                     parent_task_id=item.get('parent_task_id') # Pass parent_task_id if present
                 )
             )
@@ -185,7 +184,7 @@ class TransferService:
         logger.info(f"Recursive upload for '{local_folder_path}' (main_task_id: {main_task_id}) completed.")
         progress_callback(main_task_id, base_folder_name, total_size, total_size, 'completed', 0)
 
-    async def _upload_single_file(self, client, group_id: int, parent_id: int, file_path: str, task_id: str, 
+    async def _upload_single_file(self, client, parent_id: int, file_path: str, task_id: str, 
                                   semaphore: asyncio.Semaphore, progress_callback: Callable, 
                                   resume_context: List = None, pre_calculated_hash: str = None,
                                   parent_task_id: str = None):
@@ -228,7 +227,7 @@ class TransferService:
                         original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
                     
                     split_files_info = await telegram_comms.upload_file_with_info(
-                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
+                        client, self.shared_state.group_id, file_path, original_file_hash, task_id, progress_callback,
                         resume_context=resume_context,
                         chunk_callback=chunk_cb, 
                         update_transferred_bytes=self.monitor.update_transferred_bytes,
@@ -272,7 +271,7 @@ class TransferService:
                     
                     # 4. Actual Upload
                     split_files_info = await telegram_comms.upload_file_with_info(
-                        client, group_id, file_path, original_file_hash, task_id, progress_callback,
+                        client, self.shared_state.group_id, file_path, original_file_hash, task_id, progress_callback,
                         chunk_callback=chunk_cb, 
                         update_transferred_bytes=self.monitor.update_transferred_bytes,
                         parent_id=parent_task_id # Pass parent ID
@@ -322,19 +321,18 @@ class TransferService:
         if not client:
             return
 
-        group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         tasks = []
         for item in items:
             tasks.append(
-                self._download_single_item(client, group_id, item['task_id'], item, destination_dir, semaphore, progress_callback)
+                self._download_single_item(client, item['task_id'], item, destination_dir, semaphore, progress_callback)
             )
         
         await asyncio.gather(*tasks, return_exceptions=True)
         self.monitor.close()
 
-    async def _download_single_item(self, client, group_id: int, main_task_id: str, item: Dict, dest_path: str, 
+    async def _download_single_item(self, client, main_task_id: str, item: Dict, dest_path: str, 
                                     semaphore: asyncio.Semaphore, progress_callback: Callable,
                                     resume: bool = False, completed_parts: set = None):
         """
@@ -383,7 +381,7 @@ class TransferService:
                         final_download_path = await loop.run_in_executor(None, fp.get_unique_filepath, dest_path, file_details['name'])
 
                     await self._download_file_from_details(
-                        client, group_id, main_task_id, file_details, final_download_path, progress_callback,
+                        client, main_task_id, file_details, final_download_path, progress_callback,
                         completed_parts=completed_parts or set()
                     )
                     
@@ -391,7 +389,7 @@ class TransferService:
                     self.controller.remove_task(main_task_id)
 
                 elif item_type == 'folder':
-                    await self._download_folder(client, group_id, main_task_id, item, dest_path, progress_callback)
+                    await self._download_folder(client, main_task_id, item, dest_path, progress_callback)
 
         except asyncio.CancelledError:
             task_info = self.controller.get_task(main_task_id)
@@ -411,7 +409,7 @@ class TransferService:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
 
-    async def _download_folder(self, client, group_id: int, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
+    async def _download_folder(self, client, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
         """
         Downloads a folder.
         """
@@ -463,9 +461,8 @@ class TransferService:
 
                 download_tasks.append(
                     self._download_file_from_details(
-                        client, group_id, child['id'], 
-                        child, 
-                        dest_file_path, # Pass the full path, not just dir
+                        client, child['id'], child, 
+                        dest_file_path,
                         progress_callback, parent_task_id=main_task_id
                     )
                 )
@@ -473,7 +470,7 @@ class TransferService:
         await asyncio.gather(*download_tasks, return_exceptions=True)
         progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
 
-    async def _download_file_from_details(self, client, group_id: int, task_id: str, file_details: Dict, destination_path: str, 
+    async def _download_file_from_details(self, client, task_id: str, file_details: Dict, destination_path: str, 
                                           progress_callback: Callable, parent_task_id: str = None, completed_parts: set = None):
         """
         Helper to download a file.
@@ -495,35 +492,18 @@ class TransferService:
             self.controller.update_progress(task_id, part_num)
 
         coro = telegram_comms.download_file(
-            client, group_id, file_details, os.path.dirname(destination_path), # telegram_comms still expects dir, but we handle path in prepare
+            client, self.shared_state.group_id, file_details, os.path.dirname(destination_path), 
             task_id=task_id, progress_callback=progress_callback,
             completed_parts=completed_parts,
             chunk_callback=chunk_cb,
             update_transferred_bytes=self.monitor.update_transferred_bytes
         )
-        
-        # Wait, telegram_comms.download_file constructs path with os.path.join(download_dir, file_name).
-        # We need to change telegram_comms.download_file signature or trick it.
-        # But we agreed to only change transfer_service and file_processor first.
-        # Actually, telegram_comms.download_file is imported. I cannot change it here.
-        # But wait, I have 'file_details' which contains 'name'.
-        # If I want to download to 'file (1).txt', I can temporarily modify file_details['name']?
-        # NO, that would break checksum verification potentially? No, hash is hash.
-        # BUT, `telegram_comms.download_file` uses `file_name` to create `final_path`.
-        
-        # Let's verify `telegram_comms.download_file`.
-        # final_path = os.path.join(download_dir, file_name)
-        
-        # So I MUST pass the directory as the first part of destination_path, and ensure file_name matches.
-        # Or I modify telegram_comms.download_file to accept `override_filename` or `full_path`.
-        # I cannot change telegram_comms in this step based on the strict plan.
-        
-        # Workaround: Update `file_details` copy with the unique name.
+
         file_details_copy = file_details.copy()
         file_details_copy['name'] = os.path.basename(destination_path)
         
         coro = telegram_comms.download_file(
-            client, group_id, file_details_copy, os.path.dirname(destination_path),
+            client, self.shared_state.group_id, file_details_copy, os.path.dirname(destination_path),
             task_id=task_id, progress_callback=progress_callback,
             completed_parts=completed_parts,
             chunk_callback=chunk_cb,
@@ -549,11 +529,9 @@ class TransferService:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client: return
 
-        group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
-
         if task_info['type'] == 'upload':
             await self._upload_single_file(
-                client, group_id, task_info['parent_id'], task_info['file_path'], task_id,
+                client, task_info['parent_id'], task_info['file_path'], task_id,
                 self._resume_semaphore, progress_callback,
                 resume_context=task_info['split_files_info'],
                 pre_calculated_hash=task_info['file_hash']
@@ -571,7 +549,7 @@ class TransferService:
                 'size': task_info['total_size']
             }
             await self._download_single_item(
-                client, group_id, task_id, item_mock, os.path.dirname(final_path),
+                client, task_id, item_mock, os.path.dirname(final_path),
                 self._resume_semaphore, progress_callback,
                 resume=True,
                 completed_parts=set(task_info['transferred_parts'])

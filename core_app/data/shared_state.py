@@ -20,6 +20,7 @@ class SharedState:
         self.client: Optional[TelegramClient] = None
         self.api_id: Optional[int] = None
         self.api_hash: Optional[str] = None
+        self.group_id: Optional[int] = None
         self.is_logged_in: bool = False
 
         # --- Temporary data for login flow ---

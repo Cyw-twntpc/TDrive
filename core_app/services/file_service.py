@@ -167,12 +167,11 @@ class FileService:
             # Now, delete the corresponding messages from Telegram in batches.
             if all_message_ids_to_delete:
                 logger.info(f"Preparing to delete {len(all_message_ids_to_delete)} chunks from Telegram.")
-                group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
                 
                 # Telegram's delete_messages can handle up to 100 IDs at a time.
                 for i in range(0, len(all_message_ids_to_delete), 100):
                     chunk = all_message_ids_to_delete[i:i + 100]
-                    await client.delete_messages(group_id, chunk)
+                    await client.delete_messages(self.shared_state.group_id, chunk)
                 logger.info("Successfully deleted chunks from Telegram.")
             else:
                 logger.info("No remote chunks need to delete from Telegram.")

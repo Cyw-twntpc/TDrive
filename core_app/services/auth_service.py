@@ -16,8 +16,7 @@ if TYPE_CHECKING:
 from . import utils
 from core_app.api import crypto_handler
 from core_app.api import telegram_comms
-from core_app.common import errors
-from core_app.data.db_handler import DatabaseHandler
+
 
 logger = logging.getLogger(__name__)
 
@@ -306,9 +305,9 @@ class AuthService:
             logger.info("Initializing TDrive...")
             # Set a 30-second timeout for the entire initialization process.
             async with asyncio.timeout(30):
-                group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
-                await telegram_comms.sync_database_file(client, group_id, mode='sync')
-            
+                self.shared_state.group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
+                await telegram_comms.sync_database_file(client, self.shared_state.group_id, mode='sync')
+
             logger.info("TDrive initialization successful.")
             return {"success": True}
         except asyncio.TimeoutError:

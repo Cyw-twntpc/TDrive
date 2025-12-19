@@ -84,8 +84,7 @@ def _upload_db(shared_state: 'SharedState'):
                 logger.error("Aborting DB upload task: client connection or api_id is missing.")
                 return
 
-            group_id = await telegram_comms.get_group(client, shared_state.api_id)
-            await telegram_comms.sync_database_file(client, group_id, mode='upload')
+            await telegram_comms.sync_database_file(client, shared_state.group_id, mode='upload')
             logger.info("Background database upload task completed.")
         except Exception as e:
             logger.error(f"Background database upload task failed: {e}", exc_info=True)
@@ -110,9 +109,6 @@ async def trigger_db_upload_in_background(shared_state: 'SharedState'):
         shared_state.db_upload_timer.cancel()
         logger.debug("Cancelled previous database upload timer.")
 
-    # Schedule the upload to run after a delay.
-    # A threading.Timer is used here to provide a simple, out-of-band delay
-    # mechanism that then schedules the real async work back on the main loop.
     shared_state.db_upload_timer = threading.Timer(2.0, lambda: _upload_db(shared_state))
     shared_state.db_upload_timer.start()
     logger.debug("Scheduled a new database upload in 2 seconds.")
