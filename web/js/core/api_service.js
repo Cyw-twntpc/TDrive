@@ -84,9 +84,9 @@ const ApiService = {
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),
 
     // --- File Transfers ---
-    uploadFiles: (parentId, files, concurrency) => ApiService._callBridge('upload_files', parentId, files, concurrency),
-    uploadFolder: (parentId, folderPath, concurrency) => ApiService._callBridge('upload_folder', parentId, folderPath, concurrency),
-    downloadItems: (items, destination, concurrency) => ApiService._callBridge('download_items', items, destination, concurrency),
+    uploadFiles: (parentId, files) => ApiService._callBridge('upload_files', parentId, files),
+    uploadFolder: (parentId, folderPath) => ApiService._callBridge('upload_folder', parentId, folderPath),
+    downloadItems: (items, destination) => ApiService._callBridge('download_items', items, destination),
     
     // Control Methods
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),

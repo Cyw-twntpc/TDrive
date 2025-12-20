@@ -126,7 +126,7 @@ const ActionHandler = {
 
         if (itemsToDownload.length > 0) {
             itemsToDownload.forEach(item => this._transferManager.addDownload(item));
-            this._apiService.downloadItems(itemsToDownload, destinationDir, this._transferManager.getConcurrencyLimit());
+            this._apiService.downloadItems(itemsToDownload, destinationDir);
         }
     },
 
@@ -696,7 +696,7 @@ const ActionHandler = {
                 // Re-render the file list with the new placeholder items.
                 FileListHandler.sortAndRender(this._appState); 
                 // Start the actual upload in the background.
-                this._apiService.uploadFiles(parentId, filesToUpload.map(f => ({ local_path: f.localPath, task_id: f.task_id })), this._transferManager.getConcurrencyLimit());
+                this._apiService.uploadFiles(parentId, filesToUpload.map(f => ({ local_path: f.localPath, task_id: f.task_id })));
             }
         } finally {
             UIManager.toggleModal('blocking-overlay', false);
@@ -746,7 +746,7 @@ const ActionHandler = {
             this._appState.currentFolderContents.folders.push(placeholderItem);
             FileListHandler.sortAndRender(this._appState); 
 
-            this._apiService.uploadFolder(parentId, folderPath, this._transferManager.getConcurrencyLimit());
+            this._apiService.uploadFolder(parentId, folderPath);
 
         } finally {
             UIManager.toggleModal('blocking-overlay', false);

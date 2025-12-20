@@ -10,14 +10,6 @@ const SettingsHandler = {
         const pathDisplay = document.getElementById('default-download-path-display');
         const setPathBtn = document.getElementById('set-default-download-path-btn');
         const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
-        const concurrencyLimitSelect = document.getElementById('concurrency-limit');
-
-        // Apply concurrency limit
-        const savedLimit = localStorage.getItem('concurrencyLimit');
-        if (savedLimit) {
-            concurrencyLimitSelect.value = savedLimit;
-        }
-        TransferManager.setConcurrencyLimit(parseInt(concurrencyLimitSelect.value, 10));
 
         // Apply default download path state
         const useDefault = localStorage.getItem('useDefaultDownloadPath') === 'true';
@@ -41,14 +33,8 @@ const SettingsHandler = {
      * Saves the current settings from the UI to localStorage.
      */
     save() {
-        const concurrencyLimitSelect = document.getElementById('concurrency-limit');
         const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
         
-        // Save concurrency limit
-        const limit = concurrencyLimitSelect.value;
-        localStorage.setItem('concurrencyLimit', limit);
-        TransferManager.setConcurrencyLimit(parseInt(limit, 10));
-
         // Save default download path toggle state
         localStorage.setItem('useDefaultDownloadPath', useDefaultToggle.checked);
         

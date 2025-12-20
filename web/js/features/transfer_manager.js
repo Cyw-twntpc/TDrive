@@ -10,7 +10,6 @@ const TransferManager = {
     uploads: new Map(),
     downloads: new Map(),
     updateInterval: null,
-    concurrencyLimit: 3,
     currentDownloadDestination: '',
     AppState: null,
     ApiService: null,
@@ -848,8 +847,6 @@ const TransferManager = {
         if (this.currentTab === 'completed') this._renderCompletedList();
     },
 
-    setConcurrencyLimit(limit) { this.concurrencyLimit = limit; },
-    getConcurrencyLimit() { return this.concurrencyLimit; },
     setDownloadDestination(path) { this.currentDownloadDestination = path; },
     
     setupEventListeners() {

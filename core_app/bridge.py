@@ -241,22 +241,22 @@ class Bridge(QObject):
         return self._async_call(self._service.move_items(items, target_folder_id))
 
     # --- Transfer Service Slots ---
-    @Slot(int, list, int, result=dict)
-    def upload_files(self, parent_id, local_paths, concurrency_limit):
+    @Slot(int, list, result=dict)
+    def upload_files(self, parent_id, local_paths):
         # The service method starts background tasks and returns immediately.
         # Progress is reported via the `transfer_progress_updated` signal.
-        return self._service.upload_files(parent_id, local_paths, concurrency_limit, self.transfer_progress_updated.emit)
+        return self._service.upload_files(parent_id, local_paths, self.transfer_progress_updated.emit)
 
-    @Slot(int, str, int, result=dict)
-    def upload_folder(self, parent_id, folder_path, concurrency_limit):
+    @Slot(int, str, result=dict)
+    def upload_folder(self, parent_id, folder_path):
         """
         Slot to initiate a recursive folder upload.
         """
-        return self._service.upload_folder(parent_id, folder_path, concurrency_limit, self.transfer_progress_updated.emit)
+        return self._service.upload_folder(parent_id, folder_path, self.transfer_progress_updated.emit)
 
-    @Slot(list, str, int, result=dict)
-    def download_items(self, items, destination_dir, concurrency_limit):
-        return self._service.download_items(items, destination_dir, concurrency_limit, self.transfer_progress_updated.emit)
+    @Slot(list, str, result=dict)
+    def download_items(self, items, destination_dir):
+        return self._service.download_items(items, destination_dir, self.transfer_progress_updated.emit)
 
     @Slot(str, result=dict)
     def cancel_transfer(self, task_id):

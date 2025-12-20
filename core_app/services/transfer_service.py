@@ -19,6 +19,8 @@ from core_app.api import file_processor as fp
 
 logger = logging.getLogger(__name__)
 
+CONCURRENCY_LIMIT = 3
+
 class TransferService:
     """
     Manages all time-consuming file upload and download tasks.
@@ -31,12 +33,12 @@ class TransferService:
         self.controller = TransferController()
         
         # Global semaphore for resumed tasks to prevent flooding
-        self._resume_semaphore = asyncio.Semaphore(3)
+        self._resume_semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
         # Reset any tasks that were 'transferring' when the app crashed
         self.controller.reset_zombie_tasks()
 
-    async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], concurrency_limit: int, progress_callback: Callable):
+    async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], progress_callback: Callable):
         """
         Entry point for new file uploads.
         """
@@ -47,7 +49,7 @@ class TransferService:
                 progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法開始上傳。")
             return
         
-        semaphore = asyncio.Semaphore(concurrency_limit)
+        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
         
         tasks_to_run = []
         for item in upload_items:
@@ -61,7 +63,7 @@ class TransferService:
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
         # self.monitor.close() 
 
-    async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, concurrency_limit: int, progress_callback: Callable):
+    async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, progress_callback: Callable):
         """
         Recursively uploads a folder and its contents.
         1. Scans for total size/count.
@@ -171,7 +173,7 @@ class TransferService:
                     
                     # Await the batch upload for this directory before moving to the next
                     # This ensures structure is preserved and limits global concurrency issues
-                    await self.upload_files(current_remote_id, upload_items, concurrency_limit, progress_callback)
+                    await self.upload_files(current_remote_id, upload_items, progress_callback)
                     logger.info(f"Finished uploading {len(files)} files from local '{root}'.")
 
         except Exception as e:
@@ -315,13 +317,13 @@ class TransferService:
                 if task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[task_id]
 
-    async def download_items(self, items: List[Dict], destination_dir: str, concurrency_limit: int, progress_callback: Callable):
+    async def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable):
         """Entry point for new downloads."""
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
             return
 
-        semaphore = asyncio.Semaphore(concurrency_limit)
+        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
         tasks = []
         for item in items:

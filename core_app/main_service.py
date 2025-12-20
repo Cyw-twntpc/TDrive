@@ -190,30 +190,30 @@ class TDriveService:
     def get_today_traffic_stats(self) -> int:
         return self._transfer_service.monitor.get_today_traffic()
 
-    def upload_files(self, parent_id: int, local_paths: List[Dict], concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
+    def upload_files(self, parent_id: int, local_paths: List[Dict], progress_callback: Callable) -> Dict[str, Any]:
         """
         Initiates file uploads as background tasks.
         """
         adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.upload_files(parent_id, local_paths, concurrency_limit, adapter_callback)
+        task_coro = self._transfer_service.upload_files(parent_id, local_paths, adapter_callback)
         self._schedule_background_task(task_coro)
         return {"success": True, "message": "Upload tasks have been started."}
 
-    def upload_folder(self, parent_id: int, folder_path: str, concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
+    def upload_folder(self, parent_id: int, folder_path: str, progress_callback: Callable) -> Dict[str, Any]:
         """
         Initiates a recursive folder upload as a background task.
         """
         adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, concurrency_limit, adapter_callback)
+        task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, adapter_callback)
         self._schedule_background_task(task_coro)
         return {"success": True, "message": "Folder upload task started."}
 
-    def download_items(self, items: List[Dict], destination_dir: str, concurrency_limit: int, progress_callback: Callable) -> Dict[str, Any]:
+    def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable) -> Dict[str, Any]:
         """
         Initiates item downloads as background tasks.
         """
         adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.download_items(items, destination_dir, concurrency_limit, adapter_callback)
+        task_coro = self._transfer_service.download_items(items, destination_dir, adapter_callback)
         self._schedule_background_task(task_coro)
         return {"success": True, "message": "Download tasks have been started."}
 
