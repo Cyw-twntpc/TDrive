@@ -4,7 +4,6 @@ __pycache__/
 icon.png
 venv/
 file/
-old_ver/
 chrome/
 *.md
 *.txt

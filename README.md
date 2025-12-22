@@ -4,63 +4,54 @@ A high-performance, desktop cloud storage client that utilizes Telegram's unlimi
 
 ## Demonstration
 
-Here are some screenshots of the TDrive user interface, showcasing the main file browser, the hierarchical transfer manager, and the login screen.
-
+*The project features a modern, responsive UI built with Web technologies, hosted within a native Qt application.*
 
 ## Tech Stack
 
 -   **Backend:**
     -   **Language:** Python 3
     -   **Core Library:** Telethon (for interacting with the Telegram API)
-    -   **Concurrency:** `asyncio`, `threading`
-    -   **Database:** SQLite
-    -   **Cryptography:** AES for securing local credentials
+    -   **Concurrency:** `asyncio` integrated with Qt via `qasync`
+    -   **Database:** SQLite (Syncs with cloud)
+    -   **Cryptography:** AES for securing local credentials and file hashes
 
--   **Frontend:**
+-   **Frontend (UI):**
     -   **Languages:** HTML5, CSS3, JavaScript (ES6+)
-    -   **Framework:** None (Vanilla JS)
-    -   **Icons:** Font Awesome
+    -   **Architecture:** Single Page Application (SPA)
+    -   **Icons:** Font Awesome 5
 
 -   **GUI Framework:**
-    -   **Eel:** A lightweight Python library for creating Electron-like offline HTML/JS GUI apps.
+    -   **PySide6 (Qt for Python):** Uses `QWebEngineView` to render the UI and `QWebChannel` for seamless bi-directional communication between Python and JavaScript.
 
 ## Key Features
 
--   **Secure Authentication:** Multiple login methods including QR code, phone number with verification code, and two-step verification (password). API credentials are encrypted and stored locally.
--   **Full CRUD Operations:** Create, rename, and delete files and folders.
--   **Concurrent Transfers:** Upload and download multiple items simultaneously with a user-configurable concurrency limit.
--   **Advanced Transfer Management:** A detailed transfer manager UI to monitor, cancel, and view the progress of individual and hierarchical transfers.
--   **Hierarchical Folder Operations:** Supports recursive downloading of entire folder structures.
--   **Efficient Uploads:** Implements file hash-based deduplication to avoid re-uploading identical files, saving bandwidth and time.
--   **File System Navigation:** A responsive interface with a file tree, breadcrumb navigation, and a detailed file list.
--   **Powerful Search:** Search for files and folders across the entire drive or within the current folder.
--   **Robust UI:** Supports multi-select, drag-to-select, and sortable columns for an intuitive user experience.
+-   **Secure Authentication:** Supports multiple login methods including QR code login (via official Telegram app) and phone number verification.
+-   **Full CRUD Operations:** Create folders, rename items, move files/folders, and delete content with changes synced across devices.
+-   **Resumable Transfers:** Robust upload and download manager supporting **Pause** and **Resume** functionalities for individual tasks or bulk operations.
+-   **Traffic Monitoring:** Real-time dashboard showing daily upload/download traffic usage.
+-   **Recursive Folder Operations:** Supports uploading and downloading complex, nested folder structures while preserving hierarchy.
+-   **Smart Deduplication:** Implements SHA256 hash-based deduplication to skip uploading files that already exist in the drive, saving bandwidth.
+-   **High-Performance Search:** Streaming search results allowing for rapid discovery of files across the remote database.
+-   **Native Experience:** System tray integration, native file dialogs, and persistent session management.
 
 ## System Architecture & Technical Highlights
 
-This project serves as a **Proof of Concept** exploring the feasibility of using distributed, end-to-end encrypted messaging protocols as a resilient, albeit unconventional, storage layer. The following architecture was designed for this technical exploration and is not intended to encourage the misuse of any platform's services.
+This project serves as a **Proof of Concept** exploring the feasibility of using distributed, end-to-end encrypted messaging protocols as a resilient storage layer.
 
-The project is architected as a decoupled system where the Python backend handles all business logic and communication with the Telegram API, while a Vanilla JS frontend serves as a rich, interactive user interface. The `eel` library acts as the bridge between them.
+### 1. Hybrid Architecture (Python + Web Tech)
+Unlike the previous version which used Eel, this iteration leverages **PySide6** and **QWebEngine**. This provides a more stable, production-grade native window wrapper while keeping the flexibility of web technologies for UI design.
+-   **The Bridge:** A `Bridge` class acts as the intermediary, exposing Python methods to the JavaScript context via `QWebChannel`.
+-   **Facade Pattern:** The backend logic is encapsulated in a `TDriveService` facade, ensuring a clean separation of concerns between the UI logic and the core business services (`Auth`, `File`, `Transfer`).
 
-### 1. Asynchronous Core in a Synchronous GUI Framework
+### 2. Asyncio & Qt Integration
+Integrating Python's `asyncio` library with Qt's event loop is critical for a responsive UI.
+-   **Solution:** The project uses `qasync` to run the `asyncio` event loop on top of the Qt event loop. This allows non-blocking network operations (Telethon calls) to coexist with GUI updates on the same thread, eliminating common freezing issues found in synchronous GUI apps.
 
--   **Challenge:** The core of the application relies on `telethon`, an `asyncio`-based library, for all network operations. However, the GUI framework and file dialogs operate in a standard synchronous, multi-threaded environment. Integrating these two paradigms without blocking the UI was a primary challenge.
--   **Solution:** I implemented a robust concurrency model where an `asyncio` event loop runs in a dedicated background daemon thread. A thread-safe utility function (`run_coroutine_threadsafe`) is used to submit coroutines from the main thread to the event loop and wait for their results. For long-running tasks like transfers, tasks are created and scheduled on the loop without being awaited, allowing the UI to remain fully responsive.
-
-### 2. High-Performance, Hierarchical Transfer System
-
--   **Challenge:** Designing a transfer manager that can handle concurrent, cancellable, and hierarchical (folder) operations while providing real-time, granular feedback to the UI was the most complex feature to implement.
--   **Solution:**
-    -   **Concurrency Control:** An `asyncio.Semaphore` is used to strictly limit the number of concurrent uploads or downloads, preventing API rate-limiting issues and managing resource usage.
-    -   **Hierarchical Task Management:** When a folder download is initiated, the system first recursively fetches the entire file tree from the local database. It then creates a main "parent" task for the folder and individual "child" tasks for each file within it. The frontend UI subscribes to progress updates for both parent and child tasks, allowing it to render a nested progress view. The parent task's progress is dynamically aggregated from its children.
-    -   **Graceful Cancellation:** Transfer tasks are stored in a shared dictionary. The `cancel_transfer` function retrieves a task and calls its `cancel()` method. The running coroutine catches the `asyncio.CancelledError` to perform a graceful shutdown of that specific transfer.
-
-### 3. Data Integrity and Deduplication
-
--   **Challenge:** How to efficiently store file metadata and ensure that large files are uploaded reliably and without duplication.
--   **Solution:**
-    -   **Telegram as a Key-Value Store:** The application uses a private Telegram channel as a block storage backend. Large files are split into chunks, uploaded as individual messages, and their message IDs are stored. A central SQLite database file, which contains all file system metadata (names, hierarchy, chunk locations), is itself uploaded to the channel after every modification, acting as a single source of truth that can be synced on startup.
-    -   **Content-Defined Deduplication:** Before any upload, the file's SHA256 hash is calculated. If this hash already exists in the database, the system forgoes the upload entirely. Instead, it creates a new metadata entry that points to the existing set of message IDs, effectively creating an instant "copy" without using additional storage or bandwidth.
+### 3. Advanced Transfer Engine
+The transfer system has been completely refactored for reliability and performance.
+-   **Throttling & UI Performance:** High-speed transfers generate thousands of progress events per second. The backend implements a smart throttling mechanism (limiting updates to ~30ms) to prevent flooding the UI thread, ensuring smooth animations even during heavy loads.
+-   **State Machine:** A centralized `TransferController` manages the state of all tasks, handling complex scenarios like resuming interrupted folder uploads or cleaning up partial data upon cancellation.
+-   **Optimistic UI:** The frontend (`TransferManager.js` & `ActionHandler.js`) implements optimistic updates for immediate visual feedback while the backend processes the request.
 
 ## How to Run
 
@@ -69,20 +60,23 @@ The project is architected as a decoupled system where the Python backend handle
 3.  **Setup Virtual Environment:**
     ```bash
     python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    # Windows
+    venv\Scripts\activate
+    # Linux/Mac
+    source venv/bin/activate
     ```
 4.  **Install Dependencies:**
     ```bash
-    pip install eel telethon qrcode-art
+    pip install PySide6 telethon qasync qrcode-art
     ```
 5.  **Run the Application:**
     ```bash
-    python gui_main.py
+    python main.py
     ```
 
 ## Future Work
 
--   **Implement Dark Mode:** The UI framework is ready for a dark theme, which can be implemented for better user comfort.
--   **Global Pause/Resume:** Add functionality to pause and resume all transfers at once, not just individual items.
--   **Comprehensive Test Suite:** Develop a suite of unit and integration tests to ensure long-term stability and prevent regressions.
--   **Standalone Executable:** Package the application using a tool like PyInstaller to create a single-file executable for easy distribution on Windows, macOS, and Linux.
+-   **Global Search & Indexing:** Improve search capabilities with a local full-text search index.
+-   **File Sharing:** Implement a mechanism to share files publicly via Telegram links.
+-   **Theme Customization:** Add full support for dark/light mode switching.
+-   **CI/CD:** Automated builds for Windows (.exe) and macOS (.app).
