@@ -76,6 +76,8 @@ const ApiService = {
     // --- Native OS Dialogs ---
     selectDirectory: (title) => ApiService._callBridge('select_directory', title),
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),
+    showItemInFolder: (path) => ApiService._callBridge('show_item_in_folder', path),
+    checkLocalExists: (path) => ApiService._callBridge('check_local_exists', path),
 
     // --- File Transfers ---
     uploadFiles: (parentId, files) => ApiService._callBridge('upload_files', parentId, files),

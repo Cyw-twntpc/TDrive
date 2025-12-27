@@ -16,6 +16,7 @@ const TransferManager = {
     currentTab: 'uploads', 
     completedSort: { key: 'time', order: 'desc' },
     completedFilter: 'all',
+    _completedListDirty: true,
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -168,6 +169,10 @@ const TransferManager = {
             if (task.status !== newStatus) {
                 task.status = newStatus;
                 statusChanged = true;
+                // Mark completed list dirty if a task finishes or fails
+                if (['completed', 'failed'].includes(newStatus)) {
+                    this._completedListDirty = true;
+                }
             }
         }
         
@@ -239,8 +244,10 @@ const TransferManager = {
         allTasks.forEach(task => {
             if (task.status !== 'cancelled') {
                 totalSize += task.size;
-                totalProgress += (task.status === 'completed') ? task.size : task.progress;
-                if (['transferring', 'queued'].includes(task.status)) {
+                const currentProgress = (task.status === 'completed') ? task.size : task.progress;
+                totalProgress += currentProgress;
+                
+                if (['transferring', 'queued', 'starting_folder'].includes(task.status)) {
                     activeCount++;
                     currentSpeed += (task.speed || 0);
                     if (this.uploads.has(task.id)) activeUploads++;
@@ -308,7 +315,9 @@ const TransferManager = {
         if (this.currentTab === 'completed') {
             liveView.classList.add('hidden');
             completedView.classList.remove('hidden');
-            this._renderCompletedList();
+            if (this._completedListDirty) {
+                this._renderCompletedList();
+            }
             return;
         }
 
@@ -450,6 +459,7 @@ const TransferManager = {
         const el = document.createElement('div');
         el.className = 'task-card-lg';
         el.dataset.id = task.id;
+        el.dataset.type = task.type;
         const pathInfo = (task.type === 'upload') 
             ? `<i class="fas fa-file-upload"></i> ${task.localPath || '未知路徑'}` 
             : `<i class="fas fa-cloud-download-alt"></i> 下載至 ${task.localPath || '預設路徑'}`;
@@ -476,6 +486,7 @@ const TransferManager = {
         const el = document.createElement('div');
         el.className = 'task-card-failed';
         el.dataset.id = task.id;
+        el.dataset.type = task.type;
         el.innerHTML = `
             <div style="display:flex; align-items:center; gap:15px;">
                 <div style="color:var(--danger-color); font-size:20px;"><i class="fas fa-exclamation-circle"></i></div>
@@ -494,6 +505,7 @@ const TransferManager = {
         const el = document.createElement('div');
         el.className = 'task-card-queued';
         el.dataset.id = task.id;
+        el.dataset.type = task.type;
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
             <div class="queued-content"><div class="queued-name">${task.name}</div><div class="queued-size">${this.UIManager.formatBytes(task.size)}</div></div>
@@ -559,20 +571,66 @@ const TransferManager = {
             const row = document.createElement('div');
             row.className = 'history-item';
             const isUp = this.uploads.has(task.id);
+            row.dataset.type = isUp ? 'upload' : 'download';
             const cloudPath = isUp ? this._getCloudPath(task.parentFolderId) : '';
+            
+            // Validity Check (Synchronous for Uploads)
+            let isValid = true;
+            if (isUp) {
+                isValid = this.AppState.folderMap.has(task.parentFolderId);
+                if (!isValid) row.classList.add('item-invalid');
+            }
+
             row.innerHTML = `
                 <div class="sm-icon"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
-                <div class="sm-name">${task.name}<div style="font-size:12px; color:#9ca3af; margin-top:2px;">${isUp ? `上傳至: ${cloudPath}` : `下載至: ${task.localPath || '預設路徑'}`}</div></div>
+                <div class="sm-name">
+                    ${task.name}
+                    <div style="font-size:12px; color:#9ca3af; margin-top:2px;">
+                        ${isUp ? `上傳至: ${cloudPath}` : `下載至: ${task.localPath || '預設路徑'}`}
+                    </div>
+                </div>
                 <div class="sm-badge">${isUp ? '上傳成功' : '下載成功'}</div>
-                <a class="sm-action">${isUp ? '開啟' : '顯示位置'}</a>`;
+                <div class="history-actions">
+                    ${isUp 
+                        ? `<button class="icon-btn btn-go-cloud" title="${isValid ? '前往雲端位置' : '資料夾已不存在'}"><i class="fas fa-external-link-alt"></i></button>`
+                        : `<button class="icon-btn btn-reveal-local" title="在檔案總管中顯示"><i class="fas fa-folder-open"></i></button>`
+                    }
+                </div>`;
+            
             listEl.appendChild(row);
+
+            if (isUp) {
+                if (isValid) {
+                    row.querySelector('.btn-go-cloud').onclick = () => {
+                        if (window.switchPage) window.switchPage('files');
+                        if (window.navigateTo) window.navigateTo(task.parentFolderId);
+                    };
+                }
+            } else {
+                const btnReveal = row.querySelector('.btn-reveal-local');
+                btnReveal.onclick = () => {
+                    this.ApiService.showItemInFolder(task.localPath);
+                };
+                
+                // Validity Check (Asynchronous for Downloads)
+                this.ApiService.checkLocalExists(task.localPath).then(exists => {
+                    if (exists === false) {
+                        row.classList.add('item-invalid');
+                        btnReveal.title = "檔案已移除";
+                    }
+                });
+            }
         });
+        this._completedListDirty = false;
     },
     
     sortCompleted(key) {
         if (!['time', 'name'].includes(key)) return;
         if (this.completedSort.key === key) this.completedSort.order = (this.completedSort.order === 'asc') ? 'desc' : 'asc';
         else { this.completedSort.key = key; this.completedSort.order = 'desc'; }
+        
+        this._completedListDirty = true;
+
         document.querySelectorAll('.sort-item').forEach(el => {
             el.classList.toggle('active', el.dataset.sort === key);
             const icon = el.querySelector('i');
@@ -658,15 +716,20 @@ const TransferManager = {
             document.querySelector('.tabs-container .tab-item.active').classList.remove('active');
             btn.classList.add('active');
             this.currentTab = btn.dataset.tab;
+            if (this.currentTab === 'completed') this._completedListDirty = true;
             this.renderDashboard();
         }));
         document.querySelectorAll('.filter-segment').forEach(btn => btn.addEventListener('click', () => {
             document.querySelectorAll('.filter-segment').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             this.completedFilter = btn.dataset.filter;
+            this._completedListDirty = true;
             this._renderCompletedList();
         }));
         document.querySelectorAll('.sort-item').forEach(btn => btn.addEventListener('click', () => this.sortCompleted(btn.dataset.sort)));
+        
+        document.getElementById('btn-clear-completed')?.addEventListener('click', () => this.clearCompleted());
+
         document.getElementById('global-cancel-btn')?.addEventListener('click', () => this.cancelAll());
         document.getElementById('global-pause-btn')?.addEventListener('click', () => this.pauseAll());
         document.getElementById('retry-all-btn')?.addEventListener('click', () => this.resumeAll());

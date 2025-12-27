@@ -11,8 +11,9 @@
 /* Tabs Header */
 .dashboard-header {
     padding: 16px 20px 0 20px;
-    border-bottom: 1px solid var(--border-color);
     background-color: #fff;
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
     flex-shrink: 0;
 }
 
@@ -20,7 +21,7 @@
     display: flex;
     gap: 12px; 
     width: fit-content; 
-    margin-bottom: -1px; /* Overlap border-bottom */
+    margin-bottom: 0 !important;
 }
 
 .tab-item {
@@ -34,6 +35,7 @@
     position: relative;
     transition: all 0.2s;
     border-bottom: 3px solid transparent;
+    z-index: 10;
 }
 
 .tab-item:hover {
@@ -52,10 +54,12 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #f8f9fa;
+    background-color: #fff;
+    border-top: 1px solid var(--border-color);
     border-bottom: 1px solid var(--border-color);
     font-size: 13px;
     flex-shrink: 0;
+    margin-top: -1px;
 }
 
 .filters-group {
@@ -101,6 +105,18 @@
     border-bottom: 1px solid var(--border-color);
     gap: 16px;
     transition: background-color 0.1s;
+    border-left: 4px solid transparent;
+    background-color: #fff;
+}
+
+.transfer-item[data-type="upload"] {
+    border-left-color: var(--primary-color);
+    background: linear-gradient(to right, rgba(59, 130, 246, 0.03), transparent 30%);
+}
+
+.transfer-item[data-type="download"] {
+    border-left-color: var(--success-color);
+    background: linear-gradient(to right, rgba(16, 185, 129, 0.03), transparent 30%);
 }
 
 .transfer-item:hover {
@@ -235,6 +251,140 @@
 }
 .empty-state i { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 .empty-state p { font-size: 16px; }
+
+/* History (Completed Tasks) List */
+.history-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+    gap: 16px;
+    background-color: #fff;
+    border-left: 4px solid transparent;
+}
+
+.history-item[data-type="upload"] {
+    border-left-color: var(--primary-color);
+    background: linear-gradient(to right, rgba(59, 130, 246, 0.03), transparent 30%);
+}
+
+.history-item[data-type="download"] {
+    border-left-color: var(--success-color);
+    background: linear-gradient(to right, rgba(16, 185, 129, 0.03), transparent 30%);
+}
+
+.history-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* Invalid History Item (File/Folder Missing) */
+.history-item.item-invalid {
+    opacity: 0.6;
+    background-color: #f9fafb;
+    border-left-color: #d1d5db !important;
+    background: #f9fafb !important; /* Override gradients */
+}
+
+.history-item.item-invalid .history-actions .icon-btn {
+    pointer-events: none;
+    color: #ccc;
+    border-color: transparent;
+}
+
+.history-item .sm-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f0f4f8;
+    color: #64748b;
+    border-radius: 8px;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.history-item .sm-name {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-color);
+    line-height: 1.4;
+}
+
+.history-item .sm-badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background-color: #ecfdf5;
+    color: #10b981;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.history-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.history-actions .icon-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: var(--primary-color);
+    transition: all 0.2s;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+}
+
+.history-actions .icon-btn:hover {
+    background-color: #eef2f7;
+    border-color: #d1d5db;
+}
+
+/* Completed Filter Bar Styles */
+.completed-filter-bar {
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    background-color: #fff;
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+    flex-shrink: 0;
+    gap: 8px;
+}
+
+/* Clear Button Styling */
+#btn-clear-completed {
+    margin-left: auto;
+    border: 1px solid #fee2e2;
+    background-color: #fff;
+    color: #ef4444;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#btn-clear-completed:hover {
+    background-color: #fef2f2;
+    border-color: #fca5a5;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.btn-text-danger { display: none; }
 
 /* --- Sidebar Transfer Status (Restored) --- */
 .sidebar-transfer-status {

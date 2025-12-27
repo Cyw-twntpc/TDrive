@@ -182,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Fetch folder contents in a fire-and-forget manner. The view will be updated by the onFolderContentsReady callback.
         ApiService.getFolderContents(folderId, requestId);
     }
+    window.navigateTo = navigateTo;
 
     /**
      * Performs a full refresh of the application's data and UI.

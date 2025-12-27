@@ -94,7 +94,6 @@ def main():
         logger.warning(f"Could not set AppUserModelID. This may affect the taskbar icon on Windows. Error: {e}")
 
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    QApplication.setAttribute(Qt.AA_UseDesktopOpenGL) 
 
     app = QApplication(sys.argv)
     

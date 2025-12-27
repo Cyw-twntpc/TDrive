@@ -3,7 +3,8 @@ import logging
 import asyncio
 from PySide6.QtCore import QObject, Slot, Signal, QEventLoop as QtEventLoop
 from .main_service import TDriveService
-from .ui.gui_utils import core_select_files, core_select_directory
+from .ui.gui_utils import core_select_files, core_select_directory, reveal_in_explorer
+from core_app.services.utils import check_path_exists
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,16 @@ class Bridge(QObject):
     @Slot(result=str)
     def get_os_sep(self):
         return os.sep
+
+    @Slot(str, result=bool)
+    def show_item_in_folder(self, path):
+        """Slot to reveal a local file in Windows Explorer."""
+        return reveal_in_explorer(path)
+
+    @Slot(str, result=bool)
+    def check_local_exists(self, path):
+        """Slot to check if a local file exists."""
+        return check_path_exists(path)
 
     # --- Authentication Service Slots ---
     @Slot(int, str, result=dict)

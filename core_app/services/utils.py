@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import threading
+import os
 from typing import TYPE_CHECKING, Optional
 from telethon import TelegramClient
 
@@ -112,4 +113,8 @@ async def trigger_db_upload_in_background(shared_state: 'SharedState'):
     shared_state.db_upload_timer = threading.Timer(2.0, lambda: _upload_db(shared_state))
     shared_state.db_upload_timer.start()
     logger.debug("Scheduled a new database upload in 2 seconds.")
+
+def check_path_exists(path: str) -> bool:
+    """Checks if a local file path exists."""
+    return os.path.exists(path)
 
