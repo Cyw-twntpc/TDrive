@@ -106,8 +106,12 @@ class FileService:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
         
         try:
-            db = DatabaseHandler()
-            db.add_folder(parent_id, folder_name)
+            def _sync_create():
+                db = DatabaseHandler()
+                db.add_folder(parent_id, folder_name)
+            
+            await asyncio.to_thread(_sync_create)
+            
             logger.info(f"Successfully created folder '{folder_name}' under parent_id {parent_id}.")
             # After a structural change, trigger a database backup to the cloud.
             await utils.trigger_db_upload_in_background(self.shared_state)
@@ -126,11 +130,14 @@ class FileService:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
             
         try:
-            db = DatabaseHandler()
-            if item_type == 'folder':
-                db.rename_folder(item_id, new_name)
-            else:
-                db.rename_file(item_id, new_name)
+            def _sync_rename():
+                db = DatabaseHandler()
+                if item_type == 'folder':
+                    db.rename_folder(item_id, new_name)
+                else:
+                    db.rename_file(item_id, new_name)
+            
+            await asyncio.to_thread(_sync_rename)
             
             logger.info(f"Successfully renamed {item_type} with id {item_id} to '{new_name}'.")
             await utils.trigger_db_upload_in_background(self.shared_state)
@@ -153,13 +160,18 @@ class FileService:
 
         all_message_ids_to_delete = []
         try:
-            db = DatabaseHandler()
-            # First, remove items from the local database and collect all remote message_ids.
-            for item in items:
-                item_id, item_type = item['id'], item['type']
-                deleted_ids = db.remove_folder(item_id) if item_type == 'folder' else db.remove_file(item_id)
-                all_message_ids_to_delete.extend(deleted_ids)
-                logger.info(f"Marked {item_type} id {item_id} for deletion from database.")
+            def _sync_delete():
+                db = DatabaseHandler()
+                ids_to_del = []
+                for item in items:
+                    item_id, item_type = item['id'], item['type']
+                    deleted_ids = db.remove_folder(item_id) if item_type == 'folder' else db.remove_file(item_id)
+                    ids_to_del.extend(deleted_ids)
+                    logger.info(f"Marked {item_type} id {item_id} for deletion from database.")
+                return ids_to_del
+
+            # Run DB operations in thread
+            all_message_ids_to_delete = await asyncio.to_thread(_sync_delete)
             
             # After all DB changes are done, trigger a single DB upload.
             await utils.trigger_db_upload_in_background(self.shared_state)
@@ -198,16 +210,19 @@ class FileService:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
 
         try:
-            db = DatabaseHandler()
-            moved_count = 0
-            
-            for item in items:
-                item_id, item_type = item['id'], item['type']
-                if item_type == 'folder':
-                    db.move_folder(item_id, target_folder_id)
-                else:
-                    db.move_file(item_id, target_folder_id)
-                moved_count += 1
+            def _sync_move():
+                db = DatabaseHandler()
+                count = 0
+                for item in items:
+                    item_id, item_type = item['id'], item['type']
+                    if item_type == 'folder':
+                        db.move_folder(item_id, target_folder_id)
+                    else:
+                        db.move_file(item_id, target_folder_id)
+                    count += 1
+                return count
+
+            moved_count = await asyncio.to_thread(_sync_move)
                 
             await utils.trigger_db_upload_in_background(self.shared_state)
             return {"success": True, "message": f"成功移動 {moved_count} 個項目。"}

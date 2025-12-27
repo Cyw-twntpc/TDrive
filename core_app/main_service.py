@@ -16,16 +16,12 @@ class TDriveService:
     """
     Acts as a Façade for all backend services, providing a single, unified
     interface for the UI layer (via the Bridge) to interact with.
-
-    It aggregates all sub-services (auth, file, folder, transfer) and exposes
-    their functionalities. It's also responsible for orchestrating calls that
-    span multiple services.
+    Refactored to include a progress adapter for the new TransferService logic.
     """
     def __init__(self, loop: asyncio.AbstractEventLoop = None):
         logger.info("Initializing TDriveService...")
         self._shared_state = SharedState()
         
-        # The service must run on the same event loop as the Qt application.
         if loop:
             self._shared_state.loop = loop
             logger.info(f"TDriveService is using the provided event loop: {loop}")
@@ -33,57 +29,84 @@ class TDriveService:
             try:
                 self._shared_state.loop = asyncio.get_running_loop()
             except RuntimeError:
-                logger.warning("No running event loop found and none was provided. "
-                               "Creating a new one, but this may lead to issues in a threaded environment.")
+                logger.warning("No running event loop found. Creating a new one.")
                 self._shared_state.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._shared_state.loop)
 
+        # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
         self._file_service = FileService(self._shared_state)
         self._folder_service = FolderService(self._shared_state)
-        self._transfer_service = TransferService(self._shared_state)
-        self._transfer_service.monitor = TransferMonitorService()
+        self._monitor_service = TransferMonitorService()
+        self._transfer_service = TransferService(self._shared_state, self._monitor_service)
 
-        logger.info("TDriveService initialized successfully.")
-
-    def _create_progress_adapter(self, signal_emitter: Callable) -> Callable:
+    # --- Helper: Progress Adapter ---
+    
+    def _create_progress_adapter(self, bridge_emit_signal: Callable):
         """
-        Creates an adapter function to transform backend progress arguments
-        into a dictionary format expected by the frontend.
-        Also injects global traffic stats.
-        """
-        # 使用 closure 變數來記錄每個任務上一次發送訊號的時間
-        last_emit_time = {} 
+        Creates an adapter function that normalizes the variable arguments from 
+        TransferService callbacks into a standard dictionary for the Bridge signal.
         
-        def adapter(task_id, name, progress, total, status, speed, message=None, **kwargs):
+        Handles two types of calls from TransferService:
+        1. Initialization/Status Change: (task_id, name, transferred, total, status, speed, is_folder=False, message=None)
+        2. Delta Update: (task_id, delta_bytes, speed)
+        
+        [Updated] Includes throttling (30ms) to prevent UI thread flooding.
+        """
+        last_emit_time = {}
+
+        def adapter(*args, **kwargs):
             current_time = time.time()
+            data = {}
+            should_emit = True
+            task_id = args[0]
 
-            should_emit = (
-                status != 'transferring' or 
-                task_id not in last_emit_time or 
-                (current_time - last_emit_time[task_id] >= 0.03)
-            )
+            # Type 1: Initialization or Full Status Update
+            # args: (task_id, name, transferred, total, status, speed)
+            if len(args) >= 5: 
+                status = args[4]
+                # Always emit significant status changes
+                if status in ['completed', 'failed', 'cancelled', 'starting_folder', 'queued', 'paused']:
+                    should_emit = True
+                    if status in ['completed', 'failed', 'cancelled']:
+                        last_emit_time.pop(task_id, None) # Cleanup
+                else:
+                    # Throttle 'transferring' updates if they come as full state
+                    if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
+                        should_emit = False
+                
+                if should_emit:
+                    data = {
+                        "id": args[0],
+                        "name": args[1],
+                        "transferred": args[2],
+                        "total": args[3],
+                        "status": args[4],
+                        "speed": args[5],
+                        "is_folder": kwargs.get("is_folder", False),
+                        "error_message": kwargs.get("message", ""),
+                        "todayTraffic": self._monitor_service.get_today_traffic()
+                    }
 
-            if should_emit:
+            # Type 2: Delta Update (Progress)
+            # args: (task_id, delta_bytes, speed)
+            elif len(args) == 3:
+                # Throttle delta updates
+                if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
+                    should_emit = False
+                else:
+                    data = {
+                        "id": args[0],
+                        "delta": args[1],     # Bytes transferred since last update
+                        "speed": args[2],     # Current speed
+                        "status": "transferring",
+                        "todayTraffic": self._monitor_service.get_today_traffic()
+                    }
+            
+            if should_emit and data:
                 last_emit_time[task_id] = current_time
-                
-                if status in ['completed', 'failed', 'cancelled']:
-                    last_emit_time.pop(task_id, None)
-
-                data = {
-                    "id": task_id,
-                    "name": name,
-                    "progress": progress,
-                    "size": total,
-                    "status": status,
-                    "speed": speed,
-                    "todayTraffic": self._transfer_service.monitor.get_today_traffic()
-                }
-                if message:
-                    data["message"] = message
-                
-                data.update(kwargs)
-                signal_emitter(data)
-                
+                bridge_emit_signal(data)
+        
         return adapter
 
     def _schedule_background_task(self, coro):
@@ -127,7 +150,6 @@ class TDriveService:
                 logger.error(f"Error during Telegram client disconnection: {e}", exc_info=True)
 
         logger.info("TDriveService has been closed.")
-
 
     # --- Authentication Service ---
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
@@ -188,53 +210,41 @@ class TDriveService:
 
     # --- Transfer Service ---
     def get_today_traffic_stats(self) -> int:
-        return self._transfer_service.monitor.get_today_traffic()
+        return self._monitor_service.get_today_traffic()
 
-    def upload_files(self, parent_id: int, local_paths: List[Dict], progress_callback: Callable) -> Dict[str, Any]:
-        """
-        Initiates file uploads as background tasks.
-        """
-        adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.upload_files(parent_id, local_paths, adapter_callback)
+    def upload_files(self, parent_id: int, files: List[Dict], progress_callback: Callable) -> Dict[str, Any]:
+        """Initiates file uploads."""
+        adapter = self._create_progress_adapter(progress_callback)
+        task_coro = self._transfer_service.upload_files(parent_id, files, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Upload tasks have been started."}
+        return {"success": True, "message": "Upload started"}
 
-    def upload_folder(self, parent_id: int, folder_path: str, progress_callback: Callable) -> Dict[str, Any]:
-        """
-        Initiates a recursive folder upload as a background task.
-        """
-        adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, adapter_callback)
+    def upload_folder(self, parent_id: int, folder_path: str, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
+        """Initiates folder upload."""
+        adapter = self._create_progress_adapter(progress_callback)
+        task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, task_id, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Folder upload task started."}
+        return {"success": True, "message": "Folder upload started"}
 
     def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable) -> Dict[str, Any]:
-        """
-        Initiates item downloads as background tasks.
-        """
-        adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.download_items(items, destination_dir, adapter_callback)
+        """Initiates item downloads."""
+        adapter = self._create_progress_adapter(progress_callback)
+        task_coro = self._transfer_service.download_items(items, destination_dir, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Download tasks have been started."}
+        return {"success": True, "message": "Download started"}
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
-        """Permanently cancels and removes a transfer."""
         return self._transfer_service.cancel_transfer(task_id)
 
     def pause_transfer(self, task_id: str) -> Dict[str, Any]:
-        """Pauses a transfer without removing it from state."""
         self._transfer_service.pause_transfer(task_id)
         return {"success": True, "message": "Task paused."}
 
     def resume_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
-        """
-        Resumes a paused or failed transfer.
-        """
-        adapter_callback = self._create_progress_adapter(progress_callback)
-        task_coro = self._transfer_service.resume_transfer(task_id, adapter_callback)
+        adapter = self._create_progress_adapter(progress_callback)
+        task_coro = self._transfer_service.resume_transfer(task_id, adapter)
         self._schedule_background_task(task_coro)
         return {"success": True, "message": "Resuming transfer..."}
 
-    def get_incomplete_transfers(self) -> Dict[str, Any]:
-        """Retrieves list of paused/failed transfers for startup."""
+    def get_incomplete_transfers(self) -> Dict[str, Dict]:
         return self._transfer_service.controller.get_incomplete_transfers()

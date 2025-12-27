@@ -3,19 +3,14 @@ import os
 import time
 import threading
 import logging
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 class TransferController:
     """
-    Manages the persistent state of file transfers (uploads/downloads) to support
-    resume functionality (斷點續傳).
-    
-    Features:
-    - Thread-safe access using RLock.
-    - Atomic writes to prevent JSON corruption.
-    - REAL-TIME SAVING: Every state change is immediately flushed to disk.
+    Manages the persistent state of file transfers (uploads/downloads).
+    Refactored to support nested folder structures and atomic state updates.
     """
     
     STATE_FILE = os.path.join("file", "transfer_state.json")
@@ -41,26 +36,16 @@ class TransferController:
             try:
                 with open(self.STATE_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    # Basic schema validation
                     self._state["uploads"] = data.get("uploads", {})
                     self._state["downloads"] = data.get("downloads", {})
                 
-                # Patch legacy data: ensure transferred_parts exists
-                for t in self._state["uploads"].values():
-                    if "transferred_parts" not in t: t["transferred_parts"] = []
-                for t in self._state["downloads"].values():
-                    if "transferred_parts" not in t: t["transferred_parts"] = []
-
-                logger.info(f"Loaded {len(self._state['uploads'])} uploads and {len(self._state['downloads'])} downloads from state file.")
+                logger.info(f"Loaded {len(self._state['uploads'])} uploads and {len(self._state['downloads'])} downloads.")
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"Failed to load transfer state file: {e}. Starting with empty state.")
-                # If file is corrupted, we might want to backup it or just reset.
-                # Here we strictly stick to memory reset to avoid crashing.
 
     def _save_state(self):
         """
         Saves the current state to disk atomically.
-        No throttling is applied; writes happen immediately.
         """
         with self._lock:
             try:
@@ -68,117 +53,215 @@ class TransferController:
                 with open(temp_file, 'w', encoding='utf-8') as f:
                     json.dump(self._state, f, indent=2, ensure_ascii=False)
                 
-                # Atomic replacement
                 os.replace(temp_file, self.STATE_FILE)
             except IOError as e:
                 logger.error(f"Failed to save transfer state: {e}")
 
-    # --- Task Management ---
+    # --- Task Registration ---
 
     def add_upload_task(self, task_id: str, file_path: str, parent_id: int, 
-                        total_size: int, file_hash: str, split_files_info: List = None):
-        """Registers a new upload task."""
+                        total_size: int, is_folder: bool = False, 
+                        file_hash: str = None):
+        """
+        Registers a new upload task (File or Folder).
+        """
         with self._lock:
             now = time.time()
-            existing = self._state["uploads"].get(task_id)
-            transferred_parts = existing["transferred_parts"] if existing else []
-            # Merge split_files_info if existing
-            current_split_info = split_files_info or []
-            if existing and existing.get("split_files_info"):
-                 # Simple merge strategy: prefer existing if not provided
-                 if not current_split_info:
-                     current_split_info = existing["split_files_info"]
-
-            self._state["uploads"][task_id] = {
+            task_data = {
                 "type": "upload",
+                "is_folder": is_folder,
                 "file_path": file_path,
                 "parent_id": parent_id,
                 "total_size": total_size,
-                "transferred_parts": transferred_parts,
                 "status": "queued",
-                "file_hash": file_hash, # Essential for key generation on resume
-                "split_files_info": current_split_info,
-                "created_at": existing["created_at"] if existing else now,
+                "created_at": now,
                 "updated_at": now
             }
+
+            if is_folder:
+                task_data["child_tasks"] = {} # Structure: {sub_task_id: {sub_task_data}}
+            else:
+                task_data["file_hash"] = file_hash
+                task_data["transferred_parts"] = []
+                task_data["split_files_info"] = []
+
+            self._state["uploads"][task_id] = task_data
             self._save_state()
 
     def add_download_task(self, task_id: str, db_id: int, save_path: str, 
-                          total_size: int, file_details: Dict):
-        """Registers a new download task."""
+                          total_size: int, is_folder: bool = False,
+                          file_details: Dict = None):
+        """
+        Registers a new download task (File or Folder).
+        """
         with self._lock:
             now = time.time()
-            existing = self._state["downloads"].get(task_id)
-            transferred_parts = existing["transferred_parts"] if existing else []
-
-            self._state["downloads"][task_id] = {
+            task_data = {
                 "type": "download",
-                "db_id": db_id,
-                "save_path": save_path,
+                "is_folder": is_folder,
+                "db_id": db_id, # Source Cloud ID
+                "save_path": save_path, # Local Destination
                 "total_size": total_size,
-                "transferred_parts": transferred_parts,
                 "status": "queued",
-                "file_details": file_details, # Essential to avoid DB lookup on resume
-                "created_at": existing["created_at"] if existing else now,
+                "created_at": now,
                 "updated_at": now
             }
+
+            if is_folder:
+                task_data["child_tasks"] = {}
+            else:
+                task_data["file_details"] = file_details # Contains hash, chunks info
+                task_data["transferred_parts"] = []
+            
+            self._state["downloads"][task_id] = task_data
             self._save_state()
 
-    def update_progress(self, task_id: str, part_num: int, extra_info: Any = None):
+    def add_child_tasks_bulk(self, main_task_id: str, direction: str, child_tasks_map: Dict[str, Dict]):
         """
-        Updates the progress of a task and SAVES IMMEDIATELY.
+        Bulk adds child tasks to a folder task.
         
         Args:
-            task_id: The UUID of the task.
-            part_num: The part number that was just completed.
-            extra_info: For uploads, this is the [part_num, msg_id, hash] list item.
+            main_task_id: The UUID of the main folder task.
+            direction: 'upload' or 'download'.
+            child_tasks_map: A dictionary mapping sub_task_id to child task properties.
+                             Example: { 'uuid-1': { 'file_path': '...', 'status': 'queued', ... } }
         """
         with self._lock:
-            # Check uploads
-            task = self._state["uploads"].get(task_id) or self._state["downloads"].get(task_id)
+            group = self._state["uploads"] if direction == "upload" else self._state["downloads"]
+            task = group.get(main_task_id)
             
-            if not task:
-                logger.warning(f"Attempted to update progress for unknown task: {task_id}")
+            if not task or not task.get("is_folder"):
+                logger.warning(f"Cannot add child tasks: Main task {main_task_id} not found or is not a folder.")
                 return
 
-            if part_num not in task["transferred_parts"]:
-                task["transferred_parts"].append(part_num)
-                # Keep it sorted for easier debugging/logic
-                task["transferred_parts"].sort()
+            # Initialize defaults for children if not present
+            for sub_id, sub_data in child_tasks_map.items():
+                if "transferred_parts" not in sub_data:
+                    sub_data["transferred_parts"] = []
+                if "status" not in sub_data:
+                    sub_data["status"] = "queued"
+                
+                # For uploads, ensure split_files_info exists
+                if direction == "upload" and "split_files_info" not in sub_data:
+                    sub_data["split_files_info"] = []
 
-            # For uploads, we need to accumulate the Telegram message info
+            task["child_tasks"].update(child_tasks_map)
+            self._save_state()
+
+    # --- Progress Updates ---
+
+    def update_progress(self, main_task_id: str, sub_task_id: str, part_num: int, extra_info: Any = None):
+        """
+        Updates the progress of a specific sub-task (or main task if single file).
+        
+        Args:
+            main_task_id: The top-level task ID.
+            sub_task_id: The actual task ID being updated (same as main_task_id for single files).
+            part_num: The completed part number.
+            extra_info: [message_id, part_hash] for uploads.
+        """
+        with self._lock:
+            # Find the task
+            task = self._state["uploads"].get(main_task_id) or self._state["downloads"].get(main_task_id)
+            if not task:
+                return
+
+            target_data = None
+            
+            # Determine if we are updating the main task or a child task
+            if main_task_id == sub_task_id:
+                target_data = task
+            elif task.get("is_folder") and "child_tasks" in task:
+                target_data = task["child_tasks"].get(sub_task_id)
+
+            if not target_data:
+                logger.warning(f"Target task data not found for update: Main={main_task_id}, Sub={sub_task_id}")
+                return
+
+            # Update transferred parts
+            if part_num not in target_data["transferred_parts"]:
+                target_data["transferred_parts"].append(part_num)
+                # target_data["transferred_parts"].sort() # Optional: Sort only when needed to save perf
+
+            # Update metadata (Upload specific)
             if task["type"] == "upload" and extra_info:
-                # extra_info expected to be [part_num, message_id, part_hash]
-                # Avoid duplicates
+                # extra_info is expected to be [message_id, part_hash]
+                # We store [part_num, message_id, part_hash]
+                record = [part_num, extra_info[0], extra_info[1]]
+                
+                # Deduplication check
                 exists = False
-                for item in task["split_files_info"]:
-                    if item[0] == extra_info[0]: # Same part num
+                for item in target_data["split_files_info"]:
+                    if item[0] == part_num:
                         exists = True
                         break
                 if not exists:
-                    task["split_files_info"].append(extra_info)
-                    # Sort by part number
-                    task["split_files_info"].sort(key=lambda x: x[0])
+                    # Optimize: Only sort if necessary
+                    if not target_data["split_files_info"] or part_num > target_data["split_files_info"][-1][0]:
+                        target_data["split_files_info"].append(record)
+                    else:
+                        target_data["split_files_info"].append(record)
+                        target_data["split_files_info"].sort(key=lambda x: x[0])
 
+            # Update status markers
             task["updated_at"] = time.time()
-            if task.get("status") in ["queued", "transferring"]:
+            if task["status"] == "queued":
                 task["status"] = "transferring"
             
-            # Save immediately (Real-time requirement)
+            # For child tasks, ensure they are marked as completed if needed? 
+            # Ideally, the service layer handles completion logic, but we can set 'transferring' here.
+            if target_data.get("status") == "queued":
+                target_data["status"] = "transferring"
+
             self._save_state()
 
+    def mark_sub_task_completed(self, main_task_id: str, sub_task_id: str):
+        """Marks a specific sub-task (or single file task) as completed."""
+        with self._lock:
+            task = self._state["uploads"].get(main_task_id) or self._state["downloads"].get(main_task_id)
+            if not task: return
+
+            if main_task_id == sub_task_id:
+                task["status"] = "completed"
+            elif task.get("is_folder"):
+                child = task["child_tasks"].get(sub_task_id)
+                if child: child["status"] = "completed"
+            
+            task["updated_at"] = time.time()
+            self._save_state()
+
+    def mark_sub_task_failed(self, main_task_id: str, sub_task_id: str, error_msg: str):
+        with self._lock:
+            task = self._state["uploads"].get(main_task_id) or self._state["downloads"].get(main_task_id)
+            if not task: return
+
+            if main_task_id == sub_task_id:
+                task["status"] = "failed"
+                task["error_message"] = error_msg
+            elif task.get("is_folder"):
+                child = task["child_tasks"].get(sub_task_id)
+                if child: 
+                    child["status"] = "failed"
+                    child["error_message"] = error_msg
+            
+            # If a child fails, we might generally mark the main task as 'failed' or keep it 'transferring'
+            # depending on policy. For now, we update the main task timestamp.
+            task["updated_at"] = time.time()
+            self._save_state()
+
+    # --- State Management ---
+
     def mark_paused(self, task_id: str):
-        """Marks a task as paused. Saved immediately."""
+        """Marks a main task as paused."""
         with self._lock:
             task = self._state["uploads"].get(task_id) or self._state["downloads"].get(task_id)
             if task:
                 task["status"] = "paused"
                 task["updated_at"] = time.time()
                 self._save_state()
-                logger.info(f"Task {task_id} marked as paused.")
 
     def mark_failed(self, task_id: str, error_msg: str = ""):
-        """Marks a task as failed. Saved immediately."""
+        """Marks a main task as failed."""
         with self._lock:
             task = self._state["uploads"].get(task_id) or self._state["downloads"].get(task_id)
             if task:
@@ -188,48 +271,51 @@ class TransferController:
                 self._save_state()
 
     def mark_resumed(self, task_id: str):
-        """
-        Explicitly marks a task as queued/resumed.
-        This is required so that update_progress knows it's allowed to update the status.
-        """
+        """Marks a main task as queued (ready to resume)."""
         with self._lock:
-            # 檢查 Uploads
-            if task_id in self._state["uploads"]:
-                self._state["uploads"][task_id]["status"] = "queued"
-                self._save_state()
-            # 檢查 Downloads
-            elif task_id in self._state["downloads"]:
-                self._state["downloads"][task_id]["status"] = "queued"
+            task = self._state["uploads"].get(task_id) or self._state["downloads"].get(task_id)
+            if task:
+                task["status"] = "queued"
                 self._save_state()
 
     def remove_task(self, task_id: str):
-        """Permanently removes a task (e.g., completed or cancelled). Saved immediately."""
+        """Permanently removes a task."""
         with self._lock:
             if task_id in self._state["uploads"]:
                 del self._state["uploads"][task_id]
             elif task_id in self._state["downloads"]:
                 del self._state["downloads"][task_id]
-            
             self._save_state()
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieves task details by ID."""
         with self._lock:
             return self._state["uploads"].get(task_id) or self._state["downloads"].get(task_id)
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:
-        """Returns all tasks that are not implicitly 'removed' (so effectively all in the file)."""
         with self._lock:
-            # Return a copy to prevent external modification
             return {
                 "uploads": json.loads(json.dumps(self._state["uploads"])),
                 "downloads": json.loads(json.dumps(self._state["downloads"]))
             }
 
+    def set_file_hash(self, main_task_id: str, sub_task_id: str, file_hash: str):
+        """Updates the file_hash for an upload task or sub-task."""
+        with self._lock:
+            task = self._state["uploads"].get(main_task_id)
+            if not task: return
+
+            if main_task_id == sub_task_id:
+                task["file_hash"] = file_hash
+            elif task.get("is_folder") and "child_tasks" in task:
+                child = task["child_tasks"].get(sub_task_id)
+                if child:
+                    child["file_hash"] = file_hash
+            
+            self._save_state()
+
     def reset_zombie_tasks(self):
         """
         Called on startup. Marks 'transferring' tasks as 'paused'.
-        This handles cases where the app crashed or was killed.
         """
         with self._lock:
             changed = False
@@ -238,6 +324,16 @@ class TransferController:
                     if task["status"] == "transferring":
                         task["status"] = "paused"
                         changed = True
+                    
+                    # Also reset active child tasks if necessary
+                    if task.get("is_folder"):
+                        for child in task.get("child_tasks", {}).values():
+                             if child.get("status") == "transferring":
+                                 # We don't necessarily need a 'paused' state for children, 
+                                 # but setting it helps logic consistency.
+                                 # Or we can just leave them, as the main task pause is enough.
+                                 pass 
+
             if changed:
                 self._save_state()
                 logger.info("Reset zombie tasks to 'paused' state.")

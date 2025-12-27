@@ -14,7 +14,6 @@ from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
 from core_app.services.monitor_service import TransferMonitorService
-from core_app.api.file_processor import CHUNK_SIZE
 from core_app.api import file_processor as fp
 
 logger = logging.getLogger(__name__)
@@ -24,262 +23,259 @@ CONCURRENCY_LIMIT = 3
 class TransferService:
     """
     Manages all time-consuming file upload and download tasks.
-    Supports Resume (斷點續傳), Pause, and Cancel operations via TransferController.
+    Refactored to separate structure creation from file transfer execution,
+    and includes robust cancellation cleanup logic.
     """
-    def __init__(self, shared_state: 'SharedState'):
+    def __init__(self, shared_state: 'SharedState', monitor_service: Optional[TransferMonitorService] = None):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
-        self.monitor = TransferMonitorService()
+        self.monitor = monitor_service if monitor_service else TransferMonitorService()
         self.controller = TransferController()
         
-        # Global semaphore for resumed tasks to prevent flooding
-        self._resume_semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+        # Global semaphore for tasks to prevent flooding
+        self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
         # Reset any tasks that were 'transferring' when the app crashed
         self.controller.reset_zombie_tasks()
 
+    # --- UPLOAD OPERATIONS ---
+
     async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], progress_callback: Callable):
         """
-        Entry point for new file uploads.
+        Entry point for selecting and uploading multiple separate files.
         """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("Upload cannot start: client is not connected.")
+            logger.error("Upload failed: Client not connected.")
             for item in upload_items:
-                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗，無法開始上傳。")
+                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗")
             return
-        
-        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-        
+
         tasks_to_run = []
         for item in upload_items:
+            task_id = item['task_id']
+            file_path = item['local_path']
+            file_name = os.path.basename(file_path)
+            
+            try:
+                total_size = os.path.getsize(file_path)
+            except OSError:
+                total_size = 0
+
+            # Register Single File Task
+            self.controller.add_upload_task(
+                task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None
+            )
+
+            # [FIXED] Send initial update to frontend to sync Total Size immediately
+            progress_callback(task_id, file_name, 0, total_size, 'queued', 0, is_folder=False)
+
             tasks_to_run.append(
                 self._upload_single_file(
-                    client, parent_id, item['local_path'], item['task_id'], semaphore, progress_callback,
-                    parent_task_id=item.get('parent_task_id') # Pass parent_task_id if present
+                    client, task_id, task_id, # main_id == sub_id for single files
+                    file_path, parent_id,
+                    progress_callback
                 )
             )
             
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
-        # self.monitor.close() 
 
-    async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, progress_callback: Callable):
+    async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
         """
-        Recursively uploads a folder and its contents.
-        1. Scans for total size/count.
-        2. Notifies frontend of the main folder task.
-        3. Walks the tree, creating DB folders and batch uploading files.
+        Recursive folder upload:
+        1. Pre-scan structure and create remote folders.
+        2. Bulk register all tasks.
+        3. Execute file uploads.
         """
         base_folder_name = os.path.basename(local_folder_path)
-        if not base_folder_name:
-            base_folder_name = os.path.basename(os.path.dirname(local_folder_path))
+        
+        logger.info(f"Starting folder upload: '{local_folder_path}' (Task: {main_task_id})")
 
-        logger.info(f"Starting recursive upload for local folder: '{local_folder_path}' to remote parent_id: {parent_id}")
-
-        # --- Phase 1: Pre-scan (Dry Run) ---
+        # --- Phase 1: Pre-scan & Structure Creation ---
         total_size = 0
-        total_files = 0
-        file_paths_to_upload = [] # Store file paths for later
-        for root, _, files in os.walk(local_folder_path):
+        file_list = [] # List of (local_path, file_size)
+        
+        # 1. Calculate Total Size & Gather File List
+        for root, dirs, files in os.walk(local_folder_path):
             for f in files:
-                full_file_path = os.path.join(root, f)
-                file_paths_to_upload.append(full_file_path)
+                full_path = os.path.join(root, f)
                 try:
-                    total_size += os.path.getsize(full_file_path)
-                except OSError as e:
-                    logger.warning(f"Could not get size for '{full_file_path}': {e}. Skipping size in total.")
-        total_files = len(file_paths_to_upload)
-        logger.info(f"Pre-scan complete: {total_files} files, total size: {total_size} bytes.")
+                    f_size = os.path.getsize(full_path)
+                    total_size += f_size
+                    file_list.append((full_path, f_size))
+                except OSError:
+                    pass
 
-
-        main_task_id = str(uuid.uuid4())
-        
-        # Notify frontend: Main Folder Task Started
-        # 'starting_folder' status tells frontend to create a folder card
-        progress_callback(
-            main_task_id, base_folder_name, 0, total_size, 'starting_folder', 0, 
-            total_files=total_files, is_folder=True, type='upload' # Explicitly mark as upload
+        # 2. Register Main Folder Task
+        self.controller.add_upload_task(
+            main_task_id, local_folder_path, parent_id, total_size, is_folder=True
         )
-        logger.debug(f"Frontend notified for main folder task: {main_task_id} ('{base_folder_name}')")
 
-        # --- Phase 2: Execution ---
+        # Notify Frontend: Task Created
+        progress_callback(main_task_id, base_folder_name, 0, total_size, 'queued', 0, is_folder=True)
+
         loop = asyncio.get_running_loop()
-        
-        # Create root folder in DB
-        root_id = None
-        try:
-            root_id = await loop.run_in_executor(None, self.db.add_folder, parent_id, base_folder_name)
-            logger.info(f"Created remote root folder '{base_folder_name}' with ID: {root_id}")
-        except errors.ItemAlreadyExistsError:
-            # If exists, find it to merge
-            logger.info(f"Remote root folder '{base_folder_name}' already exists. Attempting to retrieve ID.")
-            existing = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
-            found = next((f for f in existing['folders'] if f['name'] == base_folder_name), None)
-            if found:
-                root_id = found['id']
-                logger.info(f"Retrieved existing remote root folder '{base_folder_name}' with ID: {root_id}")
-            else:
-                logger.error(f"Folder '{base_folder_name}' reported as existing but not found in parent {parent_id}. Contents: {[f['name'] for f in existing['folders']]}")
-            
-        if not root_id:
-            msg = "無法建立或存取根資料夾(已存在但無法讀取)。"
-            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=msg)
-            logger.error(f"Folder upload for '{local_folder_path}' failed: {msg}")
+        client = await utils.ensure_client_connected(self.shared_state)
+        if not client: 
+            self.controller.mark_failed(main_task_id, "Client disconnected")
+            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message="連線失敗")
             return
 
-        path_to_id_map = {local_folder_path: root_id}
-
-        # 2. Walk the directory
         try:
-            for root, dirs, files in os.walk(local_folder_path):
-                logger.debug(f"Processing local directory: '{root}'")
-                current_remote_id = path_to_id_map.get(root)
-                if current_remote_id is None:
-                    logger.warning(f"Skipping '{root}' and its contents because remote parent ID is missing. This should not happen.")
-                    continue
+            # 3. Create DB Structure (BFS/DFS) and Map Paths to Remote IDs
+            # Create Root Folder
+            try:
+                root_remote_id = await loop.run_in_executor(None, self.db.add_folder, parent_id, base_folder_name)
+            except errors.ItemAlreadyExistsError:
+                existing = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
+                found = next((f for f in existing['folders'] if f['name'] == base_folder_name), None)
+                if found:
+                    root_remote_id = found['id']
+                else:
+                    raise Exception("Folder exists but cannot be found.")
 
-                # Create subdirectories
-                for dir_name in dirs:
-                    full_dir_path = os.path.join(root, dir_name)
-                    new_folder_id = None
+            path_to_remote_id = {local_folder_path: root_remote_id}
+            
+            for root, dirs, _ in os.walk(local_folder_path):
+                current_remote_id = path_to_remote_id.get(root)
+                if current_remote_id is None: continue
+
+                for d in dirs:
+                    local_dir_path = os.path.join(root, d)
                     try:
-                        new_folder_id = await loop.run_in_executor(None, self.db.add_folder, current_remote_id, dir_name)
-                        path_to_id_map[full_dir_path] = new_folder_id
-                        logger.debug(f"Created remote subfolder '{dir_name}' (ID: {new_folder_id}) under parent ID: {current_remote_id}")
+                        new_folder_id = await loop.run_in_executor(None, self.db.add_folder, current_remote_id, d)
+                        path_to_remote_id[local_dir_path] = new_folder_id
                     except errors.ItemAlreadyExistsError:
-                        logger.info(f"Remote subfolder '{dir_name}' already exists under parent ID: {current_remote_id}. Attempting to retrieve ID.")
                         contents = await loop.run_in_executor(None, self.db.get_folder_contents, current_remote_id)
-                        found = next((f for f in contents['folders'] if f['name'] == dir_name), None)
+                        found = next((f for f in contents['folders'] if f['name'] == d), None)
                         if found:
-                            path_to_id_map[full_dir_path] = found['id']
-                            new_folder_id = found['id']
-                            logger.debug(f"Retrieved existing remote subfolder '{dir_name}' with ID: {new_folder_id}")
-                        else:
-                            logger.error(f"Subfolder '{dir_name}' reported as existing but not found in parent {current_remote_id}. Contents: {[f['name'] for f in contents['folders']]}")
-                    except Exception as e:
-                        logger.error(f"Error creating remote subfolder '{dir_name}' under parent ID {current_remote_id}: {e}", exc_info=True)
+                            path_to_remote_id[local_dir_path] = found['id']
 
-                # Upload files in this directory
-                if files:
-                    logger.info(f"Preparing to upload {len(files)} files from local '{root}' to remote ID: {current_remote_id}")
-                    upload_items = []
-                    for file_name in files:
-                        file_path = os.path.join(root, file_name)
-                        upload_items.append({
-                            'local_path': file_path,
-                            'task_id': str(uuid.uuid4()),
-                            'parent_task_id': main_task_id # Link to main folder task
-                        })
+            # 4. Create Child Tasks in Memory
+            child_tasks_map = {}
+            tasks_to_run = []
+            
+            for file_path, f_size in file_list:
+                sub_task_id = str(uuid.uuid4())
+                file_dir = os.path.dirname(file_path)
+                target_parent_id = path_to_remote_id.get(file_dir)
+                
+                if target_parent_id:
+                    child_tasks_map[sub_task_id] = {
+                        "file_path": file_path,
+                        "parent_id": target_parent_id,
+                        "total_size": f_size,
+                        "status": "queued"
+                    }
                     
-                    # Await the batch upload for this directory before moving to the next
-                    # This ensures structure is preserved and limits global concurrency issues
-                    await self.upload_files(current_remote_id, upload_items, progress_callback)
-                    logger.info(f"Finished uploading {len(files)} files from local '{root}'.")
+                    tasks_to_run.append(
+                        self._upload_single_file(
+                            client, main_task_id, sub_task_id,
+                            file_path, target_parent_id,
+                            progress_callback
+                        )
+                    )
+
+            # 5. Bulk Register to Controller
+            self.controller.add_child_tasks_bulk(main_task_id, "upload", child_tasks_map)
+
+            # --- Phase 2: Execution ---
+            progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
+            
+            await asyncio.gather(*tasks_to_run, return_exceptions=True)
+
+            # Finalize
+            await utils.trigger_db_upload_in_background(self.shared_state)
+            
+            task_info = self.controller.get_task(main_task_id)
+            if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
+                self.controller.mark_sub_task_completed(main_task_id, main_task_id)
+                progress_callback(main_task_id, base_folder_name, 0, total_size, 'completed', 0)
 
         except Exception as e:
-            logger.error(f"Recursive upload process interrupted for {local_folder_path}: {e}", exc_info=True)
-            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=f"資料夾上傳中斷: {str(e)}")
-            return
+            logger.error(f"Folder upload failed: {e}", exc_info=True)
+            self.controller.mark_failed(main_task_id, str(e))
+            progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=str(e))
 
-        # Finalize
-        await utils.trigger_db_upload_in_background(self.shared_state)
-        logger.info(f"Recursive upload for '{local_folder_path}' (main_task_id: {main_task_id}) completed.")
-        progress_callback(main_task_id, base_folder_name, total_size, total_size, 'completed', 0)
-
-    async def _upload_single_file(self, client, parent_id: int, file_path: str, task_id: str, 
-                                  semaphore: asyncio.Semaphore, progress_callback: Callable, 
-                                  resume_context: List = None, pre_calculated_hash: str = None,
-                                  parent_task_id: str = None):
+    async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
+                                  file_path: str, parent_id: int, 
+                                  progress_callback: Callable,
+                                  resume_context: List = None, pre_calculated_hash: str = None):
         """
-        Worker for uploading. Supports both fresh uploads and resumes.
+        Worker for uploading a single file. 
         """
         file_name = os.path.basename(file_path)
         
-        # Define chunk callback for real-time state saving
         def chunk_cb(part_num, msg_id, part_hash):
-            self.controller.update_progress(task_id, part_num, [part_num, msg_id, part_hash])
+            self.controller.update_progress(main_task_id, sub_task_id, part_num, [msg_id, part_hash])
 
-        async with semaphore:
+        last_uploaded = 0
+        last_update_time = time.time()
+
+        def ui_cb(current, total):
+            nonlocal last_uploaded, last_update_time
+            delta = current - last_uploaded
+            now = time.time()
+            time_diff = now - last_update_time
+
+            if delta > 0:
+                last_uploaded = current
+                last_update_time = now
+                
+                speed = delta / time_diff if time_diff > 0 else 0
+                
+                # 1. Update Traffic Monitor (Real-time)
+                asyncio.create_task(self.monitor.update_transferred_bytes(delta))
+                # 2. Notify UI
+                progress_callback(main_task_id, delta, speed)
+
+        async with self._semaphore:
             try:
                 current_task = asyncio.current_task()
-                self.shared_state.active_tasks[task_id] = current_task
-            except RuntimeError:
-                logger.warning(f"Could not get current task for task_id: {task_id}.")
+                self.shared_state.active_tasks[sub_task_id] = current_task
 
-            client = await utils.ensure_client_connected(self.shared_state)
-            if not client or not os.path.exists(file_path):
-                msg = "用戶端已斷線或本機檔案不存在。"
-                self.controller.mark_failed(task_id, msg)
-                progress_callback(task_id, file_name, 0, 0, 'failed', 0, message=msg, parent_id=parent_task_id)
-                return
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"File not found: {file_path}")
 
-            total_size = os.path.getsize(file_path)
-            loop = asyncio.get_running_loop()
+                loop = asyncio.get_running_loop()
+                total_size = os.path.getsize(file_path)
 
-            try:
                 original_file_hash = pre_calculated_hash
-                split_files_info = []
+                split_files_info = resume_context or []
 
-                if resume_context:
-                    # --- RESUME PATH ---
-                    logger.info(f"Resuming upload for {file_name}...")
-                    
-                    if not original_file_hash:
-                        logger.warning("Resume requested but hash missing. Re-calculating...")
-                        original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
-                    
-                    split_files_info = await telegram_comms.upload_file_with_info(
-                        client, self.shared_state.group_id, file_path, original_file_hash, task_id, progress_callback,
-                        resume_context=resume_context,
-                        chunk_callback=chunk_cb, 
-                        update_transferred_bytes=self.monitor.update_transferred_bytes,
-                        parent_id=parent_task_id # Pass parent ID for frontend aggregation
-                    )
-                
-                else:
-                    # --- FRESH UPLOAD PATH ---
-                    # 1. DB Check (Name collision)
-                    folder_contents = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
-                    if any(f['name'] == file_name for f in folder_contents['files']):
-                        raise errors.ItemAlreadyExistsError(f"目標位置已存在名為 '{file_name}' 的項目。")
-
-                    # 2. Hash Calculation
+                if not original_file_hash:
                     original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
+                    # Persist hash immediately to avoid re-calculation on resume
+                    self.controller.set_file_hash(main_task_id, sub_task_id, original_file_hash)
                     
-                    # Update Controller with Hash immediately
-                    self.controller.add_upload_task(task_id, file_path, parent_id, total_size, original_file_hash, [])
+                existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
+                
+                if existing_file_id:
+                    logger.info(f"Sec-upload (Deduplication) triggered for {file_name}")
+                    try:
+                        await loop.run_in_executor(
+                            None, 
+                            lambda: self.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
+                        )
+                        self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
+                        # Notify UI of full completion for this file
+                        remaining = total_size - last_uploaded
+                        if remaining > 0:
+                            progress_callback(main_task_id, remaining, 0)
+                        return
+                    except errors.ItemAlreadyExistsError:
+                        self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "File already exists")
+                        return
 
-                    # 3. Deduplication (Sec-Upload)
-                    existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
-                    
-                    if existing_file_id:
-                        logger.info(f"Identical content found for '{file_name}'. Creating metadata entry only.")
-                        try:
-                            await loop.run_in_executor(
-                                None, 
-                                lambda: self.db.add_file(
-                                    parent_id, file_name, time.time(), file_id=existing_file_id
-                                )
-                            )
-                            progress_callback(task_id, file_name, total_size, total_size, 'completed', 0, message="秒傳成功", parent_id=parent_task_id)
-                            self.controller.remove_task(task_id) # Done
-                            await utils.trigger_db_upload_in_background(self.shared_state)
-                            return
-                        except Exception as e:
-                            logger.error(f"Sec-upload DB add failed for {file_name}: {e}")
-                            raise # Re-raise to be caught by outer try-except block
+                split_files_info = await telegram_comms.upload_file_with_info(
+                    client, self.shared_state.group_id, file_path, original_file_hash, 
+                    main_task_id,
+                    progress_callback=ui_cb, 
+                    resume_context=split_files_info,
+                    chunk_callback=chunk_cb, 
+                    parent_id=main_task_id if main_task_id != sub_task_id else None
+                )
 
-                    progress_callback(task_id, file_name, 0, total_size, 'transferring', 0, parent_id=parent_task_id)
-                    
-                    # 4. Actual Upload
-                    split_files_info = await telegram_comms.upload_file_with_info(
-                        client, self.shared_state.group_id, file_path, original_file_hash, task_id, progress_callback,
-                        chunk_callback=chunk_cb, 
-                        update_transferred_bytes=self.monitor.update_transferred_bytes,
-                        parent_id=parent_task_id # Pass parent ID
-                    )
-
-                # --- FINALIZE ---
                 await loop.run_in_executor(
                     None,
                     lambda: self.db.add_file(
@@ -288,311 +284,358 @@ class TransferService:
                     )
                 )
                 
-                self.controller.remove_task(task_id) # Removed from state on success
-                await utils.trigger_db_upload_in_background(self.shared_state)
+                self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
+
+                if main_task_id == sub_task_id:
+                    progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
 
             except asyncio.CancelledError:
-                # Check actual state in controller to distinguish pause vs cancel
-                task_info = self.controller.get_task(task_id)
-                if task_info and task_info.get('status') == 'paused':
-                    logger.info(f"Upload task '{file_name}' paused.")
-                    transferred = len(task_info.get('transferred_parts', [])) * CHUNK_SIZE
-                    progress_callback(task_id, file_name, transferred, total_size, 'paused', 0, parent_id=parent_task_id)
-                else:
-                    logger.warning(f"Upload task '{file_name}' was cancelled.")
-                    # Ensure controller state is updated if not already
-                    self.controller.remove_task(task_id)
-                    progress_callback(task_id, file_name, 0, total_size, 'cancelled', 0, parent_id=parent_task_id)
-            
-            except errors.ItemAlreadyExistsError as e:
-                self.controller.mark_failed(task_id, str(e))
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message=str(e), parent_id=parent_task_id)
-            
+                logger.info(f"Upload task cancelled: {file_name}")
+                raise
             except Exception as e:
-                logger.error(f"Upload error '{file_name}': {e}", exc_info=True)
-                self.controller.mark_failed(task_id, str(e))
-                progress_callback(task_id, file_name, 0, total_size, 'failed', 0, message="發生未知的內部錯誤。", parent_id=parent_task_id)
-            
+                logger.error(f"File upload error '{file_name}': {e}", exc_info=True)
+                self.controller.mark_sub_task_failed(main_task_id, sub_task_id, str(e))
             finally:
-                if task_id in self.shared_state.active_tasks:
-                    del self.shared_state.active_tasks[task_id]
+                if sub_task_id in self.shared_state.active_tasks:
+                    del self.shared_state.active_tasks[sub_task_id]
+
+    # --- DOWNLOAD OPERATIONS ---
 
     async def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable):
-        """Entry point for new downloads."""
+        """
+        Entry point for downloading items.
+        """
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client:
-            return
+        if not client: return
 
-        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-
-        tasks = []
+        tasks_to_run = []
         for item in items:
-            tasks.append(
-                self._download_single_item(client, item['task_id'], item, destination_dir, semaphore, progress_callback)
-            )
-        
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self.monitor.close()
-
-    async def _download_single_item(self, client, main_task_id: str, item: Dict, dest_path: str, 
-                                    semaphore: asyncio.Semaphore, progress_callback: Callable,
-                                    resume: bool = False, completed_parts: set = None):
-        """
-        Worker for downloading.
-        """
-        item_db_id, item_type, item_name = item.get('db_id'), item.get('type'), item.get('name')
-        
-        try:
-            self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
-        except RuntimeError: pass
-        
-        loop = asyncio.get_running_loop()
-
-        try:
-            async with semaphore:
-                client = await utils.ensure_client_connected(self.shared_state)
-                if not client: return
-
-                # Register/Update Controller
-                if not resume:
-                    if item_type == 'file':
-                         file_details = await loop.run_in_executor(None, self.db.get_file_details, item_db_id)
-                         if file_details:
-                             # [New] Get unique path to avoid conflict
-                             final_file_path = await loop.run_in_executor(None, fp.get_unique_filepath, dest_path, file_details['name'])
-                             
-                             self.controller.add_download_task(
-                                 main_task_id, item_db_id, final_file_path, item.get('size', 0), file_details
-                             )
+            if item['type'] == 'folder':
+                tasks_to_run.append(
+                    self._download_folder(client, item['task_id'], item, destination_dir, progress_callback)
+                )
+            else:
+                # Single File
+                task_id = item['task_id']
+                db_id = item['db_id']
                 
-                if item_type == 'file':
-                    file_details = item.get('file_details') # From resume context
-                    if not file_details:
-                        file_details = await loop.run_in_executor(None, self.db.get_file_details, item_db_id)
-                    
-                    if not file_details: 
-                        raise errors.PathNotFoundError("File not found.")
-                    
-                    # For Resume: use save_path from controller if available, else re-calculate?
-                    # Resume path already has the unique name if it was set in 'add_download_task'
-                    task_info = self.controller.get_task(main_task_id)
-                    if task_info and task_info.get('save_path'):
-                        final_download_path = task_info['save_path']
-                    else:
-                        # Fallback (should normally be covered by controller)
-                        final_download_path = await loop.run_in_executor(None, fp.get_unique_filepath, dest_path, file_details['name'])
+                loop = asyncio.get_running_loop()
+                file_details = await loop.run_in_executor(None, self.db.get_file_details, db_id)
+                if not file_details: 
+                    progress_callback(task_id, item['name'], 0, 0, 'failed', 0, message="找不到檔案資訊")
+                    continue
 
-                    await self._download_file_from_details(
-                        client, main_task_id, file_details, final_download_path, progress_callback,
-                        completed_parts=completed_parts or set()
-                    )
-                    
-                    # Success
-                    self.controller.remove_task(main_task_id)
+                save_path = await loop.run_in_executor(None, fp.get_unique_filepath, destination_dir, file_details['name'])
 
-                elif item_type == 'folder':
-                    await self._download_folder(client, main_task_id, item, dest_path, progress_callback)
+                # Register
+                self.controller.add_download_task(
+                    task_id, db_id, save_path, file_details['size'], is_folder=False, file_details=file_details
+                )
+                
+                # [FIXED] Send initial update to frontend to sync Total Size & queued status
+                progress_callback(task_id, file_details['name'], 0, file_details['size'], 'queued', 0, is_folder=False)
 
-        except asyncio.CancelledError:
-            task_info = self.controller.get_task(main_task_id)
-            if task_info and task_info.get('status') == 'paused':
-                logger.info(f"Download task '{item_name}' paused.")
-                transferred = len(task_info.get('transferred_parts', [])) * CHUNK_SIZE
-                progress_callback(main_task_id, item_name, transferred, item.get('size', 0), 'paused', 0)
-            else:
-                logger.warning(f"Download task '{item_name}' was cancelled.")
-                self.controller.remove_task(main_task_id)
-                progress_callback(main_task_id, item_name, 0, 0, 'cancelled', 0)
-        except Exception as e:
-            logger.error(f"Download error {item_name}: {e}")
-            self.controller.mark_failed(main_task_id, str(e))
-            progress_callback(main_task_id, item_name, 0, 0, 'failed', 0, message=str(e))
-        finally:
-            if main_task_id in self.shared_state.active_tasks:
-                del self.shared_state.active_tasks[main_task_id]
-
-    async def _download_folder(self, client, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
-        """
-        Downloads a folder.
-        """
-        loop = asyncio.get_running_loop()
-        folder_contents = await loop.run_in_executor(None, self.db.get_folder_contents_recursive, folder_item['db_id'])
-        
-        if not folder_contents: raise errors.PathNotFoundError("Folder empty or not found.")
-        
-        actual_folder_name = folder_contents.get('folder_name', folder_item['name'])
-        local_root_path = os.path.join(dest_path, actual_folder_name)
-        os.makedirs(local_root_path, exist_ok=True)
-        
-        files_in_folder = [f for f in folder_contents['items'] if f['type'] == 'file']
-        
-        child_info_for_frontend = []
-        for f_or_d in folder_contents['items']:
-            # [Fix] Use deterministic ID for files to support resume across restarts
-            # Note: DB returns 'id' (Map ID). We map it to 'db_id' for consistency with other parts of the app.
-            original_id = f_or_d['id']
-            
-            if f_or_d['type'] == 'file':
-                item_task_id = f"dl_file_{original_id}"
-            else:
-                item_task_id = f"dl_{uuid.uuid4()}" 
-            
-            # Preserve the original DB ID as 'db_id' before overwriting 'id' with task_id
-            child_info = {**f_or_d, 'db_id': original_id, 'id': item_task_id}
-            child_info_for_frontend.append(child_info)
-            if f_or_d['type'] == 'folder':
-                os.makedirs(os.path.join(local_root_path, f_or_d['relative_path']), exist_ok=True)
-
-        total_size = sum(f['size'] for f in files_in_folder)
-        progress_callback(main_task_id, actual_folder_name, 0, total_size, 'starting_folder', 0, 
-                          total_files=len(files_in_folder), children=child_info_for_frontend)
-
-        download_tasks = []
-        for child in child_info_for_frontend:
-            if child['type'] == 'file':
-                # Register sub-task in controller to ensure progress is saved
-                file_details = await loop.run_in_executor(None, self.db.get_file_details, child['db_id'])
-                if file_details:
-                    # Construct full path for file inside folder structure
-                    dest_file_path = os.path.join(local_root_path, os.path.dirname(child['relative_path']), child['name'])
-                    
-                    # Use the generated UUID (child['id']) as the task_id
-                    self.controller.add_download_task(
-                        child['id'], child['db_id'], dest_file_path, child['size'], file_details
-                    )
-
-                download_tasks.append(
-                    self._download_file_from_details(
-                        client, child['id'], child, 
-                        dest_file_path,
-                        progress_callback, parent_task_id=main_task_id
+                tasks_to_run.append(
+                    self._download_single_item(
+                        client, task_id, task_id, 
+                        save_path, file_details, 
+                        progress_callback
                     )
                 )
         
-        await asyncio.gather(*download_tasks, return_exceptions=True)
-        progress_callback(main_task_id, actual_folder_name, total_size, total_size, 'completed', 0)
+        await asyncio.gather(*tasks_to_run, return_exceptions=True)
+        self.monitor.close()
 
-    async def _download_file_from_details(self, client, task_id: str, file_details: Dict, destination_path: str, 
-                                          progress_callback: Callable, parent_task_id: str = None, completed_parts: set = None):
+    async def _download_folder(self, client, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
         """
-        Helper to download a file.
-        destination_path: The FULL path to the file (including filename).
+        Recursive folder download.
         """
-        file_name = file_details['name']
-        total_size = file_details.get("size", 0)
+        loop = asyncio.get_running_loop()
+        folder_db_id = folder_item['db_id']
         
-        # Calculate start offset for monitor based on parts
-        start_offset = 0
-        if completed_parts:
-            start_offset = len(completed_parts) * (CHUNK_SIZE)
-            if start_offset > total_size: start_offset = total_size
+        contents = await loop.run_in_executor(None, self.db.get_folder_contents_recursive, folder_db_id)
+        if not contents: 
+            progress_callback(main_task_id, folder_item['name'], 0, 0, 'failed', 0, message="資料夾為空或讀取失敗")
+            return
+        
+        root_folder_name = contents['folder_name']
+        local_root_path = os.path.join(dest_path, root_folder_name)
+        
+        os.makedirs(local_root_path, exist_ok=True)
+        total_size = 0
+        file_items = []
+        
+        for item in contents['items']:
+            relative_path = item['relative_path']
+            full_local_path = os.path.join(local_root_path, relative_path)
+            
+            if item['type'] == 'folder':
+                os.makedirs(full_local_path, exist_ok=True)
+            elif item['type'] == 'file':
+                total_size += item['size']
+                file_items.append({
+                    "db_id": item['id'],
+                    "file_id": item['file_id'],
+                    "local_path": full_local_path,
+                    "size": item['size'],
+                    "hash": item['hash'],
+                    "chunks": item['chunks'],
+                    "name": item['name']
+                })
 
-        progress_callback(task_id, file_name, start_offset, total_size, 'transferring', 0, parent_task_id=parent_task_id)
+        # Register Main Task
+        self.controller.add_download_task(
+            main_task_id, folder_db_id, local_root_path, total_size, is_folder=True
+        )
+        progress_callback(main_task_id, root_folder_name, 0, total_size, 'queued', 0, is_folder=True)
 
-        # Define chunk callback for real-time state saving
+        child_tasks_map = {}
+        tasks_to_run = []
+
+        for f in file_items:
+            sub_task_id = str(uuid.uuid4())
+            
+            file_details = {
+                "name": f['name'],
+                "size": f['size'],
+                "hash": f['hash'],
+                "chunks": f['chunks']
+            }
+
+            child_tasks_map[sub_task_id] = {
+                "db_id": f['db_id'],
+                "save_path": f['local_path'],
+                "total_size": f['size'],
+                "status": "queued",
+                "file_details": file_details
+            }
+
+            tasks_to_run.append(
+                self._download_single_item(
+                    client, main_task_id, sub_task_id,
+                    f['local_path'], file_details,
+                    progress_callback
+                )
+            )
+
+        self.controller.add_child_tasks_bulk(main_task_id, "download", child_tasks_map)
+
+        progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
+        await asyncio.gather(*tasks_to_run, return_exceptions=True)
+        
+        task_info = self.controller.get_task(main_task_id)
+        if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
+            self.controller.mark_sub_task_completed(main_task_id, main_task_id)
+            progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
+
+    async def _download_single_item(self, client, main_task_id: str, sub_task_id: str, 
+                                    save_path: str, file_details: Dict,
+                                    progress_callback: Callable,
+                                    resume_parts: set = None):
+        """
+        Worker for downloading a single file.
+        """
         def chunk_cb(part_num):
-            self.controller.update_progress(task_id, part_num)
-
-        coro = telegram_comms.download_file(
-            client, self.shared_state.group_id, file_details, os.path.dirname(destination_path), 
-            task_id=task_id, progress_callback=progress_callback,
-            completed_parts=completed_parts,
-            chunk_callback=chunk_cb,
-            update_transferred_bytes=self.monitor.update_transferred_bytes
-        )
-
-        file_details_copy = file_details.copy()
-        file_details_copy['name'] = os.path.basename(destination_path)
+            self.controller.update_progress(main_task_id, sub_task_id, part_num)
         
-        coro = telegram_comms.download_file(
-            client, self.shared_state.group_id, file_details_copy, os.path.dirname(destination_path),
-            task_id=task_id, progress_callback=progress_callback,
-            completed_parts=completed_parts,
-            chunk_callback=chunk_cb,
-            update_transferred_bytes=self.monitor.update_transferred_bytes
-        )
-        
-        task = asyncio.create_task(coro)
-        self.shared_state.active_tasks[task_id] = task
-        await task
+        last_downloaded = 0
+        last_update_time = time.time()
+
+        def ui_cb(current, total):
+            nonlocal last_downloaded, last_update_time
+            delta = current - last_downloaded
+            now = time.time()
+            time_diff = now - last_update_time
+
+            if delta > 0:
+                last_downloaded = current
+                last_update_time = now
+                
+                speed = delta / time_diff if time_diff > 0 else 0
+                
+                # 1. Update Traffic Monitor (Real-time)
+                asyncio.create_task(self.monitor.update_transferred_bytes(delta))
+                # 2. Notify UI
+                progress_callback(main_task_id, delta, speed)
+
+        async with self._semaphore:
+            try:
+                self.shared_state.active_tasks[sub_task_id] = asyncio.current_task()
+                
+                await telegram_comms.download_file(
+                    client, self.shared_state.group_id, file_details, os.path.dirname(save_path),
+                    task_id=sub_task_id,
+                    progress_callback=ui_cb,
+                    completed_parts=resume_parts,
+                    chunk_callback=chunk_cb
+                )
+                
+                self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
+
+                if main_task_id == sub_task_id:
+                    progress_callback(main_task_id, file_details['name'], file_details['size'], file_details['size'], 'completed', 0)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Download failed {save_path}: {e}")
+                self.controller.mark_sub_task_failed(main_task_id, sub_task_id, str(e))
+            finally:
+                if sub_task_id in self.shared_state.active_tasks:
+                    del self.shared_state.active_tasks[sub_task_id]
 
     # --- CONTROL METHODS ---
 
     async def resume_transfer(self, task_id: str, progress_callback: Callable):
         """
-        Resumes a paused or failed transfer task from the controller state.
+        Resumes a paused or failed transfer task.
         """
         task_info = self.controller.get_task(task_id)
-        if not task_info:
-            logger.warning(f"Resume failed: Task {task_id} not found in controller.")
-            return
+        if not task_info: return
 
         self.controller.mark_resumed(task_id)
         client = await utils.ensure_client_connected(self.shared_state)
         if not client: return
-
-        if task_info['type'] == 'upload':
-            await self._upload_single_file(
-                client, task_info['parent_id'], task_info['file_path'], task_id,
-                self._resume_semaphore, progress_callback,
-                resume_context=task_info['split_files_info'],
-                pre_calculated_hash=task_info['file_hash']
-            )
         
-        elif task_info['type'] == 'download':
-            # For resume, we must use the saved unique path
-            final_path = task_info['save_path']
+        progress_callback(task_id, 0, 0, status='transferring') 
+
+        tasks_to_run = []
+        
+        if not task_info.get("is_folder"):
+            # Single File Resume
+            if task_info['type'] == 'upload':
+                tasks_to_run.append(
+                    self._upload_single_file(
+                        client, task_id, task_id, 
+                        task_info['file_path'], task_info['parent_id'], 
+                        progress_callback,
+                        resume_context=task_info.get('split_files_info'),
+                        pre_calculated_hash=task_info.get('file_hash')
+                    )
+                )
+            else:
+                tasks_to_run.append(
+                    self._download_single_item(
+                        client, task_id, task_id,
+                        task_info['save_path'], task_info['file_details'],
+                        progress_callback,
+                        resume_parts=set(task_info.get('transferred_parts', []))
+                    )
+                )
+        else:
+            # Folder Resume
+            child_tasks = task_info.get("child_tasks", {})
+            for sub_id, sub_data in child_tasks.items():
+                if sub_data['status'] == 'completed':
+                    continue
+                
+                sub_data['status'] = 'queued'
+                
+                if task_info['type'] == 'upload':
+                    tasks_to_run.append(
+                        self._upload_single_file(
+                            client, task_id, sub_id,
+                            sub_data['file_path'], sub_data['parent_id'],
+                            progress_callback,
+                            resume_context=sub_data.get('split_files_info'),
+                            pre_calculated_hash=sub_data.get('file_hash') # Pass the stored hash
+                        )
+                    )
+                else:
+                    tasks_to_run.append(
+                        self._download_single_item(
+                            client, task_id, sub_id,
+                            sub_data['save_path'], sub_data['file_details'],
+                            progress_callback,
+                            resume_parts=set(sub_data.get('transferred_parts', []))
+                        )
+                    )
             
-            item_mock = {
-                'db_id': task_info['db_id'],
-                'type': 'file', 
-                'name': task_info['file_details']['name'],
-                'file_details': task_info['file_details'],
-                'size': task_info['total_size']
-            }
-            await self._download_single_item(
-                client, task_id, item_mock, os.path.dirname(final_path),
-                self._resume_semaphore, progress_callback,
-                resume=True,
-                completed_parts=set(task_info['transferred_parts'])
-            )
+            self.controller._save_state()
+
+        await asyncio.gather(*tasks_to_run, return_exceptions=True)
+        
+        self.controller.mark_sub_task_completed(task_id, task_id)
+        progress_callback(task_id, 0, 0, status='completed')
 
     def pause_transfer(self, task_id: str):
         """
-        Pauses an active transfer. The task state in Controller is preserved.
+        Pauses an active transfer.
         """
         task = self.shared_state.active_tasks.get(task_id)
         if task and not task.done():
             self.shared_state.loop.call_soon_threadsafe(task.cancel)
-        
         self.controller.mark_paused(task_id)
-        logger.info(f"Task {task_id} paused.")
+        logger.info(f"Task {task_id} marked as paused.")
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
         """
-        Permanently cancels and removes a transfer.
-        If it's a download task, the partial file on disk will be deleted.
+        Permanently cancels and removes a transfer, triggering background cleanup.
         """
-        # 1. 先獲取任務資訊 (因為一旦 remove_task 就拿不到了)
+        self.pause_transfer(task_id)
+        
         task_info = self.controller.get_task(task_id)
-        
-        # 2. 停止正在運行的 asyncio 任務
-        task = self.shared_state.active_tasks.get(task_id)
-        if task and not task.done():
-            self.shared_state.loop.call_soon_threadsafe(task.cancel)
-        
-        # 3. [新增] 如果是「下載」任務，清理本地殘留檔案
-        if task_info and task_info.get('type') == 'download':
-            file_path = task_info.get('save_path')
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Deleted partial file for cancelled task: {file_path}")
-                except OSError as e:
-                    logger.error(f"Failed to delete cancelled file '{file_path}': {e}")
-
-        # 4. 從控制器移除任務記錄
         self.controller.remove_task(task_id)
         
-        logger.info(f"Task {task_id} cancelled and removed.")
-        return {"success": True, "message": "任務已取消並移除。"}
+        if task_info:
+            asyncio.run_coroutine_threadsafe(self._cleanup_task_data(task_info), self.shared_state.loop)
+
+        return {"success": True, "message": "任務已取消並開始背景清理。"}
+
+    async def _cleanup_task_data(self, task_info: Dict[str, Any]):
+        """
+        Performs slow cleanup operations (Network calls / Disk I/O) after cancellation.
+        """
+        try:
+            task_type = task_info.get('type')
+            is_folder = task_info.get('is_folder')
+            logger.info(f"Starting cleanup for cancelled task: {task_type}")
+
+            if task_type == 'download':
+                paths_to_delete = []
+                if is_folder:
+                    child_tasks = task_info.get('child_tasks', {})
+                    for child in child_tasks.values():
+                        if child.get('save_path'):
+                            paths_to_delete.append(child['save_path'])
+                else:
+                    if task_info.get('save_path'):
+                        paths_to_delete.append(task_info['save_path'])
+
+                for path in paths_to_delete:
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except OSError: pass
+
+            elif task_type == 'upload':
+                client = await utils.ensure_client_connected(self.shared_state)
+                if not client: return
+
+                message_ids_to_delete = []
+
+                def collect_msg_ids(info_list):
+                    if info_list:
+                        for item in info_list:
+                            if len(item) >= 2:
+                                message_ids_to_delete.append(item[1])
+
+                if is_folder:
+                    child_tasks = task_info.get('child_tasks', {})
+                    for child in child_tasks.values():
+                        collect_msg_ids(child.get('split_files_info'))
+                else:
+                    collect_msg_ids(task_info.get('split_files_info'))
+
+                if message_ids_to_delete:
+                    batch_size = 100
+                    for i in range(0, len(message_ids_to_delete), batch_size):
+                        batch = message_ids_to_delete[i:i + batch_size]
+                        try:
+                            await client.delete_messages(self.shared_state.group_id, batch)
+                        except Exception: pass
+                            
+            logger.info("Cleanup completed successfully.")
+
+        except Exception as e:
+            logger.error(f"Error during task cleanup: {e}", exc_info=True)
