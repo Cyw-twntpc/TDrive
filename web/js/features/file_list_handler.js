@@ -304,7 +304,7 @@ const FileListHandler = {
                 case 'name':
                     // Use localeCompare for natural string sorting.
                     // 'zh-Hans-CN-u-co-pinyin' is for Chinese pinyin order, but works for English too.
-                    return a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin') * (order === 'asc' ? 1 : -1);
+                    return a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin', { numeric: true, sensitivity: 'base' }) * (order === 'asc' ? 1 : -1);
                 case 'type':
                     valA = UIManager.getFileTypeDescription(a.name, a.type === 'folder');
                     valB = UIManager.getFileTypeDescription(b.name, b.type === 'folder');

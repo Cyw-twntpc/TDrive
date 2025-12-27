@@ -175,6 +175,9 @@ const UIManager = {
             case 'FLOOD_WAIT_ERROR':
                 title = '請求過於頻繁';
                 break;
+            case 'INVALID_OPERATION':
+                title = '無效操作';
+                break;
             case 'INTERNAL_ERROR':
                 title = '系統錯誤';
                 break;

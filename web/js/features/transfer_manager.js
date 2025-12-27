@@ -1,10 +1,6 @@
 /**
  * @fileoverview Manages the entire UI and state for file transfers (uploads and downloads).
- *
- * This object tracks all active, queued, and completed transfers, renders the
- * sidebar status indicator and the detailed transfer dashboard, and handles user interactions.
- * * [Updated] Implements "Pulse Detection" & "Cosine Interpolation" for smooth chart visualization.
- * * [Updated] Supports Resume/Pause functionality and State Restoration on startup.
+ * Optimized for local rendering and simplified data structure.
  */
 const TransferManager = {
     uploads: new Map(),
@@ -17,9 +13,9 @@ const TransferManager = {
     refreshCallback: null,
     
     // [State]
-    currentTab: 'uploads', // 'uploads', 'downloads', 'completed'
-    completedSort: { key: 'time', order: 'desc' }, // Sorting state for history
-    completedFilter: 'all', // 'all', 'upload', 'download'
+    currentTab: 'uploads', 
+    completedSort: { key: 'time', order: 'desc' },
+    completedFilter: 'all',
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -29,205 +25,155 @@ const TransferManager = {
         this.refreshCallback = refreshCallback;
         this.setupEventListeners();
         
-        if (window.tdrive_bridge) {
-            if (window.tdrive_bridge.transfer_progress_updated) {
-                window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
-            }
-            
-            // Get initial traffic stats - just update the hero daily traffic text
-            if (this.ApiService.getInitialTrafficStats) {
-                this.ApiService.getInitialTrafficStats().then(data => {
-                    if (data && data.todayTraffic !== undefined) {
-                        const trafficEl = document.getElementById('hero-daily-traffic');
-                        if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
-                    }
-                });
-            }
+        if (window.tdrive_bridge && window.tdrive_bridge.transfer_progress_updated) {
+            window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
+        }
 
-            // [New] Restore incomplete transfers from backend state
-            this.ApiService.getIncompleteTransfers().then(data => {
-                if (data) {
-                    this.restoreTasks(data.uploads, 'upload');
-                    this.restoreTasks(data.downloads, 'download');
-                    this.updateAllUI();
+        // Restore tasks from backend state
+        this.ApiService.getIncompleteTransfers().then(data => {
+            if (data) {
+                this.restoreTasks(data.uploads, 'upload');
+                this.restoreTasks(data.downloads, 'download');
+                this.updateAllUI();
+            }
+        });
+
+        // Get initial traffic stats
+        if (this.ApiService.getInitialTrafficStats) {
+            this.ApiService.getInitialTrafficStats().then(data => {
+                if (data && data.todayTraffic !== undefined) {
+                    const trafficEl = document.getElementById('hero-daily-traffic');
+                    if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
                 }
             });
         }
     },
 
-    // [New] Restore tasks from backend state
+    // Restore tasks from backend state (32MB Chunk Size)
     restoreTasks(taskMap, type) {
         if (!taskMap) return;
-        const CHUNK_SIZE = 33554432; // 32MB (1024*1024*32)
+        const CHUNK_SIZE = 33554432; // 32MB
 
         for (const [taskId, info] of Object.entries(taskMap)) {
-            // Estimate progress based on completed parts for both uploads and downloads
+            const calculateProgress = (taskInfo) => {
+                let p = 0;
+                if (taskInfo.transferred_parts && Array.isArray(taskInfo.transferred_parts)) {
+                    p = taskInfo.transferred_parts.length * CHUNK_SIZE;
+                    if (p > taskInfo.total_size) p = taskInfo.total_size;
+                    if (taskInfo.status === 'completed') p = taskInfo.total_size;
+                }
+                return p;
+            };
+
+            const isFolder = info.is_folder || false;
             let estimatedProgress = 0;
-            if (info.transferred_parts && Array.isArray(info.transferred_parts)) {
-                estimatedProgress = info.transferred_parts.length * CHUNK_SIZE;
-                if (estimatedProgress > info.total_size) estimatedProgress = info.total_size;
+            
+            if (isFolder && info.child_tasks) {
+                for (const childInfo of Object.values(info.child_tasks)) {
+                    estimatedProgress += calculateProgress(childInfo);
+                }
+            } else {
+                estimatedProgress = calculateProgress(info);
             }
 
             const task = {
                 id: taskId,
-                name: (type === 'upload') ? info.file_path.split(/[\\/]/).pop() : info.file_details.name,
+                name: (type === 'upload') ? info.file_path.split(/[\\/]/).pop() : (info.file_details?.name || 'Unknown'),
                 size: info.total_size || 0,
                 progress: estimatedProgress,
-                speed: 0,
-                status: info.status || 'paused', // Default to paused if undefined
-                isFolder: false, // Controller mostly handles flat files for now
+                status: info.status === 'transferring' ? 'paused' : info.status,
+                parentFolderId: info.parent_id || null, 
                 localPath: (type === 'upload') ? info.file_path : info.save_path,
-                parentFolderId: info.parent_id || null, // Only relevant for uploads
+                db_id: info.db_id,
                 feedbackShown: false,
                 alertShown: false,
-                startTime: info.created_at * 1000,
-                completedAt: null
+                startTime: info.created_at * 1000 || Date.now(),
+                completedAt: (info.status === 'completed' && info.updated_at) ? info.updated_at * 1000 : null,
+                type: type
             };
 
-            // If backend says transferring (zombie), force pause
-            if (task.status === 'transferring') task.status = 'paused';
-
-            if (type === 'upload') {
-                this.uploads.set(taskId, task);
-            } else {
-                task.db_id = info.db_id;
-                this.downloads.set(taskId, task);
+            if (isFolder && type === 'download' && !task.name) {
+                task.name = info.save_path ? info.save_path.split(/[\\/]/).pop() : 'Unknown Folder';
             }
+
+            if (type === 'upload') this.uploads.set(taskId, task);
+            else this.downloads.set(taskId, task);
         }
     },
-    
-    // --- Chart & Hero Update (Direct Mode) ---
-    // Removed onChartUpdate and renderSvgChart
 
     // --- Task Management ---
     addDownload(item) {
         if (this.downloads.has(item.task_id)) return;
         const task = { 
             id: item.task_id, db_id: item.db_id, name: item.name, size: item.size || 0, 
-            progress: 0, speed: 0, status: 'queued', isFolder: item.type === 'folder',
-            destinationDir: this.currentDownloadDestination, // Store destination for duplicate checking
-            parentFolderId: this.AppState.currentFolderId, children: item.type === 'folder' ? new Map() : null,
-            total_files: item.type === 'folder' ? 0 : 1, completed_files: 0, expanded: true, 
-            feedbackShown: false, alertShown: false, itemData: item,
-            startTime: Date.now(), completedAt: null
+            progress: 0, status: 'queued', localPath: item.save_path || this.currentDownloadDestination, 
+            parentFolderId: this.AppState.currentFolderId, feedbackShown: false, 
+            alertShown: false, startTime: Date.now(), completedAt: null,
+            type: 'download'
         };
         this.downloads.set(item.task_id, task);
         this.startUpdater();
     },
 
     addUpload(fileData) {
-        const task_id = fileData.task_id;
-        if (this.uploads.has(task_id)) return;
+        if (this.uploads.has(fileData.task_id)) return;
         const task = { 
-            id: task_id, name: fileData.name, size: fileData.size || 0, 
-            progress: 0, speed: 0, status: 'queued', 
-            isFolder: fileData.isFolder || false, // Accept isFolder from fileData
-            localPath: fileData.localPath, parentFolderId: fileData.parentFolderId,
-            feedbackShown: false, alertShown: false,
-            startTime: Date.now(), completedAt: null
+            id: fileData.task_id, name: fileData.name, size: fileData.size || 0, 
+            progress: 0, status: 'queued', localPath: fileData.localPath, 
+            parentFolderId: fileData.parentFolderId, feedbackShown: false, 
+            alertShown: false, startTime: Date.now(), completedAt: null,
+            type: 'upload'
         };
-        this.uploads.set(task_id, task);
+        this.uploads.set(fileData.task_id, task);
         this.startUpdater();
     },
     
     updateTask(data) {
-        let task;
-        let parentTask = null;
+        if (data.parent_id) return; // Only track main tasks
 
-        // 1. Try to find existing parent task if parent_id is provided
-        if (data.parent_id) {
-            parentTask = this.downloads.get(data.parent_id) || this.uploads.get(data.parent_id);
-            if (parentTask && parentTask.children) {
-                task = parentTask.children.get(data.id);
-                
-                // [New] Dynamic Child Creation for Uploads
-                if (!task && (parentTask === this.uploads.get(data.parent_id))) {
-                    // Create placeholder child task for upload
-                    task = {
-                        id: data.id,
-                        name: data.name,
-                        size: data.size || data.total || 0, // 'total' is passed by adapter as size
-                        progress: 0,
-                        speed: 0,
-                        status: 'queued',
-                        isFolder: false,
-                        parentFolderId: parentTask.parentFolderId, // Inherit logical parent
-                        feedbackShown: false,
-                        alertShown: false,
-                        startTime: Date.now()
-                    };
-                    parentTask.children.set(data.id, task);
-                }
-            }
-        } else {
-            task = this.downloads.get(data.id) || this.uploads.get(data.id);
-        }
+        let task = this.downloads.get(data.id) || this.uploads.get(data.id);
 
-        // [New] Dynamic Parent Creation for Upload Folder
         if (!task && data.status === 'starting_folder' && data.type === 'upload') {
-            task = {
-                id: data.id,
-                name: data.name,
-                size: data.size || 0, // total_size passed from backend
-                progress: 0,
-                speed: 0,
-                status: 'starting_folder',
-                isFolder: true,
-                children: new Map(),
-                total_files: data.total_files || 0,
-                completed_files: 0,
-                expanded: true,
-                feedbackShown: false,
-                alertShown: false,
-                startTime: Date.now(),
-                completedAt: null
+             task = {
+                id: data.id, name: data.name, size: data.size || 0, progress: 0,
+                status: 'transferring', feedbackShown: false, alertShown: false,
+                startTime: Date.now(), completedAt: null,
+                type: 'upload'
             };
             this.uploads.set(data.id, task);
             this.startUpdater();
+            return;
         }
 
         if (!task) return;
 
-        // Record completion time
-        if (data.status === 'completed' && !task.completedAt) {
-            task.completedAt = Date.now();
-        }
+        if (data.status === 'completed' && !task.completedAt) task.completedAt = Date.now();
 
-        // [New] Update global traffic stats from progress event
         if (data.todayTraffic !== undefined) {
             const trafficEl = document.getElementById('hero-daily-traffic');
             if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
         }
 
-        if (data.status === 'starting_folder' && task.isFolder) {
-            Object.assign(task, data);
-            // If children map doesn't exist (should be created above), create it
-            if (!task.children) task.children = new Map();
-            
-            // Handle pre-populated children (mostly for downloads, uploads use dynamic addition)
-            if (data.children && Array.isArray(data.children)) {
-                const folderNodes = new Map(); folderNodes.set('', task);
-                const sortedChildren = (data.children || []).sort((a, b) => a.relative_path.replace(/\\/g, '/').length - b.relative_path.replace(/\\/g, '/').length);
-                sortedChildren.forEach(childInfo => {
-                    const pathParts = childInfo.relative_path.replace(/\\/g, '/').split('/');
-                    const parentPath = pathParts.join('/');
-                    const parentNode = folderNodes.get(parentPath);
-                    if (!parentNode) return;
-                    const isFolder = childInfo.type === 'folder';
-                    const newNode = {
-                        ...childInfo, isFolder, status: isFolder ? 'pending' : 'queued',
-                        progress: 0, size: childInfo.size || 0, children: isFolder ? new Map() : null,
-                        expanded: true, alertShown: false
-                    };
-                    parentNode.children.set(childInfo.id, newNode);
-                    if (isFolder) folderNodes.set(childInfo.relative_path, newNode);
-                });
-            }
-        } else {
-            Object.assign(task, data);
+        // Handle Delta vs Absolute Progress
+        if (data.delta !== undefined && data.delta !== null) {
+            task.progress += data.delta;
+            if (task.size > 0 && task.progress > task.size) task.progress = task.size;
+        } else if (data.transferred !== undefined) {
+            task.progress = data.transferred;
         }
 
-        if (parentTask) this.updateParentProgress(parentTask);
+        let statusChanged = false;
+        if (data.status) {
+            const newStatus = (data.status === 'starting_folder') ? 'transferring' : data.status;
+            if (task.status !== newStatus) {
+                task.status = newStatus;
+                statusChanged = true;
+            }
+        }
+        
+        if (data.speed !== undefined) task.speed = data.speed;
+        if (data.total !== undefined && data.total > 0) task.size = data.total;
+        if (data.error_message) task.message = data.error_message;
 
         if (task.status === 'failed' && !task.alertShown) {
             this.UIManager.handleBackendError({
@@ -236,39 +182,17 @@ const TransferManager = {
             });
             task.alertShown = true;
         }
+
+        // Local Rendering Optimization
+        if (statusChanged) {
+            if (this.AppState.currentPage === 'transfer') this.renderDashboard();
+        } else {
+            this.renderTaskCard(task);
+        }
+        this.updateSummaryPanel();
         this.startUpdater();
     },
 
-    updateParentProgress(parentTask) {
-        // ... (Same as before) ...
-        if (!parentTask || !parentTask.isFolder) return;
-        const _calculateFolderStats = (folderNode) => {
-            let totalProgress = 0; let completedFiles = 0; let isTransferring = false;
-            let hasFailures = false; let totalFiles = 0;
-            for (const child of folderNode.children.values()) {
-                if (child.isFolder) {
-                    const stats = _calculateFolderStats(child);
-                    totalProgress += stats.totalProgress; completedFiles += stats.completedFiles;
-                    if (stats.isTransferring) isTransferring = true;
-                    if (stats.hasFailures) hasFailures = true;
-                    totalFiles += stats.totalFiles;
-                } else {
-                    totalFiles++; totalProgress += child.progress || 0;
-                    if (child.status === 'completed') completedFiles++;
-                    else if (child.status === 'failed' || child.status === 'cancelled') hasFailures = true;
-                    else if (child.status === 'transferring' || child.status === 'queued') isTransferring = true;
-                }
-            }
-            return { totalProgress, completedFiles, isTransferring, hasFailures, totalFiles };
-        };
-        const stats = _calculateFolderStats(parentTask);
-        parentTask.progress = stats.totalProgress;
-        parentTask.completed_files = stats.completedFiles;
-        if (stats.hasFailures) parentTask.status = 'failed';
-        else if (stats.completedFiles === parentTask.total_files && parentTask.total_files > 0) parentTask.status = 'completed';
-        else if (stats.isTransferring) parentTask.status = 'transferring';
-    },
-    
     startUpdater() {
         if (!this.updateInterval) this.updateInterval = setInterval(() => this.tick(), 50);
     },
@@ -276,11 +200,6 @@ const TransferManager = {
     tick() {
         this.updateAllUI();
         const allTransfers = [...this.uploads.values(), ...this.downloads.values()];
-        // Check if all are strictly 'completed' or removed.
-        // Paused/Failed tasks should keep the ticker alive to show them in list?
-        // Actually, we can stop ticker if no *active* changes are expected, 
-        // but 'starting_folder' or 'queued' might need polling if backend delays.
-        // Simple logic: stop if map is empty.
         if (allTransfers.length === 0) {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
@@ -291,7 +210,7 @@ const TransferManager = {
         if(completedOrFailedTasks.length > 0) {
             this.refreshCallback().then(() => {
                 completedOrFailedTasks.forEach(task => {
-                    if (!task.isFolder) this.showFileFeedback(task.name, task.status);
+                    this.showFileFeedback(task.name, task.status);
                     task.feedbackShown = true;
                 });
             });
@@ -300,22 +219,19 @@ const TransferManager = {
 
     updateAllUI() {
         this.updateSummaryPanel();
-        if (this.AppState.currentPage === 'transfer') {
-            this.renderDashboard();
-        }
+        if (this.AppState.currentPage === 'transfer') this.renderDashboard();
         this.updateMainFileListUI();
     },
 
     // --- Dashboard & Sidebar Rendering ---
-
     updateSummaryPanel() {
         const panel = document.getElementById('sidebar-transfer-status');
         const titleEl = document.getElementById('sidebar-transfer-title');
         const speedEl = document.getElementById('sidebar-transfer-speed');
         const barEl = document.getElementById('sidebar-transfer-bar');
         
-        let totalSize = 0; let totalProgress = 0; let currentSpeed = 0; let activeCount = 0; let failedCount = 0;
-        let activeUploads = 0; let activeDownloads = 0;
+        let totalSize = 0, totalProgress = 0, currentSpeed = 0, activeCount = 0, failedCount = 0;
+        let activeUploads = 0, activeDownloads = 0;
         const allTasks = [...this.uploads.values(), ...this.downloads.values()];
 
         if (allTasks.length === 0) { this.setPanelToReadyState(); return; }
@@ -324,12 +240,11 @@ const TransferManager = {
             if (task.status !== 'cancelled') {
                 totalSize += task.size;
                 totalProgress += (task.status === 'completed') ? task.size : task.progress;
-                // [Modified] Paused tasks count towards total size/progress but don't count as 'active' for speed
-                if (['transferring', 'starting_folder', 'queued'].includes(task.status)) {
+                if (['transferring', 'queued'].includes(task.status)) {
                     activeCount++;
                     currentSpeed += (task.speed || 0);
                     if (this.uploads.has(task.id)) activeUploads++;
-                    else if (this.downloads.has(task.id)) activeDownloads++;
+                    else activeDownloads++;
                 } else if (task.status === 'failed') failedCount++;
             }
         });
@@ -342,15 +257,13 @@ const TransferManager = {
             else panel.classList.add('mixed-active');
 
             titleEl.textContent = `正在傳輸 ${activeCount} 個項目`;
-            const formattedSpeed = this.UIManager.formatBytes(currentSpeed);
-            speedEl.textContent = (currentSpeed > 0) ? `${formattedSpeed}/s` : '-- B/s';
+            speedEl.textContent = (currentSpeed > 0) ? `${this.UIManager.formatBytes(currentSpeed)}/s` : '-- B/s';
         } else if (failedCount > 0) {
             panel.classList.add('status-failed');
             titleEl.textContent = `${failedCount} 個項目失敗`;
             speedEl.textContent = '';
         } else if (allTasks.some(t => t.status === 'paused')) {
-            // New State: Paused
-            panel.classList.add('transfer-active'); // Keep bar visible
+            panel.classList.add('transfer-active');
             titleEl.textContent = '傳輸已暫停';
             speedEl.textContent = '-- B/s';
         } else {
@@ -358,48 +271,30 @@ const TransferManager = {
             titleEl.textContent = '傳輸完成';
             speedEl.textContent = '-- B/s'; 
         }
-        const percent = totalSize > 0 ? (totalProgress / totalSize) : 0;
-        barEl.style.transform = `scaleX(${percent})`;
-
+        barEl.style.transform = `scaleX(${totalSize > 0 ? totalProgress / totalSize : 0})`;
         this.updateDashboardHero(currentSpeed, activeCount, allTasks);
     },
 
     setPanelToReadyState() {
         const panel = document.getElementById('sidebar-transfer-status');
-        const titleEl = document.getElementById('sidebar-transfer-title');
-        const speedEl = document.getElementById('sidebar-transfer-speed');
-        const barEl = document.getElementById('sidebar-transfer-bar');
         panel.classList.remove('status-completed', 'status-failed', 'transfer-active', 'upload-active', 'download-active', 'mixed-active');
-        titleEl.innerHTML = '&nbsp;'; speedEl.textContent = '-- B/s'; barEl.style.transform = 'scaleX(0)';
+        document.getElementById('sidebar-transfer-title').innerHTML = '&nbsp;';
+        document.getElementById('sidebar-transfer-speed').textContent = '-- B/s';
+        document.getElementById('sidebar-transfer-bar').style.transform = 'scaleX(0)';
     },
 
     updateDashboardHero(currentSpeed, activeCount, allTasks) {
         const speedEl = document.getElementById('hero-total-speed');
-        if (speedEl) {
-            const formattedSpeed = this.UIManager.formatBytes(currentSpeed);
-            speedEl.textContent = (currentSpeed > 0) ? `${formattedSpeed}/s` : '-- B/s';
-        }
+        if (speedEl) speedEl.textContent = currentSpeed > 0 ? `${this.UIManager.formatBytes(currentSpeed)}/s` : '-- B/s';
         
         const etaEl = document.getElementById('hero-eta');
         if (etaEl) {
             let totalRemaining = 0;
-            allTasks.forEach(t => { 
-                if(['transferring', 'queued', 'starting_folder'].includes(t.status)) 
-                    totalRemaining += (t.size - t.progress);
-            });
-            
+            allTasks.forEach(t => { if(['transferring', 'queued'].includes(t.status)) totalRemaining += (t.size - t.progress); });
             if (currentSpeed > 0 && totalRemaining > 0) {
                 const seconds = Math.ceil(totalRemaining / currentSpeed);
-                if (!isFinite(seconds) || isNaN(seconds)) {
-                    etaEl.textContent = '--:--:--';
-                } else if (seconds > 86400) { 
-                    etaEl.textContent = '> 1 天';
-                } else {
-                    etaEl.textContent = new Date(seconds * 1000).toISOString().substr(11, 8);
-                }
-            } else {
-                etaEl.textContent = '--:--:--';
-            }
+                etaEl.textContent = seconds > 86400 ? '> 1 天' : new Date(seconds * 1000).toISOString().substr(11, 8);
+            } else etaEl.textContent = '--:--:--';
         }
     },
 
@@ -430,7 +325,7 @@ const TransferManager = {
             
             if (task.status === 'failed') {
                 failedTasks.push(task);
-            } else if (['transferring', 'starting_folder', 'paused'].includes(task.status)) { // Include paused in active list
+            } else if (['transferring', 'paused', 'starting_folder'].includes(task.status)) {
                 activeTasks.push(task);
             } else if (['queued', 'pending'].includes(task.status)) {
                 queuedTasks.push(task);
@@ -456,81 +351,124 @@ const TransferManager = {
         if (countActive) countActive.textContent = activeTasks.length;
         if (countFailed) countFailed.textContent = failedTasks.length;
         if (countQueued) countQueued.textContent = queuedTasks.length;
+
+        // Empty State Handling
+        if (activeTasks.length === 0 && failedTasks.length === 0 && queuedTasks.length === 0) {
+            if (activeSection) {
+                activeSection.classList.remove('hidden');
+                const listActive = document.getElementById('list-active');
+                if (listActive) this.renderEmptyState(listActive);
+            }
+        }
+    },
+
+    renderEmptyState(container) {
+        container.innerHTML = `
+            <div class="empty-state" style="text-align:center; padding:40px; color:#9ca3af;">
+                <i class="fas fa-tasks" style="font-size:48px; margin-bottom:15px; display:block;"></i>
+                <p>暫無傳輸任務</p>
+            </div>
+        `;
+    },
+
+    checkEmptyState() {
+        // Optional helper if needed for explicit checks
+        const activeCount = [...this.uploads.values(), ...this.downloads.values()].filter(t => !['completed', 'cancelled'].includes(t.status)).length;
+        if (activeCount === 0) {
+             this.renderDashboard();
+        }
     },
 
     _renderSection(type, tasks, createCardFn) {
         const listEl = document.getElementById(`list-${type}`);
         if (!listEl) return; 
-        
-        const existingCards = new Map();
-        listEl.querySelectorAll('.task-card-lg, .task-card-failed, .task-card-queued').forEach(el => {
-            existingCards.set(el.dataset.id, el);
-        });
 
+        // Remove empty state if we have tasks to render
+        if (tasks.length > 0) {
+            const emptyState = listEl.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+        }
+
+        const existingCards = new Map();
+        listEl.querySelectorAll('[data-id]').forEach(el => existingCards.set(el.dataset.id, el));
         const toRemove = new Set(existingCards.keys());
 
         tasks.forEach(task => {
             if (existingCards.has(task.id)) {
-                this._updateCard(type, existingCards.get(task.id), task);
+                this.renderTaskCard(task);
                 toRemove.delete(task.id);
-            } else {
-                const newCard = createCardFn(task);
-                listEl.appendChild(newCard);
-            }
+            } else listEl.appendChild(createCardFn(task));
         });
-
         toRemove.forEach(id => existingCards.get(id).remove());
+    },
+
+    renderTaskCard(task, targetElement = null) {
+        const el = targetElement || document.querySelector(`[data-id="${task.id}"]`);
+        if (!el) return;
+
+        const fill = el.querySelector('.progress-fill');
+        if (fill) fill.style.width = `${task.size > 0 ? (task.progress / task.size * 100) : 0}%`;
+
+        const sizeEl = el.querySelector('.meta-size');
+        if (sizeEl) sizeEl.textContent = `${this.UIManager.formatBytes(task.progress)} / ${this.UIManager.formatBytes(task.size)}`;
+
+        const speedEl = el.querySelector('.meta-speed');
+        if (speedEl) {
+            if (task.status === 'paused') {
+                speedEl.textContent = '已暫停';
+                speedEl.style.color = '#f59e0b';
+                const btn = el.querySelector('.btn-toggle');
+                if (btn) { btn.innerHTML = '<i class="fas fa-play"></i>'; btn.title = '繼續'; }
+            } else if (['queued', 'pending'].includes(task.status)) {
+                speedEl.textContent = '等待中...';
+                speedEl.style.color = '';
+            } else {
+                speedEl.style.color = '';
+                const speed = this.UIManager.formatBytes(task.speed || 0);
+                let eta = '';
+                if (task.speed > 0 && (task.size - task.progress) > 0) {
+                    const sec = Math.ceil((task.size - task.progress) / task.speed);
+                    eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec / 60) + ' 分' : sec + ' 秒'}`;
+                }
+                speedEl.textContent = `${speed}/s${eta}`;
+                const btn = el.querySelector('.btn-toggle');
+                if (btn) { btn.innerHTML = '<i class="fas fa-pause"></i>'; btn.title = '暫停'; }
+            }
+        }
+        const failedMsg = el.querySelector('.failed-msg');
+        if (failedMsg && task.message) failedMsg.textContent = task.message;
     },
 
     toggleTaskState(id) {
         const result = this.findTask(id);
         if (!result) return;
-        const { status } = result.task;
-        
-        if (['transferring', 'queued', 'starting_folder'].includes(status)) {
-            this.pauseTask(id);
-        } else if (['paused', 'failed'].includes(status)) {
-            this.resumeTask(id);
-        }
+        if (['transferring', 'queued'].includes(result.task.status)) this.pauseTask(id);
+        else if (['paused', 'failed'].includes(result.task.status)) this.resumeTask(id);
     },
 
     _createActiveCard(task) {
         const el = document.createElement('div');
         el.className = 'task-card-lg';
         el.dataset.id = task.id;
-        
-        const pathInfo = task.localPath ? 
-            `<i class="fas fa-file-upload" style="color:#9ca3af;"></i> ${task.localPath}` : 
-            `<i class="fas fa-cloud-download-alt" style="color:#9ca3af;"></i> 下載至 ${this.currentDownloadDestination || '預設路徑'}`;
-
-        // [Modified] Toggle Pause/Resume icon based on status
-        const isPaused = task.status === 'paused';
-        const pauseIcon = isPaused ? 'fa-play' : 'fa-pause';
-        const pauseTitle = isPaused ? '繼續' : '暫停';
-        const pauseClass = isPaused ? 'btn-resume' : 'btn-pause';
-
+        const pathInfo = (task.type === 'upload') 
+            ? `<i class="fas fa-file-upload"></i> ${task.localPath || '未知路徑'}` 
+            : `<i class="fas fa-cloud-download-alt"></i> 下載至 ${task.localPath || '預設路徑'}`;
         el.innerHTML = `
             <div class="card-row-main">
                 <div class="file-icon-lg"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="card-content">
                     <div class="file-title">${task.name}</div>
                     <div class="file-path">${pathInfo}</div>
-                    <div class="progress-track"><div class="progress-fill" style="width: 0%;"></div></div>
-                    <div class="meta-row">
-                        <span class="meta-size">-- / --</span>
-                        <span class="meta-speed">-- B/s • 計算中...</span>
-                    </div>
+                    <div class="progress-track"><div class="progress-fill"></div></div>
+                    <div class="meta-row"><span class="meta-size"></span><span class="meta-speed"></span></div>
                 </div>
                 <div class="card-actions">
-                    <button class="icon-btn btn-toggle ${pauseClass}" title="${pauseTitle}"><i class="fas ${pauseIcon}"></i></button>
+                    <button class="icon-btn btn-toggle"><i class="fas fa-pause"></i></button>
                     <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
-                    ${task.isFolder ? '<button class="icon-btn btn-expand"><i class="fas fa-chevron-down"></i></button>' : ''}
                 </div>
-            </div>
-        `;
-        
+            </div>`;
         this._bindCardActions(el, task);
-        this._updateCard('active', el, task);
+        this.renderTaskCard(task, el);
         return el;
     },
 
@@ -541,17 +479,14 @@ const TransferManager = {
         el.innerHTML = `
             <div style="display:flex; align-items:center; gap:15px;">
                 <div style="color:var(--danger-color); font-size:20px;"><i class="fas fa-exclamation-circle"></i></div>
-                <div class="failed-info">
-                    <span style="font-weight:600; font-size:14px;">${task.name}</span>
-                    <span class="failed-msg">${task.message || '未知錯誤'}</span>
-                </div>
+                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${task.name}</span><span class="failed-msg">${task.message || '未知錯誤'}</span></div>
             </div>
             <div class="card-actions">
                 <button class="icon-btn btn-retry" style="color:var(--primary-color);" title="重試"><i class="fas fa-redo"></i></button>
                 <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
-            </div>
-        `;
+            </div>`;
         this._bindCardActions(el, task);
+        this.renderTaskCard(task, el);
         return el;
     },
 
@@ -561,288 +496,155 @@ const TransferManager = {
         el.dataset.id = task.id;
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
-            <div class="file-icon" style="width:30px; font-size:20px; text-align:center;"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
-            <div class="queued-content">
-                <div class="queued-name">${task.name}</div>
-                <div class="queued-size">${this.UIManager.formatBytes(task.size)}</div>
-            </div>
-            <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
-        `;
+            <div class="queued-content"><div class="queued-name">${task.name}</div><div class="queued-size">${this.UIManager.formatBytes(task.size)}</div></div>
+            <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>`;
         this._bindCardActions(el, task);
+        this.renderTaskCard(task, el);
         return el;
     },
 
     _bindCardActions(el, task) {
         el.querySelector('.btn-cancel')?.addEventListener('click', () => this.cancelItem(task.id));
-        
-        // [New] Toggle Handler for Active Card (replaces separate pause/resume bindings)
         el.querySelector('.btn-toggle')?.addEventListener('click', () => this.toggleTaskState(task.id));
-        
-        // [New] Retry Handler for Failed Card
         el.querySelector('.btn-retry')?.addEventListener('click', () => this.resumeTask(task.id));
     },
 
-    _updateCard(type, el, task) {
-        if (type === 'active') {
-            const percent = task.size > 0 ? (task.progress / task.size * 100) : 0;
-            const fill = el.querySelector('.progress-fill');
-            if(fill) fill.style.width = `${percent}%`;
+    _getCloudPath(folderId) {
+        if (!this.AppState || !this.AppState.folderMap) return '路徑不存在';
+        
+        const path = [];
+        let current = this.AppState.folderMap.get(folderId);
+
+        // 情況 1: 起始 ID 就不存在
+        if (!current) return '路徑不存在';
+
+        while (current) {
+            path.unshift(current.name);
             
-            const sizeStr = `${this.UIManager.formatBytes(task.progress)} / ${this.UIManager.formatBytes(task.size)}`;
-            el.querySelector('.meta-size').textContent = sizeStr;
-            
-            // [Modified] Display status text when paused/queued
-            const metaSpeed = el.querySelector('.meta-speed');
-            if (task.status === 'paused') {
-                metaSpeed.textContent = '已暫停';
-                metaSpeed.style.color = '#f59e0b';
-                // Update Button State if needed (toggle icon)
-                const btn = el.querySelector('.btn-pause');
-                if (btn) {
-                    btn.className = 'icon-btn btn-resume';
-                    btn.innerHTML = '<i class="fas fa-play"></i>';
-                    btn.title = '繼續';
-                    // Rebind logic is hard here without recreating, simpler to recreate card in render loop
-                }
-            } else if (['queued', 'pending'].includes(task.status)) {
-                metaSpeed.textContent = '等待中...';
-            } else {
-                metaSpeed.style.color = ''; // Reset color
-                const speed = this.UIManager.formatBytes(task.speed);
-                const speedStr = (task.speed > 0 && speed !== '0 B') ? `${speed}/s` : '-- B/s';
-                let eta = '';
-                if (task.speed > 0 && (task.size - task.progress) > 0) {
-                    const sec = Math.ceil((task.size - task.progress) / task.speed);
-                    eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec/60)+' 分' : sec+' 秒'}`;
-                }
-                metaSpeed.textContent = speedStr + eta;
-                
-                // Ensure button is Pause
-                const btn = el.querySelector('.btn-resume');
-                if (btn) {
-                    btn.className = 'icon-btn btn-pause';
-                    btn.innerHTML = '<i class="fas fa-pause"></i>';
-                    btn.title = '暫停';
-                }
+            // 成功到達根目錄 (parent_id 為 null)
+            if (current.parent_id === null) {
+                return path.join(' / ');
             }
+
+            // 向上移動
+            const next = this.AppState.folderMap.get(current.parent_id);
+            
+            // 情況 2: 追溯鏈條斷裂 (找不到父資料夾)
+            if (!next) return '路徑不存在';
+            
+            current = next;
         }
+
+        return '路徑不存在';
     },
 
     _renderCompletedList() {
         const listEl = document.getElementById('list-completed');
         if (!listEl) return; 
         listEl.innerHTML = ''; 
-
-        let candidates = [];
-        if (this.completedFilter === 'all') {
-            candidates = [...this.uploads.values(), ...this.downloads.values()];
-        } else if (this.completedFilter === 'upload') {
-            candidates = [...this.uploads.values()];
-        } else if (this.completedFilter === 'download') {
-            candidates = [...this.downloads.values()];
-        }
-
-        const allCompleted = [];
-        candidates.forEach(t => {
-            if (t.status === 'completed') allCompleted.push(t);
-        });
-
+        let candidates = this.completedFilter === 'all' ? [...this.uploads.values(), ...this.downloads.values()] : (this.completedFilter === 'upload' ? [...this.uploads.values()] : [...this.downloads.values()]);
+        const allCompleted = candidates.filter(t => t.status === 'completed');
         const { key, order } = this.completedSort;
         allCompleted.sort((a, b) => {
-            let valA, valB;
             if (key === 'time') {
-                valA = a.completedAt || 0;
-                valB = b.completedAt || 0;
-            } else if (key === 'name') {
-                valA = a.name;
-                valB = b.name;
-            } else if (key === 'type') {
-                valA = a.name.split('.').pop();
-                valB = b.name.split('.').pop();
+                const valA = a.completedAt || 0;
+                const valB = b.completedAt || 0;
+                return order === 'asc' ? valA - valB : valB - valA;
+            } else {
+                // Name sort: Case-insensitive and natural numeric sorting
+                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * (order === 'asc' ? 1 : -1);
             }
-            
-            if (valA < valB) return order === 'asc' ? -1 : 1;
-            if (valA > valB) return order === 'asc' ? 1 : -1;
-            return 0;
         });
-
         allCompleted.forEach(task => {
             const row = document.createElement('div');
             row.className = 'history-item';
             const isUp = this.uploads.has(task.id);
-            const badgeClass = 'sm-badge'; 
-            const badgeText = isUp ? '上傳成功' : '下載成功';
-            
-            const pathInfo = isUp ? 
-                `上傳至: TDrive` :
-                `下載至: ${task.localPath || this.currentDownloadDestination || '預設路徑'}`;
-
+            const cloudPath = isUp ? this._getCloudPath(task.parentFolderId) : '';
             row.innerHTML = `
                 <div class="sm-icon"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
-                <div class="sm-name">
-                    ${task.name}
-                    <div style="font-size:12px; color:#9ca3af; margin-top:2px;">${pathInfo}</div>
-                </div>
-                <div class="${badgeClass}">${badgeText}</div>
-                <a class="sm-action">${isUp ? '開啟' : '顯示位置'}</a>
-            `;
+                <div class="sm-name">${task.name}<div style="font-size:12px; color:#9ca3af; margin-top:2px;">${isUp ? `上傳至: ${cloudPath}` : `下載至: ${task.localPath || '預設路徑'}`}</div></div>
+                <div class="sm-badge">${isUp ? '上傳成功' : '下載成功'}</div>
+                <a class="sm-action">${isUp ? '開啟' : '顯示位置'}</a>`;
             listEl.appendChild(row);
         });
     },
     
     sortCompleted(key) {
-        if (this.completedSort.key === key) {
-            this.completedSort.order = (this.completedSort.order === 'asc') ? 'desc' : 'asc';
-        } else {
-            this.completedSort.key = key;
-            this.completedSort.order = 'desc'; 
-        }
-        
+        if (!['time', 'name'].includes(key)) return;
+        if (this.completedSort.key === key) this.completedSort.order = (this.completedSort.order === 'asc') ? 'desc' : 'asc';
+        else { this.completedSort.key = key; this.completedSort.order = 'desc'; }
         document.querySelectorAll('.sort-item').forEach(el => {
             el.classList.toggle('active', el.dataset.sort === key);
             const icon = el.querySelector('i');
-            if (icon) {
-                if (el.dataset.sort === key) {
-                    icon.className = this.completedSort.order === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
-                } else {
-                    icon.className = 'fas fa-sort'; 
-                }
-            }
+            if (icon) icon.className = el.dataset.sort === key ? (this.completedSort.order === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down') : 'fas fa-sort';
         });
-
         this._renderCompletedList();
     },
 
     updateMainFileListUI() {
         document.querySelectorAll('.file-item:not(.is-uploading)').forEach(el => {
             const name = el.dataset.name;
-            let task = null;
-            const findTask = (map) => { for (const t of map.values()) { if (t.name === name && t.parentFolderId === this.AppState.currentFolderId) return t; } return null; };
-            task = findTask(this.uploads) || findTask(this.downloads);
-            el.classList.remove('in-transfer');
-            if(task && ['transferring', 'paused', 'queued', 'starting_folder'].includes(task.status)) el.classList.add('in-transfer');
+            const task = [...this.uploads.values(), ...this.downloads.values()].find(t => t.name === name && t.parentFolderId === this.AppState.currentFolderId);
+            el.classList.toggle('in-transfer', !!(task && ['transferring', 'paused', 'queued'].includes(task.status)));
         });
     },
     
     showFileFeedback(name, status) {
         const el = document.querySelector(`.file-item[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
-        el.classList.remove('in-transfer');
         const flashClass = status === 'completed' ? 'flash-success' : 'flash-fail';
         el.classList.add(flashClass);
         setTimeout(() => el.classList.remove(flashClass), 1000);
     },
     
-    // --- Control Actions ---
-
     pauseTask(id) {
         const result = this.findTask(id);
-        if (result && ['transferring', 'queued', 'starting_folder'].includes(result.task.status)) {
-            // Optimistic update
+        if (result && ['transferring', 'queued'].includes(result.task.status)) {
             result.task.status = 'paused';
-            result.task.speed = 0;
-            this.tick(); // Force UI update
-            
-            this.ApiService.pauseTransfer(id).then(res => {
-                if (!res.success) console.warn(`Pause failed: ${res.message}`);
-            });
+            this.renderTaskCard(result.task);
+            this.ApiService.pauseTransfer(id);
         }
     },
 
     resumeTask(id) {
         const result = this.findTask(id);
         if (result && ['paused', 'failed'].includes(result.task.status)) {
-            // Optimistic update
-            result.task.status = 'queued'; // Waiting for backend
-            result.task.message = null; // Clear error msg
-            this.tick();
-            
-            this.ApiService.resumeTransfer(id).then(res => {
-                if (!res.success) {
-                    result.task.status = 'failed'; // Revert if call fails
-                    result.task.message = res.message;
-                    this.tick();
-                }
-            });
-            this.startUpdater(); // Ensure ticker is running
+            result.task.status = 'queued';
+            this.renderTaskCard(result.task);
+            this.ApiService.resumeTransfer(id);
         }
     },
 
     cancelItem(id) {
         const result = this.findTask(id);
         if (result) {
-            // Call backend to cancel/remove
-            this.ApiService.cancelTransfer(id).then(res => { if (!res.success) console.warn(`Failed to cancel ${id}`); });
-            
-            // Remove from local map
-            const map = result.parent ? result.parent.children : result.map;
-            map.delete(result.task.id);
+            this.ApiService.cancelTransfer(id);
+            result.map.delete(id);
             this.tick();
         }
     },
 
     cancelAll() {
-        const _cancelRecursively = (map) => {
-            map.forEach(task => {
-                if (task.isFolder && task.children) {
-                    _cancelRecursively(task.children);
-                }
-                // Call cancel for each task
-                // (Optimized: Could add 'cancelAll' endpoint in backend, but iteration works)
-                this.cancelItem(task.id);
-            });
-        };
-        _cancelRecursively(this.uploads);
-        _cancelRecursively(this.downloads);
+        this.uploads.forEach(t => this.cancelItem(t.id));
+        this.downloads.forEach(t => this.cancelItem(t.id));
     },
 
     resumeAll() {
-        // Renamed from retryAll to cover both paused and failed
-        const _resumeLoop = (map) => {
-            map.forEach(task => {
-                if (['paused', 'failed'].includes(task.status)) {
-                    this.resumeTask(task.id);
-                }
-            });
-        };
-        _resumeLoop(this.uploads);
-        _resumeLoop(this.downloads);
+        [this.uploads, this.downloads].forEach(map => map.forEach(t => { if(['paused', 'failed'].includes(t.status)) this.resumeTask(t.id); }));
     },
 
     pauseAll() {
-        const _pauseLoop = (map) => {
-            map.forEach(task => {
-                if (['transferring', 'starting_folder', 'queued'].includes(task.status)) {
-                    this.pauseTask(task.id);
-                }
-            });
-        };
-        _pauseLoop(this.uploads);
-        _pauseLoop(this.downloads);
+        [this.uploads, this.downloads].forEach(map => map.forEach(t => { if(['transferring', 'queued'].includes(t.status)) this.pauseTask(t.id); }));
     },
     
     findTask(id) {
-        const _findRecursive = (searchId, map, parent = null) => {
-            for (const task of map.values()) {
-                if (task.id === searchId) return { task, map, parent };
-                if (task.isFolder && task.children) {
-                    const result = _findRecursive(searchId, task.children, task);
-                    if (result) return result;
-                }
-            }
-            return null;
-        };
-        return _findRecursive(id, this.uploads) || _findRecursive(id, this.downloads);
+        if (this.uploads.has(id)) return { task: this.uploads.get(id), map: this.uploads };
+        if (this.downloads.has(id)) return { task: this.downloads.get(id), map: this.downloads };
+        return null;
     },
 
     clearCompleted() {
-        const _filterRecursively = (map) => {
-            for (let [key, task] of map.entries()) {
-                if (task.isFolder && task.children) _filterRecursively(task.children);
-                if (['completed', 'failed', 'cancelled'].includes(task.status)) map.delete(key);
-            }
-        };
-        _filterRecursively(this.uploads); _filterRecursively(this.downloads);
+        [this.uploads, this.downloads].forEach(map => { for (let [k, t] of map.entries()) if (['completed', 'failed', 'cancelled'].includes(t.status)) map.delete(k); });
         this.tick();
         if (this.currentTab === 'completed') this._renderCompletedList();
     },
@@ -851,42 +653,22 @@ const TransferManager = {
     
     setupEventListeners() {
         const sidebarStatus = document.getElementById('sidebar-transfer-status');
-        if (sidebarStatus) {
-            sidebarStatus.addEventListener('click', () => {
-                if(window.switchPage) window.switchPage('transfer');
-            });
-        }
-
-        document.querySelectorAll('.tabs-container .tab-item').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelector('.tabs-container .tab-item.active').classList.remove('active');
-                btn.classList.add('active');
-                this.currentTab = btn.dataset.tab;
-                this.renderDashboard();
-            });
-        });
-
-        // Completed Filter Handlers
-        document.querySelectorAll('.filter-segment').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.filter-segment').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                this.completedFilter = btn.dataset.filter;
-                this._renderCompletedList();
-            });
-        });
-
-        // Completed Sort Handlers
-        document.querySelectorAll('.sort-item').forEach(btn => {
-            btn.addEventListener('click', () => {
-                this.sortCompleted(btn.dataset.sort);
-            });
-        });
-
+        if (sidebarStatus) sidebarStatus.addEventListener('click', () => { if(window.switchPage) window.switchPage('transfer'); });
+        document.querySelectorAll('.tabs-container .tab-item').forEach(btn => btn.addEventListener('click', () => {
+            document.querySelector('.tabs-container .tab-item.active').classList.remove('active');
+            btn.classList.add('active');
+            this.currentTab = btn.dataset.tab;
+            this.renderDashboard();
+        }));
+        document.querySelectorAll('.filter-segment').forEach(btn => btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-segment').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            this.completedFilter = btn.dataset.filter;
+            this._renderCompletedList();
+        }));
+        document.querySelectorAll('.sort-item').forEach(btn => btn.addEventListener('click', () => this.sortCompleted(btn.dataset.sort)));
         document.getElementById('global-cancel-btn')?.addEventListener('click', () => this.cancelAll());
         document.getElementById('global-pause-btn')?.addEventListener('click', () => this.pauseAll());
-        
-        // Updated: 'retry-all' now maps to resumeAll
         document.getElementById('retry-all-btn')?.addEventListener('click', () => this.resumeAll());
     }
 };

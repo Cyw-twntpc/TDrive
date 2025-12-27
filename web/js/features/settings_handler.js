@@ -25,8 +25,9 @@ const SettingsHandler = {
         }
         
         // Enable or disable the "Set Path" button based on the toggle.
-        setPathBtn.disabled = !useDefault;
-        pathDisplay.style.opacity = useDefault ? '1' : '0.5';
+        // If "Use Default" is checked, we disable the manual set button.
+        setPathBtn.disabled = useDefault;
+        pathDisplay.style.opacity = useDefault ? '0.5' : '1';
     },
 
     /**
@@ -62,9 +63,9 @@ const SettingsHandler = {
         });
         
         document.getElementById('use-default-download-path-toggle').addEventListener('change', (e) => {
-            const isEnabled = e.target.checked;
-            document.getElementById('set-default-download-path-btn').disabled = !isEnabled;
-            document.getElementById('default-download-path-display').style.opacity = isEnabled ? '1' : '0.5';
+            const isUsingDefault = e.target.checked;
+            document.getElementById('set-default-download-path-btn').disabled = isUsingDefault;
+            document.getElementById('default-download-path-display').style.opacity = isUsingDefault ? '0.5' : '1';
         });
     }
 };

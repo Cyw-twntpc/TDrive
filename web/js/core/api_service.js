@@ -62,20 +62,14 @@ const ApiService = {
      * Deletes a batch of items.
      * @param {Array} items - Array of {id, type} objects.
      */
-    async deleteItems(items) {
-        if (!window.tdrive_bridge) return { success: false, message: "Bridge not available" };
-        return await window.tdrive_bridge.delete_items(items);
-    },
+    deleteItems: (items) => ApiService._callBridge('delete_items', items),
 
     /**
      * Moves a batch of items to a new folder.
      * @param {Array} items - Array of {id, type} objects.
      * @param {number} targetFolderId - The destination folder ID.
      */
-    async moveItems(items, targetFolderId) {
-        if (!window.tdrive_bridge) return { success: false, message: "Bridge not available" };
-        return await window.tdrive_bridge.move_items(items, targetFolderId);
-    },
+    moveItems: (items, targetFolderId) => ApiService._callBridge('move_items', items, targetFolderId),
 
     createFolder: (parentId, folderName) => ApiService._callBridge('create_folder', parentId, folderName),
 
@@ -85,7 +79,7 @@ const ApiService = {
 
     // --- File Transfers ---
     uploadFiles: (parentId, files) => ApiService._callBridge('upload_files', parentId, files),
-    uploadFolder: (parentId, folderPath) => ApiService._callBridge('upload_folder', parentId, folderPath),
+    uploadFolder: (parentId, folderPath, taskId) => ApiService._callBridge('upload_folder', parentId, folderPath, taskId),
     downloadItems: (items, destination) => ApiService._callBridge('download_items', items, destination),
     
     // Control Methods

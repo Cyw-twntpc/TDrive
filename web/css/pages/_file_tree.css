@@ -158,3 +158,50 @@
 }
 #move-tree-container .tree-content.current-location:hover { background-color: #f8f9fa; }
 #move-tree-container .tree-content.current-location i.fa-folder { color: #adb5bd; }
+
+/* --- Move Modal Tree View --- */
+.tree-node {
+    margin-bottom: 2px;
+}
+
+.tree-content {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-size: 14px;
+    gap: 8px;
+}
+
+.tree-content:hover {
+    background-color: #f0f2f5;
+}
+
+.tree-content.selected {
+    background-color: var(--selected-bg-color);
+    color: var(--primary-color);
+}
+
+.tree-content.current-location {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: #f8f9fa;
+}
+
+.tree-toggle {
+    width: 16px;
+    color: #adb5bd;
+    cursor: pointer;
+}
+
+.tree-toggle-placeholder {
+    width: 16px;
+}
+
+.folder-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

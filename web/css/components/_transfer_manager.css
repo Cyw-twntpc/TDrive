@@ -1,0 +1,340 @@
+/* _transfer_panel.css */
+
+/* Dashboard Layout */
+#transfer-dashboard {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: #fff;
+}
+
+/* Tabs Header */
+.dashboard-header {
+    padding: 16px 20px 0 20px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: #fff;
+    flex-shrink: 0;
+}
+
+.tabs-container {
+    display: flex;
+    gap: 12px; 
+    width: fit-content; 
+    margin-bottom: -1px; /* Overlap border-bottom */
+}
+
+.tab-item {
+    flex: 0 0 auto; 
+    text-align: center; 
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-light-color);
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s;
+    border-bottom: 3px solid transparent;
+}
+
+.tab-item:hover {
+    color: var(--primary-color);
+}
+
+.tab-item.active {
+    color: var(--primary-color);
+    font-weight: 700;
+    border-bottom-color: var(--primary-color);
+}
+
+/* Filters Bar (Secondary Header) */
+.filters-bar {
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.filters-group {
+    display: flex;
+    gap: 8px;
+    background: #e9ecef;
+    padding: 3px;
+    border-radius: 6px;
+}
+
+.filter-segment {
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-light-color);
+    transition: all 0.2s;
+}
+
+.filter-segment.active {
+    background-color: #fff;
+    color: var(--text-color);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    font-weight: 500;
+}
+
+.global-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Task List Container */
+#transfer-list-container {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+/* Individual Task Card */
+.transfer-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+    gap: 16px;
+    transition: background-color 0.1s;
+}
+
+.transfer-item:hover {
+    background-color: #f8f9fa;
+}
+
+.transfer-item .item-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #eef2f7;
+    border-radius: 8px;
+    color: #5b6e88;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.transfer-item .item-info {
+    flex-grow: 1;
+    min-width: 0; /* Enable truncation */
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.transfer-item .item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-item .item-meta {
+    font-size: 12px;
+    color: var(--text-light-color);
+    display: flex;
+    justify-content: space-between;
+}
+
+/* Progress Bar */
+.progress-track {
+    height: 4px;
+    background-color: #e9ecef;
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background-color: var(--primary-color);
+    width: 0%;
+    transition: width 0.3s ease-out;
+    border-radius: 2px;
+}
+
+/* Status Colors */
+.transfer-item[data-status="completed"] .progress-fill {
+    background-color: var(--success-color);
+}
+.transfer-item[data-status="failed"] .progress-fill {
+    background-color: var(--danger-color);
+}
+.transfer-item[data-status="paused"] .progress-fill {
+    background-color: var(--warning-color);
+}
+
+.error-msg {
+    color: var(--danger-color);
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+/* Action Buttons */
+.transfer-item .item-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background-color: transparent;
+    color: var(--text-light-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.action-btn:hover {
+    background-color: #e9ecef;
+    color: var(--text-color);
+}
+
+/* Toggle visibility based on status */
+.transfer-item .pause-item, 
+.transfer-item .resume-item, 
+.transfer-item .retry-item, 
+.transfer-item .cancel-item { 
+    display: none; 
+}
+
+.transfer-item[data-status="transferring"] .pause-item, 
+.transfer-item[data-status="transferring"] .cancel-item { display: flex; }
+
+.transfer-item[data-status="queued"] .pause-item, 
+.transfer-item[data-status="queued"] .cancel-item { display: flex; }
+
+.transfer-item[data-status="paused"] .resume-item, 
+.transfer-item[data-status="paused"] .cancel-item { display: flex; }
+
+.transfer-item[data-status="failed"] .retry-item, 
+.transfer-item[data-status="failed"] .cancel-item { display: flex; }
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: #adb5bd;
+}
+.empty-state i { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state p { font-size: 16px; }
+
+/* --- Sidebar Transfer Status (Restored) --- */
+.sidebar-transfer-status {
+    border-top: 1px solid var(--border-color);
+    padding: 4px;
+    margin-top: auto;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    user-select: none;
+    display: flex;
+    align-items: stretch;
+    height: 50px;
+    gap: 6px;
+}
+
+.sidebar-transfer-status:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.transfer-icon-wrapper {
+    color: var(--primary-color);
+    font-size: 20px;
+    transition: color 0.3s ease;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-image: url('../../img/transfer.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* GIF Animations for active states */
+.transfer-active.mixed-active .transfer-icon-wrapper { background-image: url('../../img/sync.gif'); }
+.transfer-active.upload-active .transfer-icon-wrapper { background-image: url('../../img/upload.gif'); }
+.transfer-active.download-active .transfer-icon-wrapper { background-image: url('../../img/download.gif'); }
+
+.sidebar-transfer-right {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+    padding-bottom: 2px;
+}
+
+.transfer-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    line-height: 1.2;
+    height: 16px;
+}
+
+#sidebar-transfer-title {
+    font-size: 12px;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#sidebar-transfer-speed {
+    font-size: 10px;
+    color: var(--text-light-color);
+}
+
+.sidebar-progress-container {
+    height: 4px;
+    background-color: #e9eef5;
+    border-radius: 2px;
+    overflow: hidden;
+    width: 100%;
+    margin-top: 3px;
+    flex-shrink: 0;
+}
+
+.sidebar-progress-fill {
+    height: 100%;
+    background-color: transparent;
+    width: 100%;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.15s linear, background-color 0.3s ease;
+    border-radius: 2px;
+}
+.sidebar-transfer-left {
+    flex-shrink: 0;
+    width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: transparent;
+    border-radius: 4px;
+}
+
+.transfer-active .sidebar-progress-fill { background-color: var(--primary-color) !important; }
+.status-completed .sidebar-progress-fill { background-color: var(--success-color); transform: scaleX(1) !important; }
+.status-failed .sidebar-progress-fill { background-color: var(--danger-color); }
+.status-completed .transfer-icon-wrapper { background-image: url('../../img/done.png'); }
+.status-failed .transfer-icon-wrapper { background-image: url('../../img/error.png'); }

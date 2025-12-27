@@ -2,9 +2,12 @@
 
 :root {
     --primary-color: #007aff;
+    --primary-color-rgb: 0, 122, 255;
     --primary-hover-color: #0056b3;
     --success-color: #28a745;
+    --success-color-rgb: 40, 167, 69;
     --danger-color: #dc3545;
+    --danger-color-rgb: 220, 53, 69;
     --danger-hover-color: #c82333;
     --warning-color: #ffc107;
     --selected-bg-color: #e0efff;
