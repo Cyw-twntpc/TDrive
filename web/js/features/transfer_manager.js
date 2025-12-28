@@ -21,6 +21,7 @@ const TransferManager = {
     _completedListDirty: true,
     _validityCheckInterval: null,
     _showCompletedState: false,
+    chunkSize: 33554432, // Default fallback
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -34,36 +35,49 @@ const TransferManager = {
             window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
         }
 
-        // Restore tasks from backend state
-        this.ApiService.getIncompleteTransfers().then(data => {
-            if (data) {
-                this.restoreTasks(data.uploads, 'upload');
-                this.restoreTasks(data.downloads, 'download');
-                this.updateAllUI();
-            }
-        });
-
-        // Get initial traffic stats
-        if (this.ApiService.getInitialTrafficStats) {
-            this.ApiService.getInitialTrafficStats().then(data => {
-                if (data && data.todayTraffic !== undefined) {
-                    const trafficEl = document.getElementById('hero-daily-traffic');
-                    if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
+        // Initialize: Get Config -> Then Restore Tasks
+        if (this.ApiService.getInitialStats) {
+            this.ApiService.getInitialStats().then(data => {
+                if (data) {
+                    if (data.todayTraffic !== undefined) {
+                        const trafficEl = document.getElementById('hero-daily-traffic');
+                        if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
+                    }
+                    if (data.chunkSize) {
+                        this.chunkSize = data.chunkSize;
+                    }
+                }
+                
+                // Restore tasks after config is loaded
+                this.ApiService.getIncompleteTransfers().then(stateData => {
+                    if (stateData) {
+                        this.restoreTasks(stateData.uploads, 'upload');
+                        this.restoreTasks(stateData.downloads, 'download');
+                        this.updateAllUI();
+                    }
+                });
+            });
+        } else {
+            // Fallback for older backend if any
+            this.ApiService.getIncompleteTransfers().then(stateData => {
+                if (stateData) {
+                    this.restoreTasks(stateData.uploads, 'upload');
+                    this.restoreTasks(stateData.downloads, 'download');
+                    this.updateAllUI();
                 }
             });
         }
     },
 
-    // Restore tasks from backend state (32MB Chunk Size)
+    // Restore tasks from backend state
     restoreTasks(taskMap, type) {
         if (!taskMap) return;
-        const CHUNK_SIZE = 33554432; // 32MB
 
         for (const [taskId, info] of Object.entries(taskMap)) {
             const calculateProgress = (taskInfo) => {
                 let p = 0;
                 if (taskInfo.transferred_parts && Array.isArray(taskInfo.transferred_parts)) {
-                    p = taskInfo.transferred_parts.length * CHUNK_SIZE;
+                    p = taskInfo.transferred_parts.length * this.chunkSize;
                     if (p > taskInfo.total_size) p = taskInfo.total_size;
                     if (taskInfo.status === 'completed') p = taskInfo.total_size;
                 }
@@ -675,9 +689,15 @@ const TransferManager = {
                         ? `<button class="icon-btn btn-go-cloud" title="前往雲端位置"><i class="fas fa-external-link-alt"></i></button>`
                         : `<button class="icon-btn btn-reveal-local" title="在檔案總管中顯示"><i class="fas fa-folder-open"></i></button>`
                     }
-                </div>`;
+                </div>
+                <button class="btn-remove-history" title="移除此紀錄"><i class="fas fa-trash-alt"></i></button>`;
             
             listEl.appendChild(row);
+
+            row.querySelector('.btn-remove-history').onclick = (e) => {
+                e.stopPropagation();
+                this.removeSingleHistoryItem(task.id, task.type);
+            };
 
             if (isUp) {
                 row.querySelector('.btn-go-cloud').onclick = () => {
@@ -772,9 +792,45 @@ const TransferManager = {
     },
 
     clearCompleted() {
-        [this.uploads, this.downloads].forEach(map => { for (let [k, t] of map.entries()) if (['completed', 'failed', 'cancelled'].includes(t.status)) map.delete(k); });
+        const idsToRemove = [];
+        
+        // Helper to collect IDs and clean maps
+        const cleanMap = (map) => {
+            for (let [k, t] of map.entries()) {
+                if (t.status === 'completed') {
+                    idsToRemove.push(k);
+                    map.delete(k);
+                }
+            }
+        };
+
+        cleanMap(this.uploads);
+        cleanMap(this.downloads);
+        cleanMap(this.uploadHistory);
+        cleanMap(this.downloadHistory);
+
+        // Notify backend to remove from persistent state
+        idsToRemove.forEach(id => this.ApiService.removeTransferHistory(id));
+
         this.tick();
         if (this.currentTab === 'completed') this._renderCompletedList();
+    },
+
+    removeSingleHistoryItem(taskId, type) {
+        if (type === 'upload') {
+            this.uploadHistory.delete(taskId);
+            this.uploads.delete(taskId); // Check active map too just in case
+        } else {
+            this.downloadHistory.delete(taskId);
+            this.downloads.delete(taskId);
+        }
+        
+        this.ApiService.removeTransferHistory(taskId);
+        
+        if (this.currentTab === 'completed') this._renderCompletedList();
+        
+        // Also update summary/hero if an active-but-completed task was removed
+        this.updateSummaryPanel();
     },
 
     setDownloadDestination(path) { this.currentDownloadDestination = path; },

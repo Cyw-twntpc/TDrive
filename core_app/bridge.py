@@ -284,15 +284,19 @@ class Bridge(QObject):
         # Resumes task (reuses progress signal)
         return self._service.resume_transfer(task_id, self.transfer_progress_updated.emit)
 
+    @Slot(str, result=dict)
+    def remove_transfer_history(self, task_id):
+        """Removes a task from the history state file."""
+        return self._service.remove_transfer_history(task_id)
+
     @Slot(result=dict)
     def get_incomplete_transfers(self):
         # Gets list of paused/failed tasks for startup
         return self._service.get_incomplete_transfers()
 
     @Slot(result=dict)
-    def get_initial_traffic_stats(self):
+    def get_initial_stats(self):
         """
-        Allows the frontend to query traffic stats upon initialization.
+        Allows the frontend to query config and stats upon initialization.
         """
-        today_traffic = self._service.get_today_traffic_stats()
-        return {'todayTraffic': today_traffic}
+        return self._service.get_transfer_config()

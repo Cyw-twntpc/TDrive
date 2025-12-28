@@ -209,8 +209,8 @@ class TDriveService:
         return await self._file_service.move_items(items, target_folder_id)
 
     # --- Transfer Service ---
-    def get_today_traffic_stats(self) -> int:
-        return self._monitor_service.get_today_traffic()
+    def get_transfer_config(self) -> Dict[str, Any]:
+        return self._transfer_service.get_transfer_config()
 
     def upload_files(self, parent_id: int, files: List[Dict], progress_callback: Callable) -> Dict[str, Any]:
         """Initiates file uploads."""
@@ -248,3 +248,6 @@ class TDriveService:
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:
         return self._transfer_service.controller.get_incomplete_transfers()
+
+    def remove_transfer_history(self, task_id: str) -> Dict[str, Any]:
+        return self._transfer_service.remove_history_item(task_id)

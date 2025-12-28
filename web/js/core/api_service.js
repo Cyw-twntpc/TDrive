@@ -88,8 +88,9 @@ const ApiService = {
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),
     pauseTransfer: (taskId) => ApiService._callBridge('pause_transfer', taskId),
     resumeTransfer: (taskId) => ApiService._callBridge('resume_transfer', taskId),
+    removeTransferHistory: (taskId) => ApiService._callBridge('remove_transfer_history', taskId),
     
     // Startup & State Methods
     getIncompleteTransfers: () => ApiService._callBridge('get_incomplete_transfers'),
-    getInitialTrafficStats: () => ApiService._callBridge('get_initial_traffic_stats'),
+    getInitialStats: () => ApiService._callBridge('get_initial_stats'),
 };

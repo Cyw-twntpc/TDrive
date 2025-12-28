@@ -555,10 +555,13 @@
 }
 
 .history-item {
+    position: relative;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 16px 20px;
+    padding-right: 50px; /* Make space for delete button */
     margin-bottom: 2px;
     background-color: #fff;
     border: 1px solid var(--border-color);
@@ -572,6 +575,30 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     background-color: #fff;
     border-color: rgba(0, 122, 255, 0.3);
+}
+
+.btn-remove-history {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    border: none;
+    background-color: transparent;
+    color: #94a3b8;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+.btn-remove-history:hover {
+    background-color: #fee2e2;
+    color: #ef4444;
+    border-left-color: #fecaca;
 }
 
 /* Type-based coloring (Upload/Download) */

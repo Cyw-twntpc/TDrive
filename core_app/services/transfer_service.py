@@ -486,6 +486,13 @@ class TransferService:
 
     # --- CONTROL METHODS ---
 
+    def get_transfer_config(self) -> Dict[str, Any]:
+        """Returns initialization configuration and stats."""
+        return {
+            "todayTraffic": self.monitor.get_today_traffic(),
+            "chunkSize": fp.CHUNK_SIZE
+        }
+
     async def resume_transfer(self, task_id: str, progress_callback: Callable):
         """
         Resumes a paused or failed transfer task.
@@ -581,6 +588,13 @@ class TransferService:
             asyncio.run_coroutine_threadsafe(self._cleanup_task_data(task_info), self.shared_state.loop)
 
         return {"success": True, "message": "任務已取消並開始背景清理。"}
+
+    def remove_history_item(self, task_id: str) -> Dict[str, Any]:
+        """
+        Removes a task from the history (state file) without deleting the physical file.
+        """
+        self.controller.remove_task(task_id)
+        return {"success": True, "message": "History item removed."}
 
     async def _cleanup_task_data(self, task_info: Dict[str, Any]):
         """
