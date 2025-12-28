@@ -577,14 +577,14 @@
 /* Type-based coloring (Upload/Download) */
 .transfer-item[data-type="upload"],
 .history-item[data-type="upload"] {
-    border-left-color: var(--primary-color);
-    background: linear-gradient(to right, rgba(59, 130, 246, 0.03), transparent 30%);
+    border-left-color: var(--success-color);
+    background: linear-gradient(to right, rgba(16, 185, 129, 0.03), transparent 30%);
 }
 
 .transfer-item[data-type="download"],
 .history-item[data-type="download"] {
-    border-left-color: var(--success-color);
-    background: linear-gradient(to right, rgba(16, 185, 129, 0.03), transparent 30%);
+    border-left-color: var(--primary-color);
+    background: linear-gradient(to right, rgba(59, 130, 246, 0.03), transparent 30%);
 }
 
 /* -- Transfer Item Specifics -- */
@@ -806,7 +806,6 @@
 
 /* Status Icons */
 .status-completed .transfer-icon-wrapper { background-image: url('../../img/done.png'); }
-.status-failed .transfer-icon-wrapper { background-image: url('../../img/error.png'); }
 
 .sidebar-transfer-right {
     display: flex;
@@ -865,8 +864,4 @@
 .status-completed .sidebar-progress-fill {
     background-color: var(--success-color);
     transform: scaleX(1) !important;
-}
-
-.status-failed .sidebar-progress-fill {
-    background-color: var(--danger-color);
 }

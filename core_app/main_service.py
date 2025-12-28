@@ -66,7 +66,7 @@ class TDriveService:
             if len(args) >= 5: 
                 status = args[4]
                 # Always emit significant status changes
-                if status in ['completed', 'failed', 'cancelled', 'starting_folder', 'queued', 'paused']:
+                if status in ['completed', 'failed', 'cancelled', 'queued', 'paused']:
                     should_emit = True
                     if status in ['completed', 'failed', 'cancelled']:
                         last_emit_time.pop(task_id, None) # Cleanup
