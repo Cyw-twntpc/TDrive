@@ -184,8 +184,13 @@ class TransferController:
         
         self.db.add_progress_part(sub_task_id, part_num, msg_id, p_hash)
         
-        # 2. Update Main Task status and timestamp
-        self.db.update_main_task_status(main_task_id, "transferring", time.time())
+        # 2. Update Main Task status only if it's currently 'queued'
+        current_status = self.db.get_main_task_status(main_task_id)
+        if current_status == "queued":
+            self.db.update_main_task_status(main_task_id, "transferring", time.time())
+        else:
+            # Just update timestamp to show activity
+            self.db.update_main_task_status(main_task_id, current_status or "transferring", time.time())
         
         # 3. Update Sub Task status
         self.db.update_sub_task_status(sub_task_id, "transferring")
@@ -198,8 +203,9 @@ class TransferController:
             # Mark main task as completed for single file transfers
             self.db.update_main_task_status(main_task_id, "completed", time.time())
         else:
-            # Update main task timestamp for folder transfers
-            self.db.update_main_task_status(main_task_id, "transferring", time.time())
+            # Update timestamp. Status remains 'transferring' until main task is explicitly completed.
+            current_status = self.db.get_main_task_status(main_task_id)
+            self.db.update_main_task_status(main_task_id, current_status or "transferring", time.time())
 
     def mark_sub_task_failed(self, main_task_id: str, sub_task_id: str, error_msg: str):
         """Marks a specific sub-task as failed and updates main task error message."""

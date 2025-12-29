@@ -870,3 +870,13 @@ class DatabaseHandler:
         finally:
             if conn:
                 conn.close()
+
+    def check_folder_exists(self, folder_id: int) -> bool:
+        """Checks if a folder with the given ID exists."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()

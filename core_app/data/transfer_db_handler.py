@@ -228,6 +228,17 @@ class TransferDBHandler:
         finally:
             conn.close()
 
+    def get_main_task_status(self, task_id: str) -> Optional[str]:
+        """Retrieves the current status of a main task."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status FROM main_tasks WHERE task_id = ?", (task_id,))
+            row = cursor.fetchone()
+            return row['status'] if row else None
+        finally:
+            conn.close()
+
     def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
         """
         Retrieves all tasks and reconstructs them into the format expected by the Service layer.

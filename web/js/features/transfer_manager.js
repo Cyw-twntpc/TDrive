@@ -34,6 +34,9 @@ const TransferManager = {
         if (window.tdrive_bridge && window.tdrive_bridge.transfer_progress_updated) {
             window.tdrive_bridge.transfer_progress_updated.connect(this.updateTask.bind(this));
         }
+        if (window.tdrive_bridge && window.tdrive_bridge.file_status_changed) {
+            window.tdrive_bridge.file_status_changed.connect(this.updateFileExistence.bind(this));
+        }
 
         // Initialize: Get Config -> Then Restore Tasks
         if (this.ApiService.getInitialStats) {
@@ -54,6 +57,15 @@ const TransferManager = {
                         this.restoreTasks(stateData.uploads, 'upload');
                         this.restoreTasks(stateData.downloads, 'download');
                         this.updateAllUI();
+
+                        // [Sync] Manually fetch current existence status from backend
+                        // This handles cases where the initial signal was emitted before frontend was ready
+                        this.ApiService.getAllFileStatuses().then(statuses => {
+                            if (statuses) {
+                                const changes = Object.entries(statuses).map(([id, exists]) => ({ id, exists }));
+                                this.updateFileExistence(changes);
+                            }
+                        });
                     }
                 });
             });
@@ -108,7 +120,8 @@ const TransferManager = {
                 alertShown: false,
                 startTime: info.created_at * 1000 || Date.now(),
                 completedAt: (info.status === 'completed' && info.updated_at) ? info.updated_at * 1000 : null,
-                type: type
+                type: type,
+                targetExists: true 
             };
 
             if (isFolder && type === 'download' && !task.name) {
@@ -134,7 +147,8 @@ const TransferManager = {
             progress: 0, status: 'queued', localPath: item.save_path || this.currentDownloadDestination, 
             parentFolderId: this.AppState.currentFolderId, feedbackShown: false, 
             alertShown: false, startTime: Date.now(), completedAt: null,
-            type: 'download'
+            type: 'download',
+            targetExists: true
         };
         this.downloads.set(item.task_id, task);
         this.startUpdater();
@@ -248,7 +262,7 @@ const TransferManager = {
             
             // Move completed uploads to history
             for (const [id, task] of this.uploads.entries()) {
-                if (task.status === 'completed') {
+                if (task.status === 'completed' && task.feedbackShown) {
                     this.uploadHistory.set(id, task);
                     this.uploads.delete(id);
                     moved = true;
@@ -257,7 +271,7 @@ const TransferManager = {
             
             // Move completed downloads to history
             for (const [id, task] of this.downloads.entries()) {
-                if (task.status === 'completed') {
+                if (task.status === 'completed' && task.feedbackShown) {
                     this.downloadHistory.set(id, task);
                     this.downloads.delete(id);
                     moved = true;
@@ -388,17 +402,14 @@ const TransferManager = {
             liveView.classList.add('hidden');
             completedView.classList.remove('hidden');
             
-            // Start the visibility checker when viewing completed tasks
-            this.startValidityChecker();
-
             if (this._completedListDirty) {
                 this._renderCompletedList();
+            } else {
+                // Not dirty, but we still need to refresh paths because folders might have moved
+                this._refreshHistoryPathLabels();
             }
             return;
         }
-
-        // Stop checker when not in completed tab
-        this.stopValidityChecker();
 
         liveView.classList.remove('hidden');
         completedView.classList.add('hidden');
@@ -672,9 +683,19 @@ const TransferManager = {
             row.dataset.id = task.id;
             const isUp = task.type === 'upload';
             row.dataset.type = isUp ? 'upload' : 'download';
+            
+            // Calculate path ONCE when rendering the list (entering the tab)
             const cloudPath = isUp ? this._getCloudPath(task.parentFolderId) : '';
             
-            // Validity is now checked asynchronously by _performVisibleValidityCheck
+            // Apply validity state directly
+            const isValid = task.targetExists !== false;
+            const itemClass = isValid ? 'history-item' : 'history-item item-invalid';
+            
+            let btnTitle;
+            if (isUp) btnTitle = isValid ? '前往雲端位置' : '資料夾已不存在';
+            else btnTitle = isValid ? '在檔案總管中顯示' : '檔案已移除';
+
+            row.className = itemClass;
             row.innerHTML = `
                 <div class="sm-icon"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="sm-name">
@@ -686,8 +707,8 @@ const TransferManager = {
                 <div class="sm-badge">${isUp ? '上傳成功' : '下載成功'}</div>
                 <div class="history-actions">
                     ${isUp 
-                        ? `<button class="icon-btn btn-go-cloud" title="前往雲端位置"><i class="fas fa-external-link-alt"></i></button>`
-                        : `<button class="icon-btn btn-reveal-local" title="在檔案總管中顯示"><i class="fas fa-folder-open"></i></button>`
+                        ? `<button class="icon-btn btn-go-cloud" title="${btnTitle}"><i class="fas fa-external-link-alt"></i></button>`
+                        : `<button class="icon-btn btn-reveal-local" title="${btnTitle}"><i class="fas fa-folder-open"></i></button>`
                     }
                 </div>
                 <button class="btn-remove-history" title="移除此紀錄"><i class="fas fa-trash-alt"></i></button>`;
@@ -835,86 +856,67 @@ const TransferManager = {
 
     setDownloadDestination(path) { this.currentDownloadDestination = path; },
 
-    // --- Validity Checker (Polling for Visible Items) ---
-    startValidityChecker() {
-        if (this._validityCheckInterval) return;
-        // Perform an immediate check, then schedule interval
-        this._performVisibleValidityCheck();
-        this._validityCheckInterval = setInterval(() => this._performVisibleValidityCheck(), 500);
-    },
+    // --- Validity Checker (Reactive Updates) ---
 
-    stopValidityChecker() {
-        if (this._validityCheckInterval) {
-            clearInterval(this._validityCheckInterval);
-            this._validityCheckInterval = null;
-        }
-    },
-
-    _performVisibleValidityCheck() {
-        const listEl = document.getElementById('list-completed');
-        if (!listEl) return;
-
-        const items = listEl.querySelectorAll('.history-item');
-        items.forEach(el => {
-            // Skip if not visible
-            if (!this._isElementInViewport(el)) return;
-
-            const taskId = el.dataset.id;
-            // Search in both Active and History maps
-            const task = this.uploads.get(taskId) || this.downloads.get(taskId) || 
-                         this.uploadHistory.get(taskId) || this.downloadHistory.get(taskId);
+    updateFileExistence(changes) {
+        console.log("[TransferManager] Received existence changes:", changes);
+        if (!Array.isArray(changes)) return;
+        
+        changes.forEach(change => {
+            const result = this.findTask(change.id);
+            const task = result ? result.task : (this.uploadHistory.get(change.id) || this.downloadHistory.get(change.id));
             
-            if (!task) return;
-
-            if (task.type === 'upload') {
-                // Synchronous check for Uploads (Folder existence)
-                const currentCloudPath = this._getCloudPath(task.parentFolderId);
-                const isValid = currentCloudPath !== '路徑不存在';
-                
-                const pathEl = el.querySelector('.sm-name div');
-                if (pathEl) {
-                    const expectedText = `上傳至: ${currentCloudPath}`;
-                    if (pathEl.textContent !== expectedText) {
-                        pathEl.textContent = expectedText;
-                    }
-                }
-
-                if (!isValid) {
-                    el.classList.add('item-invalid');
-                    const btn = el.querySelector('.btn-go-cloud');
-                    if(btn) btn.title = '資料夾已不存在';
-                } else {
-                    el.classList.remove('item-invalid');
-                    const btn = el.querySelector('.btn-go-cloud');
-                    if(btn) btn.title = '前往雲端位置';
-                }
-            } else {
-                // Asynchronous check for Downloads (Local file existence)
-                if (task.localPath) {
-                    this.ApiService.checkLocalExists(task.localPath).then(exists => {
-                        if (exists === false) {
-                            el.classList.add('item-invalid');
-                            const btn = el.querySelector('.btn-reveal-local');
-                            if(btn) btn.title = "檔案已移除";
-                        } else {
+            if (task) {
+                if (task.targetExists !== change.exists) {
+                    task.targetExists = change.exists;
+                    
+                    // Update DOM directly if visible
+                    const el = document.querySelector(`.history-item[data-id="${change.id}"]`);
+                    if (el) {
+                        const isUp = task.type === 'upload';
+                        const isValid = change.exists;
+                        
+                        if (isValid) {
                             el.classList.remove('item-invalid');
-                            const btn = el.querySelector('.btn-reveal-local');
-                            if(btn) btn.title = "在檔案總管中顯示";
+                        } else {
+                            el.classList.add('item-invalid');
                         }
-                    });
+
+                        let btnTitle;
+                        if (isUp) btnTitle = isValid ? '前往雲端位置' : '資料夾已不存在';
+                        else btnTitle = isValid ? '在檔案總管中顯示' : '檔案已移除';
+
+                        const btn = isUp ? el.querySelector('.btn-go-cloud') : el.querySelector('.btn-reveal-local');
+                        if (btn) btn.title = btnTitle;
+
+                        // Also refresh path label for uploads if status changed
+                        if (isUp) {
+                            const pathEl = el.querySelector('.sm-name div');
+                            if (pathEl) {
+                                pathEl.textContent = `上傳至: ${this._getCloudPath(task.parentFolderId)}`;
+                            }
+                        }
+                    }
                 }
             }
         });
     },
 
-    _isElementInViewport(el) {
-        const rect = el.getBoundingClientRect();
-        return (
-            rect.top >= 0 &&
-            rect.left >= 0 &&
-            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-        );
+    _refreshHistoryPathLabels() {
+        const listEl = document.getElementById('list-completed');
+        if (!listEl) return;
+
+        const items = listEl.querySelectorAll('.history-item[data-type="upload"]');
+        items.forEach(el => {
+            const taskId = el.dataset.id;
+            const task = this.uploads.get(taskId) || this.uploadHistory.get(taskId);
+            if (task && task.parentFolderId) {
+                const pathEl = el.querySelector('.sm-name div');
+                if (pathEl) {
+                    pathEl.textContent = `上傳至: ${this._getCloudPath(task.parentFolderId)}`;
+                }
+            }
+        });
     },
     
     setupEventListeners() {

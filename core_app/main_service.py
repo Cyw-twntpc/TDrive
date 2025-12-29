@@ -85,7 +85,6 @@ class TDriveService:
                         "id": args[0],
                         "delta": args[1],
                         "speed": args[2],
-                        "status": "transferring",
                         "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
             
@@ -120,6 +119,9 @@ class TDriveService:
         """
         Gracefully shuts down the service.
         """
+        # Stop the file status watcher
+        self._transfer_service.shutdown()
+        
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
         

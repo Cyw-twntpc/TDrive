@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from . import utils
 from .transfer_controller import TransferController
+from .file_status_watcher import FileStatusWatcher
 from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
@@ -29,11 +30,23 @@ class TransferService:
         self.db = DatabaseHandler()
         self.controller = TransferController()
         
+        # Initialize File Status Watcher with the shared event loop
+        self.watcher = FileStatusWatcher(self.shared_state.loop, self.db, status_change_callback=lambda x: None)
+
         # Global semaphore for tasks to prevent flooding
         self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
         # Reset any tasks that were 'transferring' when the app crashed
         self.controller.reset_zombie_tasks()
+        
+        # Restore watches for already completed transfers
+        all_tasks = self.controller.get_incomplete_transfers()
+        self.watcher.load_initial_watches(all_tasks['uploads'], all_tasks['downloads'])
+
+    def set_file_status_callback(self, callback: Callable):
+        """Sets the callback for file status changes and starts the watcher."""
+        self.watcher._callback = callback
+        self.watcher.start()
 
     # --- UPLOAD OPERATIONS ---
 
@@ -188,6 +201,8 @@ class TransferService:
             if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
                 self.controller.mark_sub_task_completed(main_task_id, main_task_id)
                 progress_callback(main_task_id, base_folder_name, 0, total_size, 'completed', 0)
+                # Watch the parent folder of the uploaded folder
+                self.watcher.add_watch(main_task_id, parent_id, 'remote')
 
         except Exception as e:
             logger.error(f"Folder upload failed: {e}", exc_info=True)
@@ -255,10 +270,17 @@ class TransferService:
                             lambda: self.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
                         )
                         self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
+                        
                         # Notify UI of full completion for this file
                         remaining = total_size - last_uploaded
                         if remaining > 0:
                             progress_callback(main_task_id, remaining, 0)
+                        
+                        # [FIXED] Explicitly complete the task if it's a single file upload
+                        if main_task_id == sub_task_id:
+                            progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
+                            self.watcher.add_watch(main_task_id, parent_id, 'remote')
+                            
                         return
                     except errors.ItemAlreadyExistsError:
                         self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "File already exists")
@@ -285,6 +307,8 @@ class TransferService:
 
                 if main_task_id == sub_task_id:
                     progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
+                    # For uploads, we watch the parent folder in the remote DB
+                    self.watcher.add_watch(main_task_id, parent_id, 'remote')
 
             except asyncio.CancelledError:
                 logger.info(f"Upload task cancelled: {file_name}")
@@ -423,6 +447,7 @@ class TransferService:
         if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
             self.controller.mark_sub_task_completed(main_task_id, main_task_id)
             progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
+            self.watcher.add_watch(main_task_id, local_root_path, 'local')
 
     async def _download_single_item(self, client, main_task_id: str, sub_task_id: str, 
                                     save_path: str, file_details: Dict,
@@ -470,6 +495,7 @@ class TransferService:
 
                 if main_task_id == sub_task_id:
                     progress_callback(main_task_id, file_details['name'], file_details['size'], file_details['size'], 'completed', 0)
+                    self.watcher.add_watch(main_task_id, save_path, 'local')
 
             except asyncio.CancelledError:
                 raise
@@ -574,6 +600,7 @@ class TransferService:
         Permanently cancels and removes a transfer, triggering background cleanup.
         """
         self.pause_transfer(task_id)
+        self.watcher.remove_watch(task_id)
         
         task_info = self.controller.get_task(task_id)
         self.controller.remove_task(task_id)
@@ -588,7 +615,15 @@ class TransferService:
         Removes a task from the history (state file) without deleting the physical file.
         """
         self.controller.remove_task(task_id)
+        self.watcher.remove_watch(task_id)
         return {"success": True, "message": "History item removed."}
+
+    def shutdown(self):
+        """
+        Stops the file status watcher and performs any necessary cleanup.
+        """
+        if self.watcher:
+            self.watcher.stop()
 
     async def _cleanup_task_data(self, task_info: Dict[str, Any]):
         """
