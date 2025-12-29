@@ -177,7 +177,7 @@ class TransferService:
                     )
 
             # 5. Bulk Register to Controller
-            self.controller.add_child_tasks_bulk(main_task_id, "upload", child_tasks_map)
+            self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
             # --- Phase 2: Execution ---
             progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
@@ -246,7 +246,7 @@ class TransferService:
                 if not original_file_hash:
                     original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
                     # Persist hash immediately to avoid re-calculation on resume
-                    self.controller.set_file_hash(main_task_id, sub_task_id, original_file_hash)
+                    self.controller.set_file_hash(sub_task_id, original_file_hash)
                     
                 existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
                 
@@ -418,7 +418,7 @@ class TransferService:
                 )
             )
 
-        self.controller.add_child_tasks_bulk(main_task_id, "download", child_tasks_map)
+        self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
         progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
