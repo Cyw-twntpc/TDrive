@@ -8,15 +8,13 @@ from .services.auth_service import AuthService
 from .services.file_service import FileService
 from .services.folder_service import FolderService
 from .services.transfer_service import TransferService
-from .services.monitor_service import TransferMonitorService
 
 logger = logging.getLogger(__name__)
 
 class TDriveService:
     """
-    Acts as a Façade for all backend services, providing a single, unified
-    interface for the UI layer (via the Bridge) to interact with.
-    Refactored to include a progress adapter for the new TransferService logic.
+    Acts as a Façade for all backend services.
+    Integrated with TransferService and its internal controller for traffic stats.
     """
     def __init__(self, loop: asyncio.AbstractEventLoop = None):
         logger.info("Initializing TDriveService...")
@@ -37,8 +35,7 @@ class TDriveService:
         self._auth_service = AuthService(self._shared_state)
         self._file_service = FileService(self._shared_state)
         self._folder_service = FolderService(self._shared_state)
-        self._monitor_service = TransferMonitorService()
-        self._transfer_service = TransferService(self._shared_state, self._monitor_service)
+        self._transfer_service = TransferService(self._shared_state)
 
     # --- Helper: Progress Adapter ---
     
@@ -46,12 +43,6 @@ class TDriveService:
         """
         Creates an adapter function that normalizes the variable arguments from 
         TransferService callbacks into a standard dictionary for the Bridge signal.
-        
-        Handles two types of calls from TransferService:
-        1. Initialization/Status Change: (task_id, name, transferred, total, status, speed, is_folder=False, message=None)
-        2. Delta Update: (task_id, delta_bytes, speed)
-        
-        [Updated] Includes throttling (30ms) to prevent UI thread flooding.
         """
         last_emit_time = {}
 
@@ -62,16 +53,13 @@ class TDriveService:
             task_id = args[0]
 
             # Type 1: Initialization or Full Status Update
-            # args: (task_id, name, transferred, total, status, speed)
             if len(args) >= 5: 
                 status = args[4]
-                # Always emit significant status changes
                 if status in ['completed', 'failed', 'cancelled', 'queued', 'paused']:
                     should_emit = True
                     if status in ['completed', 'failed', 'cancelled']:
-                        last_emit_time.pop(task_id, None) # Cleanup
+                        last_emit_time.pop(task_id, None)
                 else:
-                    # Throttle 'transferring' updates if they come as full state
                     if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
                         should_emit = False
                 
@@ -85,22 +73,20 @@ class TDriveService:
                         "speed": args[5],
                         "is_folder": kwargs.get("is_folder", False),
                         "error_message": kwargs.get("message", ""),
-                        "todayTraffic": self._monitor_service.get_today_traffic()
+                        "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
 
             # Type 2: Delta Update (Progress)
-            # args: (task_id, delta_bytes, speed)
             elif len(args) == 3:
-                # Throttle delta updates
                 if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
                     should_emit = False
                 else:
                     data = {
                         "id": args[0],
-                        "delta": args[1],     # Bytes transferred since last update
-                        "speed": args[2],     # Current speed
+                        "delta": args[1],
+                        "speed": args[2],
                         "status": "transferring",
-                        "todayTraffic": self._monitor_service.get_today_traffic()
+                        "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
             
             if should_emit and data:
@@ -112,10 +98,6 @@ class TDriveService:
     def _schedule_background_task(self, coro):
         """
         Schedules a coroutine to run as a background task.
-
-        Crucially, it holds a strong reference to the created task in the
-        shared state to prevent it from being garbage-collected prematurely.
-        The reference is automatically removed once the task is complete.
         """
         def _task_wrapper():
             task = self._shared_state.loop.create_task(coro)
@@ -123,12 +105,10 @@ class TDriveService:
             self._shared_state.active_tasks[task_id] = task
             
             def _on_done(_):
-                # Callback to remove the task from the active list upon completion.
                 self._shared_state.active_tasks.pop(task_id, None)
                 
             task.add_done_callback(_on_done)
 
-        # Ensure the task is created in the correct event loop's thread.
         self._shared_state.loop.call_soon_threadsafe(_task_wrapper)
 
     # --- Application Lifecycle ---
@@ -138,9 +118,11 @@ class TDriveService:
 
     async def close(self):
         """
-        Gracefully shuts down the service, including disconnecting the client.
+        Gracefully shuts down the service.
         """
-        self._transfer_service.monitor.close()
+        # Forcibly save buffered traffic to DB
+        self._transfer_service.controller.save_pending_traffic_stats()
+        
         client = self._shared_state.client
         if client and client.is_connected():
             logger.info("Disconnecting from Telegram...")

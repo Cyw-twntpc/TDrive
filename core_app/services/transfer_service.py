@@ -13,7 +13,6 @@ from .transfer_controller import TransferController
 from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
-from core_app.services.monitor_service import TransferMonitorService
 from core_app.api import file_processor as fp
 
 logger = logging.getLogger(__name__)
@@ -22,14 +21,12 @@ CONCURRENCY_LIMIT = 3
 
 class TransferService:
     """
-    Manages all time-consuming file upload and download tasks.
-    Refactored to separate structure creation from file transfer execution,
-    and includes robust cancellation cleanup logic.
+    Manages all file transfer operations (upload/download).
+    Integrates with TransferController for state and traffic tracking.
     """
-    def __init__(self, shared_state: 'SharedState', monitor_service: Optional[TransferMonitorService] = None):
+    def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
-        self.monitor = monitor_service if monitor_service else TransferMonitorService()
         self.controller = TransferController()
         
         # Global semaphore for tasks to prevent flooding
@@ -225,7 +222,7 @@ class TransferService:
                 speed = delta / time_diff if time_diff > 0 else 0
                 
                 # 1. Update Traffic Monitor (Real-time)
-                asyncio.create_task(self.monitor.update_transferred_bytes(delta))
+                asyncio.create_task(self.controller.update_transferred_bytes(delta))
                 # 2. Notify UI
                 progress_callback(main_task_id, delta, speed)
 
@@ -344,7 +341,6 @@ class TransferService:
                 )
         
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
-        self.monitor.close()
 
     async def _download_folder(self, client, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
         """
@@ -454,7 +450,7 @@ class TransferService:
                 speed = delta / time_diff if time_diff > 0 else 0
                 
                 # 1. Update Traffic Monitor (Real-time)
-                asyncio.create_task(self.monitor.update_transferred_bytes(delta))
+                asyncio.create_task(self.controller.update_transferred_bytes(delta))
                 # 2. Notify UI
                 progress_callback(main_task_id, delta, speed)
 
@@ -489,7 +485,7 @@ class TransferService:
     def get_transfer_config(self) -> Dict[str, Any]:
         """Returns initialization configuration and stats."""
         return {
-            "todayTraffic": self.monitor.get_today_traffic(),
+            "todayTraffic": self.controller.get_today_traffic(),
             "chunkSize": fp.CHUNK_SIZE
         }
 
@@ -557,8 +553,6 @@ class TransferService:
                             resume_parts=set(sub_data.get('transferred_parts', []))
                         )
                     )
-            
-            self.controller._save_state()
 
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
         

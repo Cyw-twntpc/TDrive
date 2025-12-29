@@ -70,6 +70,14 @@ class TransferDBHandler:
                 FOREIGN KEY (sub_task_id) REFERENCES sub_tasks (sub_task_id) ON DELETE CASCADE
             )
             ''')
+
+            # 4. Traffic Stats Table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS traffic_stats (
+                date TEXT PRIMARY KEY,
+                bytes INTEGER DEFAULT 0
+            )
+            ''')
             
             # Indexes for performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sub_main ON sub_tasks(main_task_id)')
@@ -78,6 +86,31 @@ class TransferDBHandler:
             conn.commit()
         except Exception as e:
             logger.error(f"Failed to initialize transfer DB: {e}")
+        finally:
+            conn.close()
+
+    # --- Traffic Statistics ---
+
+    def get_traffic_by_date(self, date_str: str) -> int:
+        """Retrieves traffic volume for a specific date."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT bytes FROM traffic_stats WHERE date = ?", (date_str,))
+            row = cursor.fetchone()
+            return row['bytes'] if row else 0
+        finally:
+            conn.close()
+
+    def update_traffic(self, date_str: str, bytes_delta: int):
+        """Increments traffic volume for a specific date."""
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute('''
+                INSERT INTO traffic_stats (date, bytes) VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET bytes = bytes + excluded.bytes
+                ''', (date_str, bytes_delta))
         finally:
             conn.close()
 

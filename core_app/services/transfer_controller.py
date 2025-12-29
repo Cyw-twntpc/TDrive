@@ -1,6 +1,8 @@
+import os
 import time
 import logging
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 
 from core_app.data.transfer_db_handler import TransferDBHandler
 
@@ -8,12 +10,74 @@ logger = logging.getLogger(__name__)
 
 class TransferController:
     """
-    Manages the persistent state of file transfers using a SQLite database.
-    This replaces the previous JSON-based state management.
+    Manages the persistent state of file transfers and traffic statistics using SQLite.
+    Integrates traffic buffering and background persistence logic.
     """
     
     def __init__(self):
         self.db = TransferDBHandler()
+        self._today_traffic = 0
+        self._unsaved_traffic = 0
+        self._traffic_save_threshold = 500 * 1024 # 500 KB
+        self._last_date_str = self._get_today_str()
+        self._load_initial_traffic()
+
+    def _get_today_str(self) -> str:
+        return datetime.now().strftime('%Y-%m-%d')
+
+    def _load_initial_traffic(self):
+        """Loads cumulative traffic for today from database."""
+        self._today_traffic = self.db.get_traffic_by_date(self._last_date_str)
+
+    def get_today_traffic(self) -> int:
+        """Returns the total bytes transferred today."""
+        current_date = self._get_today_str()
+        if current_date != self._last_date_str:
+            self._last_date_str = current_date
+            self._today_traffic = 0
+            self._unsaved_traffic = 0
+            
+        return self._today_traffic
+
+    async def update_transferred_bytes(self, delta: int):
+        """
+        Updates the daily traffic counter with buffering and background saving.
+        """
+        if delta <= 0:
+            return
+
+        current_date = self._get_today_str()
+        
+        if current_date != self._last_date_str:
+            self._last_date_str = current_date
+            self._today_traffic = 0
+            self._unsaved_traffic = 0
+        
+        self._today_traffic += delta
+        self._unsaved_traffic += delta
+        
+        if self._unsaved_traffic >= self._traffic_save_threshold:
+            try:
+                loop = asyncio.get_running_loop()
+                # Background save to avoid blocking the transfer loop
+                await loop.run_in_executor(None, self._persist_traffic_chunk)
+            except RuntimeError:
+                pass
+
+    def _persist_traffic_chunk(self):
+        """Internal helper to save the current buffer to DB."""
+        if self._unsaved_traffic > 0:
+            to_save = self._unsaved_traffic
+            self.db.update_traffic(self._last_date_str, to_save)
+            self._unsaved_traffic -= to_save
+
+    def save_pending_traffic_stats(self):
+        """
+        Forcibly persists any buffered traffic to the database.
+        Called during application shutdown.
+        """
+        self._persist_traffic_chunk()
+        logger.info("Pending traffic statistics have been persisted.")
 
     # --- Task Registration ---
 
