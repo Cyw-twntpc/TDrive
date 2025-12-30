@@ -275,18 +275,39 @@ class Bridge(QObject):
 
     @Slot(str, result=dict)
     def cancel_transfer(self, task_id):
-        # Removes task permanently (same as clicking 'X')
-        return self._service.cancel_transfer(task_id)
+        # Fire-and-forget
+        async def _do_cancel():
+            try:
+                self._service.cancel_transfer(task_id)
+            except Exception as e:
+                logger.error(f"Error cancelling task {task_id}: {e}")
+
+        asyncio.create_task(_do_cancel())
+        return {"success": True, "message": "Cancel request queued."}
 
     @Slot(str, result=dict)
     def pause_transfer(self, task_id):
-        # Pauses task (keeps in state)
-        return self._service.pause_transfer(task_id)
+        # Fire-and-forget: Execute pause in background to avoid blocking UI
+        async def _do_pause():
+            try:
+                self._service.pause_transfer(task_id)
+            except Exception as e:
+                logger.error(f"Error pausing task {task_id}: {e}")
+
+        asyncio.create_task(_do_pause())
+        return {"success": True, "message": "Pause request queued."}
 
     @Slot(str, result=dict)
     def resume_transfer(self, task_id):
-        # Resumes task (reuses progress signal)
-        return self._service.resume_transfer(task_id, self.transfer_progress_updated.emit)
+        # Fire-and-forget
+        async def _do_resume():
+            try:
+                self._service.resume_transfer(task_id, self.transfer_progress_updated.emit)
+            except Exception as e:
+                 logger.error(f"Error resuming task {task_id}: {e}")
+
+        asyncio.create_task(_do_resume())
+        return {"success": True, "message": "Resume request queued."}
 
     @Slot(str, result=dict)
     def remove_transfer_history(self, task_id):

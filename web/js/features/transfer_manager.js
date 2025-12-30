@@ -22,6 +22,7 @@ const TransferManager = {
     _validityCheckInterval: null,
     _showCompletedState: false,
     chunkSize: 33554432, // Default fallback
+    _processingTasks: new Set(), // Tracks tasks currently switching state
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -175,6 +176,9 @@ const TransferManager = {
 
         if (!task) return;
 
+        // [Fix] Ignore backend status updates if we are locally switching state (Optimistic UI protection)
+        const isProcessing = this._processingTasks.has(data.id);
+
         if (data.status === 'completed' && !task.completedAt) task.completedAt = Date.now();
 
         if (data.todayTraffic !== undefined) {
@@ -193,10 +197,30 @@ const TransferManager = {
         let statusChanged = false;
         if (data.status) {
             const newStatus = data.status;
-            if (task.status !== newStatus) {
+            
+            let shouldUpdate = !isProcessing; // Default: update if not processing
+
+            if (isProcessing) {
+                // Special handling during user action lock
+                if (['completed', 'failed'].includes(newStatus)) {
+                    // Final states always override lock
+                    shouldUpdate = true;
+                } else if (newStatus === 'transferring') {
+                    // Critical Fix: 
+                    // If we are locally 'queued' (Resuming), accept 'transferring' (Success).
+                    // If we are locally 'paused' (Pausing), REJECT 'transferring' (Old signal).
+                    if (task.status === 'queued') {
+                        shouldUpdate = true;
+                    }
+                } else if (newStatus === 'paused') {
+                    // Backend confirmed pause
+                    shouldUpdate = true; 
+                }
+            }
+
+            if (shouldUpdate && task.status !== newStatus) {
                 task.status = newStatus;
                 statusChanged = true;
-                // Mark completed list dirty if a task finishes or fails
                 if (['completed', 'failed'].includes(newStatus)) {
                     this._completedListDirty = true;
                 }
@@ -494,7 +518,7 @@ const TransferManager = {
 
         tasks.forEach(task => {
             if (existingCards.has(task.id)) {
-                this.renderTaskCard(task);
+                this.renderTaskCard(task, existingCards.get(task.id));
                 toRemove.delete(task.id);
             } else listEl.appendChild(createCardFn(task));
         });
@@ -511,16 +535,24 @@ const TransferManager = {
         const sizeEl = el.querySelector('.meta-size');
         if (sizeEl) sizeEl.textContent = `${this.UIManager.formatBytes(task.progress)} / ${this.UIManager.formatBytes(task.size)}`;
 
+        const btn = el.querySelector('.btn-toggle');
         const speedEl = el.querySelector('.meta-speed');
+        
         if (speedEl) {
             if (task.status === 'paused') {
                 speedEl.textContent = '已暫停';
                 speedEl.style.color = '#f59e0b';
-                const btn = el.querySelector('.btn-toggle');
-                if (btn) { btn.innerHTML = '<i class="fas fa-play"></i>'; btn.title = '繼續'; }
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-play"></i>';
+                    btn.title = '繼續';
+                }
             } else if (['queued', 'pending'].includes(task.status)) {
                 speedEl.textContent = '等待中...';
                 speedEl.style.color = '';
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-pause"></i>'; 
+                    btn.title = '暫停';
+                }
             } else {
                 speedEl.style.color = '';
                 const speed = this.UIManager.formatBytes(task.speed || 0);
@@ -530,8 +562,10 @@ const TransferManager = {
                     eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec / 60) + ' 分' : sec + ' 秒'}`;
                 }
                 speedEl.textContent = `${speed}/s${eta}`;
-                const btn = el.querySelector('.btn-toggle');
-                if (btn) { btn.innerHTML = '<i class="fas fa-pause"></i>'; btn.title = '暫停'; }
+                if (btn) {
+                    btn.innerHTML = '<i class="fas fa-pause"></i>';
+                    btn.title = '暫停';
+                }
             }
         }
         const failedMsg = el.querySelector('.failed-msg');
@@ -539,10 +573,17 @@ const TransferManager = {
     },
 
     toggleTaskState(id) {
+        if (this._processingTasks.has(id)) return;
+        
         const result = this.findTask(id);
         if (!result) return;
-        if (['transferring', 'queued'].includes(result.task.status)) this.pauseTask(id);
-        else if (['paused', 'failed'].includes(result.task.status)) this.resumeTask(id);
+        
+        // Simple Binary Logic: If paused or failed, resume. Otherwise (queued, transferring, etc.), pause.
+        if (['paused', 'failed'].includes(result.task.status)) {
+            this.resumeTask(id);
+        } else {
+            this.pauseTask(id);
+        }
     },
 
     _createActiveCard(task) {
@@ -767,21 +808,39 @@ const TransferManager = {
     },
     
     pauseTask(id) {
+        if (this._processingTasks.has(id)) return;
+
         const result = this.findTask(id);
-        if (result && ['transferring', 'queued'].includes(result.task.status)) {
-            result.task.status = 'paused';
-            this.renderTaskCard(result.task);
-            this.ApiService.pauseTransfer(id);
-        }
+        if (!result) return;
+
+        // 1. Debounce Lock (500ms)
+        this._processingTasks.add(id);
+        setTimeout(() => this._processingTasks.delete(id), 500);
+        
+        // 2. Optimistic Update
+        result.task.status = 'paused';
+        this.renderTaskCard(result.task);
+
+        // 3. Fire-and-forget Backend Call
+        this.ApiService.pauseTransfer(id);
     },
 
     resumeTask(id) {
+        if (this._processingTasks.has(id)) return;
+
         const result = this.findTask(id);
-        if (result && ['paused', 'failed'].includes(result.task.status)) {
-            result.task.status = 'queued';
-            this.renderTaskCard(result.task);
-            this.ApiService.resumeTransfer(id);
-        }
+        if (!result) return;
+
+        // 1. Debounce Lock (500ms)
+        this._processingTasks.add(id);
+        setTimeout(() => this._processingTasks.delete(id), 500);
+
+        // 2. Optimistic Update
+        result.task.status = 'queued'; // Will transition to 'transferring' via backend update
+        this.renderTaskCard(result.task);
+
+        // 3. Fire-and-forget Backend Call
+        this.ApiService.resumeTransfer(id);
     },
 
     cancelItem(id) {
@@ -789,13 +848,30 @@ const TransferManager = {
         if (result) {
             this.ApiService.cancelTransfer(id);
             result.map.delete(id);
+            
+            // [Fix] Remove placeholder from AppState and re-render
+            if (this.AppState && this.AppState.currentFolderContents) {
+                let removed = false;
+                // Check files
+                const fileIndex = this.AppState.currentFolderContents.files.findIndex(f => f.id === id);
+                if (fileIndex > -1) {
+                    this.AppState.currentFolderContents.files.splice(fileIndex, 1);
+                    removed = true;
+                }
+                // Check folders
+                const folderIndex = this.AppState.currentFolderContents.folders.findIndex(f => f.id === id);
+                if (folderIndex > -1) {
+                    this.AppState.currentFolderContents.folders.splice(folderIndex, 1);
+                    removed = true;
+                }
+                
+                if (removed && typeof FileListHandler !== 'undefined') {
+                    FileListHandler.sortAndRender(this.AppState);
+                }
+            }
+
             this.tick();
         }
-    },
-
-    cancelAll() {
-        this.uploads.forEach(t => this.cancelItem(t.id));
-        this.downloads.forEach(t => this.cancelItem(t.id));
     },
 
     resumeAll() {

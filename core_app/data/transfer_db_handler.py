@@ -28,6 +28,9 @@ class TransferDBHandler:
         try:
             cursor = conn.cursor()
             
+            # Enable WAL mode for better concurrency
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            
             # 1. Main Tasks Table
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS main_tasks (
@@ -476,5 +479,19 @@ class TransferDBHandler:
         try:
             with conn:
                 conn.execute("UPDATE main_tasks SET status = 'paused' WHERE status = 'transferring'")
+        finally:
+            conn.close()
+
+    def pause_active_sub_tasks(self, main_task_id: str):
+        """Marks all 'transferring' sub-tasks of a main task as 'paused'."""
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE sub_tasks SET status = 'paused' WHERE main_task_id = ? AND status = 'transferring'", 
+                    (main_task_id,)
+                )
+        except Exception as e:
+            logger.error(f"Error pausing sub-tasks for {main_task_id}: {e}")
         finally:
             conn.close()

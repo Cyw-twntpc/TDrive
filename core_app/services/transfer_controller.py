@@ -1,8 +1,9 @@
-import os
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
+from collections import defaultdict
+import asyncio
 
 from core_app.data.transfer_db_handler import TransferDBHandler
 
@@ -21,6 +22,8 @@ class TransferController:
         self._traffic_save_threshold = 500 * 1024 # 500 KB
         self._last_date_str = self._get_today_str()
         self._load_initial_traffic()
+        self._traffic_lock = asyncio.Lock()
+        self._main_update_counters = defaultdict(int)
 
     def _get_today_str(self) -> str:
         return datetime.now().strftime('%Y-%m-%d')
@@ -46,23 +49,24 @@ class TransferController:
         if delta <= 0:
             return
 
-        current_date = self._get_today_str()
-        
-        if current_date != self._last_date_str:
-            self._last_date_str = current_date
-            self._today_traffic = 0
-            self._unsaved_traffic = 0
-        
-        self._today_traffic += delta
-        self._unsaved_traffic += delta
-        
-        if self._unsaved_traffic >= self._traffic_save_threshold:
-            try:
-                loop = asyncio.get_running_loop()
-                # Background save to avoid blocking the transfer loop
-                await loop.run_in_executor(None, self._persist_traffic_chunk)
-            except RuntimeError:
-                pass
+        async with self._traffic_lock:
+            current_date = self._get_today_str()
+            
+            if current_date != self._last_date_str:
+                self._last_date_str = current_date
+                self._today_traffic = 0
+                self._unsaved_traffic = 0
+            
+            self._today_traffic += delta
+            self._unsaved_traffic += delta
+            
+            if self._unsaved_traffic >= self._traffic_save_threshold:
+                try:
+                    loop = asyncio.get_running_loop()
+                    # Background save to avoid blocking the transfer loop
+                    await loop.run_in_executor(None, self._persist_traffic_chunk)
+                except RuntimeError:
+                    pass
 
     def _persist_traffic_chunk(self):
         """Internal helper to save the current buffer to DB."""
@@ -248,3 +252,8 @@ class TransferController:
         """Called on startup. Marks 'transferring' tasks as 'paused'."""
         self.db.reset_zombie_tasks()
         logger.info("Reset zombie tasks in SQL database to 'paused' state.")
+
+    async def pause_all_sub_tasks(self, main_task_id: str):
+        """Forces all active sub-tasks of a main task to 'paused' state."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.db.pause_active_sub_tasks, main_task_id)

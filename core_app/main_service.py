@@ -45,6 +45,7 @@ class TDriveService:
         TransferService callbacks into a standard dictionary for the Bridge signal.
         """
         last_emit_time = {}
+        last_status = {} # Track status changes to bypass throttle
 
         def adapter(*args, **kwargs):
             current_time = time.time()
@@ -55,12 +56,24 @@ class TDriveService:
             # Type 1: Initialization or Full Status Update
             if len(args) >= 5: 
                 status = args[4]
-                if status in ['completed', 'failed', 'cancelled', 'queued', 'paused']:
-                    should_emit = True
+                
+                # Check if status has changed
+                status_changed = task_id not in last_status or last_status[task_id] != status
+                
+                if status in ['completed', 'failed', 'cancelled', 'queued', 'paused', 'transferring']:
+                    # Force emit on status change or critical states
+                    if status_changed:
+                        should_emit = True
+                    elif task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
+                        should_emit = False
+                    
                     if status in ['completed', 'failed', 'cancelled']:
                         last_emit_time.pop(task_id, None)
+                        last_status.pop(task_id, None)
+                    else:
+                        last_status[task_id] = status
                 else:
-                    if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
+                    if not status_changed and task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
                         should_emit = False
                 
                 if should_emit:
