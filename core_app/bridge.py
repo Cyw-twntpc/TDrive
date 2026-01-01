@@ -290,7 +290,7 @@ class Bridge(QObject):
         # Fire-and-forget: Execute pause in background to avoid blocking UI
         async def _do_pause():
             try:
-                self._service.pause_transfer(task_id)
+                self._service.pause_transfer(task_id, self.transfer_progress_updated.emit)
             except Exception as e:
                 logger.error(f"Error pausing task {task_id}: {e}")
 

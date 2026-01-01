@@ -7,13 +7,15 @@ a remote backup stored in the group's pinned messages.
 """
 from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.messages import SetHistoryTTLRequest
+from telethon.errors import FloodWaitError
 import os
 import zipfile
 import time
 import asyncio
 import json
 import logging
-from typing import Callable, List, Optional, Set
+import random
+from typing import Callable, List, Optional, Set, TypeVar, Awaitable
 
 from . import crypto_handler as cr
 from . import file_processor as fp
@@ -26,6 +28,46 @@ logger = logging.getLogger(__name__)
 update_lock = asyncio.Lock()
 
 CALLBACK_ELAPSED = 0.5 # seconds - Throttle UI updates
+
+T = TypeVar('T')
+
+async def _retry_with_backoff(
+    func: Callable[[], Awaitable[T]], 
+    max_retries: int = 5, 
+    base_delay: float = 1.0, 
+    max_delay: float = 32.0
+) -> T:
+    """
+    Executes an async function with exponential backoff retry logic.
+    Special handling for Telegram's FloodWaitError.
+    """
+    attempt = 0
+    while True:
+        try:
+            return await func()
+        except FloodWaitError as e:
+            logger.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds.")
+            await asyncio.sleep(e.seconds)
+            # FloodWait doesn't count as a retry attempt; we just wait and try again.
+        except (OSError, ValueError, asyncio.TimeoutError) as e: 
+            # Catch specific errors appropriate for retry. 
+            # Note: ValueError is caught because checksum mismatches raise it.
+            attempt += 1
+            if attempt > max_retries:
+                logger.error(f"Operation failed after {max_retries} attempts: {e}")
+                raise
+            
+            # Calculate backoff with jitter to prevent thundering herd
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            jitter = random.uniform(0, 0.5 * delay)
+            sleep_time = delay + jitter
+            
+            logger.warning(f"Operation failed (Attempt {attempt}/{max_retries}): {e}. Retrying in {sleep_time:.2f}s...")
+            await asyncio.sleep(sleep_time)
+        except Exception as e:
+             # Unexpected errors should fail fast
+             logger.error(f"Non-retriable error: {e}")
+             raise
 
 def _save_group_id(api_id: int, group_id: int):
     """
@@ -226,12 +268,15 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
             # Calculate Chunk Hash (Background)
             part_hash = await loop.run_in_executor(None, cr.hash_bytes, part_bytes)
             
-            # Upload to Telegram
-            message = await client.send_file(
-                group_id,
-                file=part_bytes, 
-                progress_callback=callback
-            )
+            # Upload to Telegram with Retry Logic
+            async def _upload_chunk():
+                return await client.send_file(
+                    group_id,
+                    file=part_bytes, 
+                    progress_callback=callback
+                )
+
+            message = await _retry_with_backoff(_upload_chunk)
             
             # Update State
             split_files_info.append([part_num, message.id, part_hash])
@@ -321,8 +366,6 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
                 if progress_callback:
                     progress_callback(real_current, total_size)
 
-        MAX_DOWNLOAD_PART_RETRIES = 3
-
         if message_ids:
             for message in messages_to_download:
                 # Check cancellation
@@ -331,42 +374,34 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
                 part_num = part_info_map[message.id]["num"]
                 expected_part_hash = part_info_map[message.id]["hash"]
                 
-                for retry_count in range(MAX_DOWNLOAD_PART_RETRIES):
-                    try:
-                        # Download to memory (Bytes)
-                        encrypted_bytes = await message.download_media(file=bytes, progress_callback=callback)
-                        
-                        if not encrypted_bytes:
-                            raise ValueError("Empty response from Telegram")
+                async def _process_part():
+                    # Download to memory (Bytes)
+                    encrypted_bytes = await message.download_media(file=bytes, progress_callback=callback)
+                    
+                    if not encrypted_bytes:
+                        raise ValueError("Empty response from Telegram")
 
-                        # Verify Hash (Background)
-                        actual_part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_bytes)
-                        
-                        if actual_part_hash == expected_part_hash:
-                            # Decrypt and Write (Background)
-                            offset = (part_num - 1) * fp.CHUNK_SIZE
-                            await loop.run_in_executor(
-                                None, 
-                                fp.decrypt_bytes_and_write, 
-                                encrypted_bytes, final_path, key, offset
-                            )
-                            
-                            current_downloaded_accumulated += message.document.size
-                            
-                            # Persist State (Critical)
-                            if chunk_callback:
-                                chunk_callback(part_num)
-                                    
-                            break # Success
-                        else:
-                            logger.warning(f"Part {part_num} checksum mismatch. Retrying... ({retry_count + 1}/{MAX_DOWNLOAD_PART_RETRIES})")
-                            await asyncio.sleep(1)
+                    # Verify Hash (Background)
+                    actual_part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_bytes)
+                    
+                    if actual_part_hash != expected_part_hash:
+                         raise ValueError(f"Part {part_num} checksum mismatch.")
 
-                    except Exception as e:
-                        logger.warning(f"Download error for part {part_num}: {e}. Retrying...")
-                        await asyncio.sleep(1)
-                else:
-                    raise ValueError(f"Part {part_num} failed checksum verification after {MAX_DOWNLOAD_PART_RETRIES} retries.")
+                    # Decrypt and Write (Background)
+                    offset = (part_num - 1) * fp.CHUNK_SIZE
+                    await loop.run_in_executor(
+                        None, 
+                        fp.decrypt_bytes_and_write, 
+                        encrypted_bytes, final_path, key, offset
+                    )
+                    
+                    current_downloaded_accumulated += message.document.size
+                    
+                    # Persist State (Critical)
+                    if chunk_callback:
+                        chunk_callback(part_num)
+
+                await _retry_with_backoff(_process_part)
 
         # Final Integrity Check
         logger.info(f"All parts of '{file_name}' processed. Performing final integrity check.")

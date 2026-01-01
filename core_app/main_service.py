@@ -233,14 +233,27 @@ class TDriveService:
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
         return self._transfer_service.cancel_transfer(task_id)
 
-    def pause_transfer(self, task_id: str) -> Dict[str, Any]:
+    def pause_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
+        """Pauses a transfer and immediately emits a 'paused' status update."""
         self._transfer_service.pause_transfer(task_id)
-        return {"success": True, "message": "Task paused."}
+        
+        # Use adapter to send immediate status update
+        adapter = self._create_progress_adapter(progress_callback)
+        adapter(task_id, '', 0, 0, 'paused', 0)
+        
+        return {"success": True, "message": "Task pause requested."}
 
     def resume_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
+        """Resumes a transfer, emitting 'queued' and then letting the background task run."""
         adapter = self._create_progress_adapter(progress_callback)
+        
+        # Immediately notify 'queued'
+        adapter(task_id, '', 0, 0, 'queued', 0)
+        
+        # Schedule the actual resume operation
         task_coro = self._transfer_service.resume_transfer(task_id, adapter)
         self._schedule_background_task(task_coro)
+        
         return {"success": True, "message": "Resuming transfer..."}
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:

@@ -33,6 +33,7 @@ class DatabaseHandler:
         """Establishes and returns a new database connection."""
         path_to_connect = db_path if db_path else self.db_path
         conn = sqlite3.connect(path_to_connect)
+        conn.execute('PRAGMA synchronous=NORMAL')
         # Allows accessing query results by column name.
         conn.row_factory = sqlite3.Row
         return conn
@@ -44,6 +45,7 @@ class DatabaseHandler:
         """
         logger.debug(f"Initializing database schema at {self.db_path}...")
         conn = self._get_conn()
+        conn.execute('PRAGMA journal_mode=WAL')
         cursor = conn.cursor()
 
         # Folder hierarchy table

@@ -22,7 +22,6 @@ const TransferManager = {
     _validityCheckInterval: null,
     _showCompletedState: false,
     chunkSize: 33554432, // Default fallback
-    _processingTasks: new Set(), // Tracks tasks currently switching state
     
     // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
@@ -176,9 +175,6 @@ const TransferManager = {
 
         if (!task) return;
 
-        // [Fix] Ignore backend status updates if we are locally switching state (Optimistic UI protection)
-        const isProcessing = this._processingTasks.has(data.id);
-
         if (data.status === 'completed' && !task.completedAt) task.completedAt = Date.now();
 
         if (data.todayTraffic !== undefined) {
@@ -198,27 +194,7 @@ const TransferManager = {
         if (data.status) {
             const newStatus = data.status;
             
-            let shouldUpdate = !isProcessing; // Default: update if not processing
-
-            if (isProcessing) {
-                // Special handling during user action lock
-                if (['completed', 'failed'].includes(newStatus)) {
-                    // Final states always override lock
-                    shouldUpdate = true;
-                } else if (newStatus === 'transferring') {
-                    // Critical Fix: 
-                    // If we are locally 'queued' (Resuming), accept 'transferring' (Success).
-                    // If we are locally 'paused' (Pausing), REJECT 'transferring' (Old signal).
-                    if (task.status === 'queued') {
-                        shouldUpdate = true;
-                    }
-                } else if (newStatus === 'paused') {
-                    // Backend confirmed pause
-                    shouldUpdate = true; 
-                }
-            }
-
-            if (shouldUpdate && task.status !== newStatus) {
+            if (task.status !== newStatus) {
                 task.status = newStatus;
                 statusChanged = true;
                 if (['completed', 'failed'].includes(newStatus)) {
@@ -542,16 +518,27 @@ const TransferManager = {
             if (task.status === 'paused') {
                 speedEl.textContent = '已暫停';
                 speedEl.style.color = '#f59e0b';
-                if (btn) {
+                // [Optimization] Only update button DOM if status changed to prevent click invalidation
+                if (btn && btn.dataset.lastStatus !== 'paused') {
                     btn.innerHTML = '<i class="fas fa-play"></i>';
                     btn.title = '繼續';
+                    btn.dataset.lastStatus = 'paused';
+                }
+            } else if (task.status === 'failed') {
+                speedEl.textContent = '傳輸失敗';
+                speedEl.style.color = 'var(--danger-color)';
+                if (btn && btn.dataset.lastStatus !== 'failed') {
+                    btn.innerHTML = '<i class="fas fa-redo"></i>';
+                    btn.title = '重試';
+                    btn.dataset.lastStatus = 'failed';
                 }
             } else if (['queued', 'pending'].includes(task.status)) {
                 speedEl.textContent = '等待中...';
                 speedEl.style.color = '';
-                if (btn) {
+                if (btn && btn.dataset.lastStatus !== 'queued') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>'; 
                     btn.title = '暫停';
+                    btn.dataset.lastStatus = 'queued';
                 }
             } else {
                 speedEl.style.color = '';
@@ -562,9 +549,12 @@ const TransferManager = {
                     eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec / 60) + ' 分' : sec + ' 秒'}`;
                 }
                 speedEl.textContent = `${speed}/s${eta}`;
-                if (btn) {
+                
+                // [Optimization] For 'transferring' and other states, only update if status changed
+                if (btn && btn.dataset.lastStatus !== 'transferring') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>';
                     btn.title = '暫停';
+                    btn.dataset.lastStatus = 'transferring';
                 }
             }
         }
@@ -573,8 +563,6 @@ const TransferManager = {
     },
 
     toggleTaskState(id) {
-        if (this._processingTasks.has(id)) return;
-        
         const result = this.findTask(id);
         if (!result) return;
         
@@ -808,38 +796,14 @@ const TransferManager = {
     },
     
     pauseTask(id) {
-        if (this._processingTasks.has(id)) return;
-
         const result = this.findTask(id);
         if (!result) return;
-
-        // 1. Debounce Lock (500ms)
-        this._processingTasks.add(id);
-        setTimeout(() => this._processingTasks.delete(id), 500);
-        
-        // 2. Optimistic Update
-        result.task.status = 'paused';
-        this.renderTaskCard(result.task);
-
-        // 3. Fire-and-forget Backend Call
         this.ApiService.pauseTransfer(id);
     },
 
     resumeTask(id) {
-        if (this._processingTasks.has(id)) return;
-
         const result = this.findTask(id);
         if (!result) return;
-
-        // 1. Debounce Lock (500ms)
-        this._processingTasks.add(id);
-        setTimeout(() => this._processingTasks.delete(id), 500);
-
-        // 2. Optimistic Update
-        result.task.status = 'queued'; // Will transition to 'transferring' via backend update
-        this.renderTaskCard(result.task);
-
-        // 3. Fire-and-forget Backend Call
         this.ApiService.resumeTransfer(id);
     },
 

@@ -256,6 +256,12 @@ class TransferService:
                 progress_callback(main_task_id, delta, speed)
 
         async with self._semaphore:
+            # Checkpoint: Ensure task wasn't paused/cancelled while waiting in semaphore queue
+            main_status = self.controller.db.get_main_task_status(main_task_id)
+            if main_status in ['paused', 'cancelled', 'failed']:
+                logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
+                return
+
             try:
                 current_task = asyncio.current_task()
                 self.shared_state.active_tasks[sub_task_id] = current_task
@@ -512,6 +518,12 @@ class TransferService:
                 progress_callback(main_task_id, delta, speed)
 
         async with self._semaphore:
+            # Checkpoint: Ensure task wasn't paused/cancelled while waiting in semaphore queue
+            main_status = self.controller.db.get_main_task_status(main_task_id)
+            if main_status in ['paused', 'cancelled', 'failed']:
+                logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
+                return
+
             try:
                 self.shared_state.active_tasks[sub_task_id] = asyncio.current_task()
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
