@@ -1,15 +1,15 @@
 class TDriveError(Exception):
-    """Base exception class for all custom exceptions in this project."""
+    """Base exception class."""
     pass
 
 class PathNotFoundError(TDriveError):
-    """Raised when an operation targets a file or folder path that does not exist."""
+    """Path does not exist."""
     pass
 
 class ItemAlreadyExistsError(TDriveError):
-    """Raised when attempting to create a file or folder with a name that already exists at the target location."""
+    """Item already exists."""
     pass
 
 class InvalidNameError(TDriveError):
-    """Raised when an invalid name (e.g., containing illegal characters) is used for a file or folder."""
+    """Invalid name used."""
     pass

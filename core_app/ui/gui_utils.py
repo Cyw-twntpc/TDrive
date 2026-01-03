@@ -66,24 +66,12 @@ def reveal_in_explorer(path: str) -> bool:
         logger.error(f"Exception occurred while revealing in explorer (fallback): {e}", exc_info=True)
         return False
 
-def core_select_files(multiple: bool = False, title: str = "Select File(s)", initial_dir: str = "") -> list[str]:
-    """
-    Opens a native dialog for selecting one or multiple files.
-
-    Args:
-        multiple: If True, allows selecting multiple files. Defaults to False.
-        title: The title of the dialog window.
-        initial_dir: The directory to open the dialog in.
-
-    Returns:
-        A list of selected absolute file paths. Returns an empty list if the
-        dialog is canceled.
-    """
+def core_select_files(multiple: bool = False, title: str = "選擇檔案", initial_dir: str = "") -> list[str]:
+    """Opens a native dialog for selecting one or multiple files."""
     start_dir = initial_dir if initial_dir else ""
     parent = QApplication.activeWindow()
     
     if multiple:
-        # getOpenFileNames returns a tuple: (list_of_filenames, filter_string)
         file_paths, _ = QFileDialog.getOpenFileNames(
             parent, 
             title, 
@@ -92,7 +80,6 @@ def core_select_files(multiple: bool = False, title: str = "Select File(s)", ini
         )
         return file_paths
     else:
-        # getOpenFileName returns a tuple: (filename, filter_string)
         file_path, _ = QFileDialog.getOpenFileName(
             parent, 
             title, 
@@ -101,18 +88,8 @@ def core_select_files(multiple: bool = False, title: str = "Select File(s)", ini
         )
         return [file_path] if file_path else []
 
-def core_select_directory(title: str = "Select Folder", initial_dir: str = "") -> str:
-    """
-    Opens a native dialog for selecting a single directory.
-
-    Args:
-        title: The title of the dialog window.
-        initial_dir: The directory to open the dialog in.
-
-    Returns:
-        The selected absolute folder path. Returns an empty string if the
-        dialog is canceled.
-    """
+def core_select_directory(title: str = "選擇資料夾", initial_dir: str = "") -> str:
+    """Opens a native dialog for selecting a single directory."""
     start_dir = initial_dir if initial_dir else ""
     parent = QApplication.activeWindow()
     

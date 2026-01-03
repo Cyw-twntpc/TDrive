@@ -1,10 +1,3 @@
-"""
-Handles all low-level communication with the Telegram API using Telethon.
-
-This module encapsulates the logic for finding or creating the storage group,
-streaming file uploads and downloads, and synchronizing the local database with
-a remote backup stored in the group's pinned messages.
-"""
 from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.messages import SetHistoryTTLRequest
 from telethon.errors import FloodWaitError
@@ -23,8 +16,7 @@ from ..data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
 
-# An asyncio lock to prevent concurrent executions of `sync_database_file`,
-# which could lead to race conditions when accessing the database file.
+# Prevent concurrent database syncs
 update_lock = asyncio.Lock()
 
 CALLBACK_ELAPSED = 0.5 # seconds - Throttle UI updates
@@ -37,10 +29,7 @@ async def _retry_with_backoff(
     base_delay: float = 1.0, 
     max_delay: float = 32.0
 ) -> T:
-    """
-    Executes an async function with exponential backoff retry logic.
-    Special handling for Telegram's FloodWaitError.
-    """
+    """Executes async function with exponential backoff and FloodWait handling."""
     attempt = 0
     while True:
         try:
@@ -48,16 +37,12 @@ async def _retry_with_backoff(
         except FloodWaitError as e:
             logger.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
-            # FloodWait doesn't count as a retry attempt; we just wait and try again.
         except (OSError, ValueError, asyncio.TimeoutError) as e: 
-            # Catch specific errors appropriate for retry. 
-            # Note: ValueError is caught because checksum mismatches raise it.
             attempt += 1
             if attempt > max_retries:
                 logger.error(f"Operation failed after {max_retries} attempts: {e}")
                 raise
             
-            # Calculate backoff with jitter to prevent thundering herd
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
             jitter = random.uniform(0, 0.5 * delay)
             sleep_time = delay + jitter
@@ -65,15 +50,11 @@ async def _retry_with_backoff(
             logger.warning(f"Operation failed (Attempt {attempt}/{max_retries}): {e}. Retrying in {sleep_time:.2f}s...")
             await asyncio.sleep(sleep_time)
         except Exception as e:
-             # Unexpected errors should fail fast
              logger.error(f"Non-retriable error: {e}")
              raise
 
 def _save_group_id(api_id: int, group_id: int):
-    """
-    Saves the TDrive storage group ID into the encrypted info.json file.
-    This caches the group_id to avoid searching for it on every startup.
-    """
+    """Caches group_id in local encrypted info.json."""
     try:
         info_path = './file/info.json'
         current_info = {}
@@ -103,10 +84,7 @@ def _save_group_id(api_id: int, group_id: int):
         logger.error(f"Failed to save group_id: {e}", exc_info=True)
 
 async def _ensure_no_ttl(client, group_id: int):
-    """
-    Checks if auto-delete (TTL) is enabled on the group and disables it if so.
-    This prevents accidental data loss.
-    """
+    """Disables auto-delete (TTL) on the storage group."""
     try:
         # Get the entity (chat/channel)
         entity = await client.get_entity(group_id)
@@ -127,13 +105,10 @@ async def _ensure_no_ttl(client, group_id: int):
         logger.warning(f"Failed to check or disable auto-delete (TTL) for group {group_id}: {e}")
 
 async def get_group(client, app_api_id: int) -> int | None:
-    """
-    Finds or creates the dedicated 'TDrive' storage group.
-    """
+    """Finds or creates the dedicated 'TDrive' storage group."""
     name = "TDrive"
     group_id = None
 
-    # 1. Try to read the group_id from the local cache first.
     try:
         info_path = './file/info.json'
         if os.path.exists(info_path):
@@ -151,7 +126,6 @@ async def get_group(client, app_api_id: int) -> int | None:
         await _ensure_no_ttl(client, group_id)
         return group_id
 
-    # 2. If not cached, search through dialogs on the server.
     logger.info("Searching for 'TDrive' group on the server...")
     dialogs = await client.get_dialogs()
     for dialog in dialogs:
@@ -161,7 +135,6 @@ async def get_group(client, app_api_id: int) -> int | None:
             await _ensure_no_ttl(client, dialog.id)
             return dialog.id
 
-    # 3. If not found anywhere, create a new group.
     logger.info("TDrive group not found, creating a new one...")
     try:
         result = await client(CreateChannelRequest(
@@ -184,20 +157,10 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
                                 progress_callback: Callable | None = None, resume_context: List = None,
                                 chunk_callback: Callable[[int, int, str], None] = None,
                                 parent_id: str | None = None) -> list:
-    """
-    Streams, encrypts, and uploads a file with fully async I/O.
-    
-    Args:
-        resume_context: A list of already uploaded part info.
-        chunk_callback: A function called on every successful chunk upload: (part_num, msg_id, hash).
-                        This ensures the Controller is updated in real-time.
-    """
+    """Streams, encrypts, and uploads a file with async I/O."""
     file_name = os.path.basename(file_path)
     
-    # Initialize split_files_info. If resuming, we start with what we have.
     split_files_info = list(resume_context) if resume_context else []
-    
-    # Identify completed parts to skip
     completed_parts = {item[0] for item in split_files_info}
     
     loop = asyncio.get_running_loop()
@@ -206,8 +169,6 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
         key = cr.generate_key(original_file_hash[:32], original_file_hash[-32:])
         total_size = os.path.getsize(file_path)
         
-        # Calculate initial uploaded bytes based on completed parts for correct progress bar
-        # Note: This is an estimation. Exact bytes logic is handled by caller via chunk_callback/ui_cb
         uploaded_bytes_base = 0
         for part_num in completed_parts:
             uploaded_bytes_base += fp.CHUNK_SIZE 
@@ -217,24 +178,13 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
         last_update_time = 0
         current_uploaded_accumulated = uploaded_bytes_base
 
-        # Progress Callback Wrapper
         def callback(current, total):
             nonlocal last_update_time, current_uploaded_accumulated
             now = time.time()
             elapsed = now - last_update_time
             
-            # Telethon 'current' is relative to the *current chunk*, not total file
-            # But here we need to feed the TransferService's ui_cb with accumulative bytes
-            # Actually, TransferService logic expects accumulated bytes to calculate delta.
-            # So we pass (base + current_chunk_progress)
-            
             if elapsed > CALLBACK_ELAPSED:
                 last_update_time = now
-                
-                # Update global monitor (optional here, usually handled by caller's ui_cb wrapper)
-                # But we call it if provided to ensure traffic counting works
-                # NOTE: The caller (TransferService) passes a wrapper that handles delta calculation
-                # so we just need to pass the "current total" to it.
                 
                 real_current = current_uploaded_accumulated + current
                 if real_current > total_size: real_current = total_size
@@ -242,14 +192,12 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
                 if progress_callback:
                     progress_callback(real_current, total_size)
 
-        # Generator for Encrypted Chunks
         generator = fp.stream_split_and_encrypt(file_path, key, completed_parts)
 
         while True:
             # Check cancellation
             await asyncio.sleep(0) 
 
-            # Offload heavy encryption to executor
             try:
                 result = await loop.run_in_executor(None, next, generator, None)
                 if result is None:
@@ -261,14 +209,11 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
                 logger.error(f"Error in encryption stream: {e}")
                 raise
 
-            # Double check (generator handles it, but safety first)
             if part_num in completed_parts:
                 continue
 
-            # Calculate Chunk Hash (Background)
             part_hash = await loop.run_in_executor(None, cr.hash_bytes, part_bytes)
             
-            # Upload to Telegram with Retry Logic
             async def _upload_chunk():
                 return await client.send_file(
                     group_id,
@@ -278,18 +223,15 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
 
             message = await _retry_with_backoff(_upload_chunk)
             
-            # Update State
             split_files_info.append([part_num, message.id, part_hash])
             current_uploaded_accumulated += len(part_bytes)
             
-            # Persist State (Critical)
             if chunk_callback:
                 try:
                     chunk_callback(part_num, message.id, part_hash)
                 except Exception as e:
                     logger.warning(f"Chunk callback failed: {e}")
 
-        # Sort results by part number before returning
         split_files_info.sort(key=lambda x: x[0])
         return split_files_info
 
@@ -303,20 +245,13 @@ async def upload_file_with_info(client, group_id: int, file_path: str, original_
 async def download_file(client, group_id: int, file_details: dict, download_dir: str, task_id: str, 
                         progress_callback: Callable | None = None, completed_parts: Set[int] = None,
                         chunk_callback: Callable[[int], None] = None):
-    """
-    Downloads, decrypts, and reassembles a file.
-    
-    Args:
-        completed_parts: Set of part numbers to skip.
-        chunk_callback: A function called on every successful chunk download: (part_num).
-    """
+    """Downloads, decrypts, and reassembles a file."""
     if completed_parts is None:
         completed_parts = set()
 
     file_name = file_details['name']
     part_info_map = {part['message_id']: {"num": part['part_num'], "hash": part['part_hash']} for part in file_details['chunks']}
     
-    # Filter message IDs: Only download what we don't have
     message_ids = []
     for chunk in file_details['chunks']:
         if chunk['part_num'] not in completed_parts:
@@ -330,9 +265,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
     try:
         if not message_ids and len(completed_parts) == len(file_details['chunks']):
              logger.info("All parts marked as completed. Skipping download loop.")
-             # Proceed to integrity check directly
         elif message_ids:
-            # Fetch Metadata
             messages_to_download = await client.get_messages(group_id, ids=message_ids)
             messages_to_download = [m for m in messages_to_download if m]
             
@@ -341,10 +274,8 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
 
         total_size = int(file_details['size'])
         
-        # Prepare file (Allocate space)
         await loop.run_in_executor(None, fp.prepare_download_file, final_path, total_size)
         
-        # Calculate initial progress
         downloaded_bytes_base = 0
         for chunk in file_details['chunks']:
             if chunk['part_num'] in completed_parts:
@@ -368,26 +299,22 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
 
         if message_ids:
             for message in messages_to_download:
-                # Check cancellation
                 await asyncio.sleep(0)
 
                 part_num = part_info_map[message.id]["num"]
                 expected_part_hash = part_info_map[message.id]["hash"]
                 
                 async def _process_part():
-                    # Download to memory (Bytes)
                     encrypted_bytes = await message.download_media(file=bytes, progress_callback=callback)
                     
                     if not encrypted_bytes:
-                        raise ValueError("Empty response from Telegram")
+                        raise ValueError("Telegram 回傳空回應")
 
-                    # Verify Hash (Background)
                     actual_part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_bytes)
                     
                     if actual_part_hash != expected_part_hash:
-                         raise ValueError(f"Part {part_num} checksum mismatch.")
+                         raise ValueError(f"第 {part_num} 部分校驗和不符。")
 
-                    # Decrypt and Write (Background)
                     offset = (part_num - 1) * fp.CHUNK_SIZE
                     await loop.run_in_executor(
                         None, 
@@ -397,13 +324,11 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
                     
                     current_downloaded_accumulated += message.document.size
                     
-                    # Persist State (Critical)
                     if chunk_callback:
                         chunk_callback(part_num)
 
                 await _retry_with_backoff(_process_part)
 
-        # Final Integrity Check
         logger.info(f"All parts of '{file_name}' processed. Performing final integrity check.")
         final_hash = await loop.run_in_executor(None, cr.hash_data, final_path)
         
@@ -420,10 +345,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
         raise
 
 async def _perform_db_upload(client, group_id: int, db_path: str):
-    """
-    Handles the actual process of uploading and cleaning up old database backups.
-    Uses a hashtag search mechanism instead of pinned messages.
-    """
+    """Uploads local database and cleans up old backups."""
     logger.info("Uploading local database to the cloud...")
     if not os.path.exists(db_path):
         logger.error(f"Database file '{db_path}' not found. Cannot upload.")
@@ -437,14 +359,12 @@ async def _perform_db_upload(client, group_id: int, db_path: str):
         
         db = DatabaseHandler(db_path)
         version = db.get_db_version()
-        # Include the unique hashtag for easy retrieval
         caption = f"#tdrive_db_backup db_version:{version}"
 
         logger.info(f"Uploading new database backup (Version: {version})...")
         new_message = await client.send_file(group_id, file=temp_zip_path, caption=caption)
         logger.info(f"New database backup (Version: {version}) has been uploaded.")
         
-        # Clean up ALL old backup messages to ensure only the latest exists
         logger.info("Scanning for and removing old database backups...")
         try:
             old_messages = await client.get_messages(group_id, limit=50, search='#tdrive_db_backup')
@@ -466,13 +386,7 @@ async def _perform_db_upload(client, group_id: int, db_path: str):
             os.remove(temp_zip_path)
 
 async def sync_database_file(client, group_id: int, mode: str = 'sync', db_path: str = './file/tdrive.db'):
-    """
-    Synchronizes the local database with the remote backup using hashtag search.
-
-    Modes:
-    - 'sync': Compares local and remote versions and syncs the newer one.
-    - 'upload': Forces an upload of the local database.
-    """
+    """Syncs local database with remote backup (hashtag-based)."""
     async with update_lock:
         telethon_group_id = int(f"-100{group_id}") if group_id > 0 else group_id
         

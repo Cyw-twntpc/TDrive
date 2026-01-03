@@ -12,9 +12,6 @@ from telethon import TelegramClient
 
 
 class SharedState:
-    """
-    A class to hold and manage state shared across various services.
-    """
     def __init__(self):
         # --- Authentication & Client ---
         self.client: Optional[TelegramClient] = None

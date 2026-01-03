@@ -5,6 +5,7 @@ icon.png
 venv/
 file/
 chrome/
+project_docs/
 *.md
 *.txt
 *.pdf

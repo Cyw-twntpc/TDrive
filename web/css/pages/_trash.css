@@ -1,0 +1,294 @@
+/* Trash Page Styles */
+
+#page-trash {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+#page-trash .top-bar {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    gap: 12px;
+}
+
+#page-trash .trash-header-title {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-color);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.trash-tip {
+    font-size: 13px;
+    color: var(--text-light-color);
+    font-weight: 400;
+    margin-left: 8px;
+}
+
+#page-trash .bottom-row {
+    justify-content: flex-end;
+    width: 100%;
+    display: flex;
+}
+
+/* Empty Trash Button Style */
+#empty-trash-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--danger-color);
+    background-color: transparent;
+    border: 1px solid var(--danger-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#empty-trash-btn:hover:not(:disabled) {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+#empty-trash-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: #ccc;
+    color: #999;
+}
+
+/* List Layout - Matching File List Style */
+.trash-list-header, .trash-item {
+    display: grid;
+    grid-template-columns: 3fr 1.5fr 1fr 2fr 1fr;
+    gap: 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.trash-list-header {
+    font-weight: 500;
+    color: var(--text-light-color);
+    background-color: var(--main-content-bg);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 2px solid var(--border-color);
+    padding: 12px 24px; /* Matches file-list visual spacing */
+}
+
+.trash-list-header .sortable {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.trash-list-header .sortable:hover {
+    color: var(--primary-color);
+}
+
+/* Align Sort Icons with _file_list.css */
+.trash-list-header .header-name-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.trash-list-header .sort-icon {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    position: relative;
+}
+
+.trash-list-header .sort-icon::before,
+.trash-list-header .sort-icon::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    opacity: 0.3;
+}
+
+.trash-list-header .sortable:not(.asc):not(.desc) .sort-icon::before {
+    border-bottom: 5px solid var(--sort-icon-color);
+    top: -2px;
+}
+
+.trash-list-header .sortable:not(.asc):not(.desc) .sort-icon::after {
+    border-top: 5px solid var(--sort-icon-color);
+    bottom: -2px;
+}
+
+.trash-list-header .sortable.asc .sort-icon::before {
+    border-bottom: 5px solid var(--primary-color);
+    top: -2px;
+    opacity: 1;
+}
+
+.trash-list-header .sortable.desc .sort-icon::after {
+    border-top: 5px solid var(--primary-color);
+    bottom: -2px;
+    opacity: 1;
+}
+
+.trash-list-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    /* Ensure relative positioning for selection box if needed, though usually on section */
+}
+
+/* Centered Empty State */
+.trash-list-body:has(.empty-state) {
+    justify-content: center;
+    align-items: center;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #adb5bd;
+    text-align: center;
+}
+
+.empty-state i {
+    font-size: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 18px;
+    font-weight: 500;
+}
+
+/* Item Styling */
+.trash-item {
+    padding: 8px 24px; /* Matches file-list padding */
+    transition: background-color 0.1s;
+    position: relative;
+    cursor: pointer;
+}
+
+.trash-item:hover {
+    background-color: #f9fbfd;
+    cursor: default;
+}
+
+.trash-item.selected {
+    background-color: var(--selected-bg-color);
+}
+
+/* --- Name Column Layout (Critical for Button Behavior) --- */
+.trash-col-name {
+    display: flex;
+    justify-content: space-between; /* Push actions to the right */
+    align-items: center;
+    gap: 8px;
+    min-width: 0; /* Enable flex shrinking */
+}
+
+.trash-col-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    overflow: hidden; /* Ensure text truncates */
+    flex-grow: 1;
+    min-width: 0; /* Allow text to shrink */
+}
+
+.trash-col-main i {
+    font-size: 20px;
+    width: 24px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.trash-col-main i.folder-icon { color: var(--primary-color); }
+
+.trash-col-main span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trash-col-path {
+    font-size: 13px;
+    color: var(--text-light-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Floating Actions --- */
+/* The container is always present in layout but contents are hidden */
+.trash-col-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.trash-action-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #b0b8c4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s ease-in-out, background-color 0.2s, color 0.2s;
+    font-size: 14px;
+    
+    /* [Key] Hidden by default but takes layout space */
+    visibility: hidden;
+    opacity: 0;
+}
+
+/* [Key] Trigger Visibility on Row Hover */
+/* Replicating logic from _file_list.css: .file-list-section:not(.is-selecting) .file-item:hover .item-action-btn */
+.file-list-section:not(.is-selecting) .trash-item:hover .trash-action-btn {
+    visibility: visible;
+    opacity: 1;
+}
+
+.trash-action-btn:hover {
+    background-color: #e9eef5;
+}
+
+.trash-action-btn.restore-btn:hover {
+    color: var(--primary-color);
+}
+
+.trash-action-btn.delete-btn:hover {
+    color: var(--danger-color);
+}
+
+/* Selection Box */
+#trash-selection-box {
+    position: absolute;
+    background: var(--selection-box-bg);
+    border: var(--selection-box-border);
+    z-index: 100;
+    pointer-events: none;
+    display: none;
+}

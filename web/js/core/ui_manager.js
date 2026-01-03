@@ -1,34 +1,16 @@
-/**
- * @fileoverview A utility object for managing global UI elements and state.
- *
- * This object provides a collection of static methods to control elements like
- * loading indicators, popovers, modals, and to format data for display.
- */
 const UIManager = {
-    // --- Global Indicators & Locks ---
-    
-    /** Shows the global top progress bar. */
     startProgress() {
         document.getElementById('global-progress-bar')?.classList.add('visible');
     },
 
-    /** Hides the global top progress bar. */
     stopProgress() {
         document.getElementById('global-progress-bar')?.classList.remove('visible');
     },
 
-    /** Locks the UI to prevent user interaction during critical operations. */
     setInteractionLock(isLocked) {
         document.getElementById('interaction-lock-overlay')?.classList.toggle('visible', isLocked);
     },
     
-    // --- UI Formatting Helpers ---
-
-    /**
-     * Gets a Font Awesome icon class based on a file's extension.
-     * @param {string} fileName - The name of the file.
-     * @returns {string} The corresponding Font Awesome class string.
-     */
     getFileTypeIcon(fileName) {
         const extension = fileName.split('.').pop().toLowerCase();
         if (fileName.includes('.') === false) return 'fa-solid fa-file';
@@ -47,31 +29,18 @@ const UIManager = {
         }
     },
     
-    /**
-     * Formats a number of bytes into a human-readable string (B, KB, MB, GB).
-     * @param {number} bytes - The number of bytes.
-     * @returns {string} The formatted size string.
-     */
     formatBytes(bytes) {
         if (typeof bytes !== 'number' || isNaN(bytes) || bytes <= 0) return '0 B';
         
         const k = 1024;
         const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
         
-        // Calculate index, but clamp it to valid array range.
-        // Math.log of value < 1 is negative, so we use Math.max(0, ...).
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         const index = Math.max(0, Math.min(i, sizes.length - 1));
         
         return parseFloat((bytes / Math.pow(k, index)).toFixed(1)) + ' ' + sizes[index];
     },
 
-    /**
-     * Gets a user-friendly description for a file type based on its extension.
-     * @param {string} fileName - The name of the file.
-     * @param {boolean} isFolder - True if the item is a folder.
-     * @returns {string} The file type description.
-     */
     getFileTypeDescription(fileName, isFolder) {
         if (isFolder) return '資料夾';
         const extension = fileName.split('.').pop().toLowerCase();
@@ -99,16 +68,10 @@ const UIManager = {
         }
     },
 
-    // --- Modal & Overlay Control ---
-
-    /** Toggles the visibility of a modal or overlay. */
     toggleModal(modalId, show) {
         document.getElementById(modalId)?.classList.toggle('hidden', !show);
     },
 
-    // --- Popovers & User Info ---
-
-    /** Updates the user avatar icon with either a custom image or a default icon. */
     updateUserAvatar(AppState) {
         const userBtn = document.getElementById('user-btn');
         userBtn.innerHTML = AppState.userAvatar 
@@ -116,7 +79,6 @@ const UIManager = {
             : `<i class="fas fa-user-circle"></i>`;
     },
 
-    /** Populates the user info popover with data from the AppState. */
     populateUserInfoPopover(AppState) {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
@@ -129,7 +91,6 @@ const UIManager = {
         }
     },
 
-    /** Sets up global click listeners to handle popover visibility. */
     setupPopovers() {
         document.querySelectorAll('[data-popover]').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -138,7 +99,6 @@ const UIManager = {
                 const targetPopover = document.getElementById(popoverId);
                 
                 const isVisible = !targetPopover.classList.contains('hidden');
-                // Hide all other popovers first.
                 document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
                 if (!isVisible) {
                     targetPopover.classList.remove('hidden');
@@ -146,7 +106,6 @@ const UIManager = {
             });
         });
 
-        // Clicking anywhere outside a popover will close all of them.
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.popover') && !e.target.closest('[data-popover]')) {
                 document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
@@ -154,9 +113,6 @@ const UIManager = {
         });
     },
 
-    // --- Error Handling ---
-    
-    /** Displays a user-friendly modal alert for backend-reported errors. */
     handleBackendError(response) {
         let title = '錯誤';
         let message = response.message || '發生未知的內部錯誤，請稍後再試。';
@@ -185,7 +141,6 @@ const UIManager = {
         UIModals.showAlert(title, message, 'btn-primary');
     },
 
-    /** Shows or hides the "Connection Lost" overlay. */
     handleConnectionStatus(status) {
         console.log(`Connection status changed: ${status}`);
         this.toggleModal('connection-lost-overlay', status === 'lost');

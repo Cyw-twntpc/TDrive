@@ -12,10 +12,6 @@ from .services.transfer_service import TransferService
 logger = logging.getLogger(__name__)
 
 class TDriveService:
-    """
-    Acts as a Façade for all backend services.
-    Integrated with TransferService and its internal controller for traffic stats.
-    """
     def __init__(self, loop: asyncio.AbstractEventLoop = None):
         logger.info("Initializing TDriveService...")
         self._shared_state = SharedState()
@@ -40,10 +36,7 @@ class TDriveService:
     # --- Helper: Progress Adapter ---
     
     def _create_progress_adapter(self, bridge_emit_signal: Callable):
-        """
-        Creates an adapter function that normalizes the variable arguments from 
-        TransferService callbacks into a standard dictionary for the Bridge signal.
-        """
+        """Normalizes TransferService callbacks for Bridge signals."""
         last_emit_time = {}
         last_status = {} # Track status changes to bypass throttle
 
@@ -108,9 +101,6 @@ class TDriveService:
         return adapter
 
     def _schedule_background_task(self, coro):
-        """
-        Schedules a coroutine to run as a background task.
-        """
         def _task_wrapper():
             task = self._shared_state.loop.create_task(coro)
             task_id = f"bg_task_{id(task)}"
@@ -129,9 +119,6 @@ class TDriveService:
         return await self._auth_service.check_startup_login()
 
     async def close(self):
-        """
-        Gracefully shuts down the service.
-        """
         # Stop the file status watcher
         self._transfer_service.shutdown()
         
@@ -165,7 +152,11 @@ class TDriveService:
         return await self._auth_service.submit_password(password)
         
     async def perform_post_login_initialization(self) -> Dict[str, Any]:
-        return await self._auth_service.initialize_drive()
+        result = await self._auth_service.initialize_drive()
+        if result.get("success"):
+            # Schedule maintenance tasks
+            self._schedule_background_task(self._file_service.cleanup_expired_trash())
+        return result
 
     async def get_user_info(self) -> Dict[str, Any]:
         return await self._auth_service.get_user_info()
@@ -202,6 +193,18 @@ class TDriveService:
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         return await self._file_service.delete_items(items)
 
+    async def restore_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return await self._file_service.restore_items(items)
+
+    async def delete_items_permanently(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return await self._file_service.delete_items_permanently(items)
+
+    async def empty_trash(self) -> Dict[str, Any]:
+        return await self._file_service.empty_trash()
+
+    async def get_trash_items(self) -> Dict[str, Any]:
+        return await self._file_service.get_trash_items()
+
     async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
         return await self._file_service.move_items(items, target_folder_id)
 
@@ -210,41 +213,36 @@ class TDriveService:
         return self._transfer_service.get_transfer_config()
 
     def upload_files(self, parent_id: int, files: List[Dict], progress_callback: Callable) -> Dict[str, Any]:
-        """Initiates file uploads."""
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.upload_files(parent_id, files, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Upload started"}
+        return {"success": True, "message": "開始上傳。"}
 
     def upload_folder(self, parent_id: int, folder_path: str, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
-        """Initiates folder upload."""
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, task_id, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Folder upload started"}
+        return {"success": True, "message": "開始上傳資料夾。"}
 
     def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable) -> Dict[str, Any]:
-        """Initiates item downloads."""
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.download_items(items, destination_dir, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "Download started"}
+        return {"success": True, "message": "開始下載。"}
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
         return self._transfer_service.cancel_transfer(task_id)
 
     def pause_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
-        """Pauses a transfer and immediately emits a 'paused' status update."""
         self._transfer_service.pause_transfer(task_id)
         
         # Use adapter to send immediate status update
         adapter = self._create_progress_adapter(progress_callback)
         adapter(task_id, '', 0, 0, 'paused', 0)
         
-        return {"success": True, "message": "Task pause requested."}
+        return {"success": True, "message": "已請求暫停任務。"}
 
     def resume_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
-        """Resumes a transfer, emitting 'queued' and then letting the background task run."""
         adapter = self._create_progress_adapter(progress_callback)
         
         # Immediately notify 'queued'
@@ -254,7 +252,7 @@ class TDriveService:
         task_coro = self._transfer_service.resume_transfer(task_id, adapter)
         self._schedule_background_task(task_coro)
         
-        return {"success": True, "message": "Resuming transfer..."}
+        return {"success": True, "message": "正在恢復傳輸..."}
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:
         return self._transfer_service.controller.get_incomplete_transfers()

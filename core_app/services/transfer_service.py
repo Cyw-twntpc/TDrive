@@ -22,42 +22,24 @@ logger = logging.getLogger(__name__)
 CONCURRENCY_LIMIT = 3
 
 class TransferService:
-    """
-    Manages all file transfer operations (upload/download).
-    Integrates with TransferController for state and traffic tracking.
-    """
     def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
         self.controller = TransferController()
-        
-        # Initialize File Status Watcher with the shared event loop
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.db, status_change_callback=lambda x: None)
-
-        # Global semaphore for tasks to prevent flooding
         self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-
-        # Track active sub-tasks for each main task: main_task_id -> set(sub_task_id)
         self._active_sub_tasks: Dict[str, set] = defaultdict(set)
-
-        # Reset any tasks that were 'transferring' when the app crashed
         self.controller.reset_zombie_tasks()
-        
-        # Restore watches for already completed transfers
         all_tasks = self.controller.get_incomplete_transfers()
         self.watcher.load_initial_watches(all_tasks['uploads'], all_tasks['downloads'])
 
     def set_file_status_callback(self, callback: Callable):
-        """Sets the callback for file status changes and starts the watcher."""
         self.watcher._callback = callback
         self.watcher.start()
 
     # --- UPLOAD OPERATIONS ---
 
     async def upload_files(self, parent_id: int, upload_items: List[Dict[str, Any]], progress_callback: Callable):
-        """
-        Entry point for selecting and uploading multiple separate files.
-        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
             logger.error("Upload failed: Client not connected.")
@@ -76,17 +58,15 @@ class TransferService:
             except OSError:
                 total_size = 0
 
-            # Register Single File Task
             self.controller.add_upload_task(
                 task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None
             )
 
-            # [FIXED] Send initial update to frontend to sync Total Size immediately
             progress_callback(task_id, file_name, 0, total_size, 'queued', 0, is_folder=False)
 
             tasks_to_run.append(
                 self._upload_single_file(
-                    client, task_id, task_id, # main_id == sub_id for single files
+                    client, task_id, task_id, 
                     file_path, parent_id,
                     progress_callback
                 )
@@ -95,25 +75,14 @@ class TransferService:
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
-        """
-        Recursive folder upload:
-        1. Pre-scan structure and create remote folders.
-        2. Bulk register all tasks.
-        3. Execute file uploads.
-        """
         base_folder_name = os.path.basename(local_folder_path)
-        
         logger.info(f"Starting folder upload: '{local_folder_path}' (Task: {main_task_id})")
-
-        # Register Orchestrator Task
         self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
 
         try:
-            # --- Phase 1: Pre-scan & Structure Creation ---
             total_size = 0
-            file_list = [] # List of (local_path, file_size)
+            file_list = []
             
-            # 1. Calculate Total Size & Gather File List
             for root, dirs, files in os.walk(local_folder_path):
                 for f in files:
                     full_path = os.path.join(root, f)
@@ -124,12 +93,10 @@ class TransferService:
                     except OSError:
                         pass
 
-            # 2. Register Main Folder Task
             self.controller.add_upload_task(
                 main_task_id, local_folder_path, parent_id, total_size, is_folder=True
             )
 
-            # Notify Frontend: Task Created
             progress_callback(main_task_id, base_folder_name, 0, total_size, 'queued', 0, is_folder=True)
 
             loop = asyncio.get_running_loop()
@@ -140,8 +107,6 @@ class TransferService:
                 return
 
             try:
-                # 3. Create DB Structure (BFS/DFS) and Map Paths to Remote IDs
-                # Create Root Folder
                 try:
                     root_remote_id = await loop.run_in_executor(None, self.db.add_folder, parent_id, base_folder_name)
                 except errors.ItemAlreadyExistsError:
@@ -150,7 +115,7 @@ class TransferService:
                     if found:
                         root_remote_id = found['id']
                     else:
-                        raise Exception("Folder exists but cannot be found.")
+                        raise Exception("資料夾已存在但無法找到。")
 
                 path_to_remote_id = {local_folder_path: root_remote_id}
                 
@@ -169,7 +134,6 @@ class TransferService:
                             if found:
                                 path_to_remote_id[local_dir_path] = found['id']
 
-                # 4. Create Child Tasks in Memory
                 child_tasks_map = {}
                 tasks_to_run = []
                 
@@ -194,22 +158,18 @@ class TransferService:
                             )
                         )
 
-                # 5. Bulk Register to Controller
                 self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
-                # --- Phase 2: Execution ---
                 progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
                 
                 await asyncio.gather(*tasks_to_run, return_exceptions=True)
 
-                # Finalize
                 await utils.trigger_db_upload_in_background(self.shared_state)
                 
                 task_info = self.controller.get_task(main_task_id)
                 if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
                     self.controller.mark_sub_task_completed(main_task_id, main_task_id)
                     progress_callback(main_task_id, base_folder_name, 0, total_size, 'completed', 0)
-                    # Watch the parent folder of the uploaded folder
                     self.watcher.add_watch(main_task_id, parent_id, 'remote')
 
             except Exception as e:
@@ -227,9 +187,6 @@ class TransferService:
                                   file_path: str, parent_id: int, 
                                   progress_callback: Callable,
                                   resume_context: List = None, pre_calculated_hash: str = None):
-        """
-        Worker for uploading a single file. 
-        """
         file_name = os.path.basename(file_path)
         
         def chunk_cb(part_num, msg_id, part_hash):
@@ -247,16 +204,11 @@ class TransferService:
             if delta > 0:
                 last_uploaded = current
                 last_update_time = now
-                
                 speed = delta / time_diff if time_diff > 0 else 0
-                
-                # 1. Update Traffic Monitor (Real-time)
                 asyncio.create_task(self.controller.update_transferred_bytes(delta))
-                # 2. Notify UI
                 progress_callback(main_task_id, delta, speed)
 
         async with self._semaphore:
-            # Checkpoint: Ensure task wasn't paused/cancelled while waiting in semaphore queue
             main_status = self.controller.db.get_main_task_status(main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
                 logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
@@ -268,7 +220,7 @@ class TransferService:
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
 
                 if not os.path.exists(file_path):
-                    raise FileNotFoundError(f"File not found: {file_path}")
+                    raise FileNotFoundError(f"找不到檔案：{file_path}")
 
                 loop = asyncio.get_running_loop()
                 total_size = os.path.getsize(file_path)
@@ -278,7 +230,6 @@ class TransferService:
 
                 if not original_file_hash:
                     original_file_hash = await loop.run_in_executor(None, crypto_handler.hash_data, file_path)
-                    # Persist hash immediately to avoid re-calculation on resume
                     self.controller.set_file_hash(sub_task_id, original_file_hash)
                     
                 existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
@@ -292,22 +243,19 @@ class TransferService:
                         )
                         self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
                         
-                        # Notify UI of full completion for this file
                         remaining = total_size - last_uploaded
                         if remaining > 0:
                             progress_callback(main_task_id, remaining, 0)
                         
-                        # [FIXED] Explicitly complete the task if it's a single file upload
                         if main_task_id == sub_task_id:
                             progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
                             self.watcher.add_watch(main_task_id, parent_id, 'remote')
                             
                         return
                     except errors.ItemAlreadyExistsError:
-                        self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "File already exists")
+                        self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "檔案已存在")
                         return
 
-                # [FIXED] Force UI update to 'transferring' before heavy operations start
                 progress_callback(main_task_id, file_name, 0, total_size, 'transferring', 0, is_folder=False)
 
                 split_files_info = await telegram_comms.upload_file_with_info(
@@ -331,7 +279,6 @@ class TransferService:
 
                 if main_task_id == sub_task_id:
                     progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
-                    # For uploads, we watch the parent folder in the remote DB
                     self.watcher.add_watch(main_task_id, parent_id, 'remote')
 
             except asyncio.CancelledError:
@@ -348,9 +295,6 @@ class TransferService:
     # --- DOWNLOAD OPERATIONS ---
 
     async def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable):
-        """
-        Entry point for downloading items.
-        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client: return
 
@@ -361,7 +305,6 @@ class TransferService:
                     self._download_folder(client, item['task_id'], item, destination_dir, progress_callback)
                 )
             else:
-                # Single File
                 task_id = item['task_id']
                 db_id = item['db_id']
                 
@@ -373,12 +316,10 @@ class TransferService:
 
                 save_path = await loop.run_in_executor(None, fp.get_unique_filepath, destination_dir, file_details['name'])
 
-                # Register
                 self.controller.add_download_task(
                     task_id, db_id, save_path, file_details['size'], is_folder=False, file_details=file_details
                 )
                 
-                # [FIXED] Send initial update to frontend to sync Total Size & queued status
                 progress_callback(task_id, file_details['name'], 0, file_details['size'], 'queued', 0, is_folder=False)
 
                 tasks_to_run.append(
@@ -392,10 +333,6 @@ class TransferService:
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
 
     async def _download_folder(self, client, main_task_id: str, folder_item: Dict, dest_path: str, progress_callback: Callable):
-        """
-        Recursive folder download.
-        """
-        # Register Orchestrator Task
         self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
 
         try:
@@ -432,7 +369,6 @@ class TransferService:
                         "name": item['name']
                     })
 
-            # Register Main Task
             self.controller.add_download_task(
                 main_task_id, folder_db_id, local_root_path, total_size, is_folder=True
             )
@@ -443,14 +379,12 @@ class TransferService:
 
             for f in file_items:
                 sub_task_id = str(uuid.uuid4())
-                
                 file_details = {
                     "name": f['name'],
                     "size": f['size'],
                     "hash": f['hash'],
                     "chunks": f['chunks']
                 }
-
                 child_tasks_map[sub_task_id] = {
                     "db_id": f['db_id'],
                     "save_path": f['local_path'],
@@ -458,7 +392,6 @@ class TransferService:
                     "status": "queued",
                     "file_details": file_details
                 }
-
                 tasks_to_run.append(
                     self._download_single_item(
                         client, main_task_id, sub_task_id,
@@ -491,9 +424,6 @@ class TransferService:
                                     save_path: str, file_details: Dict,
                                     progress_callback: Callable,
                                     resume_parts: set = None):
-        """
-        Worker for downloading a single file.
-        """
         def chunk_cb(part_num):
             self.controller.update_progress(main_task_id, sub_task_id, part_num)
         
@@ -509,16 +439,11 @@ class TransferService:
             if delta > 0:
                 last_downloaded = current
                 last_update_time = now
-                
                 speed = delta / time_diff if time_diff > 0 else 0
-                
-                # 1. Update Traffic Monitor (Real-time)
                 asyncio.create_task(self.controller.update_transferred_bytes(delta))
-                # 2. Notify UI
                 progress_callback(main_task_id, delta, speed)
 
         async with self._semaphore:
-            # Checkpoint: Ensure task wasn't paused/cancelled while waiting in semaphore queue
             main_status = self.controller.db.get_main_task_status(main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
                 logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
@@ -528,7 +453,6 @@ class TransferService:
                 self.shared_state.active_tasks[sub_task_id] = asyncio.current_task()
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
 
-                # [FIXED] Force UI update to 'transferring'
                 progress_callback(main_task_id, file_details['name'], 0, file_details['size'], 'transferring', 0)
 
                 await telegram_comms.download_file(
@@ -558,17 +482,12 @@ class TransferService:
     # --- CONTROL METHODS ---
 
     def get_transfer_config(self) -> Dict[str, Any]:
-        """Returns initialization configuration and stats."""
         return {
             "todayTraffic": self.controller.get_today_traffic(),
             "chunkSize": fp.CHUNK_SIZE
         }
 
     async def resume_transfer(self, task_id: str, progress_callback: Callable):
-        """
-        Resumes a paused or failed transfer task.
-        """
-        # Register Orchestrator (Resume) Task
         self.shared_state.active_tasks[task_id] = asyncio.current_task()
 
         try:
@@ -584,7 +503,6 @@ class TransferService:
             tasks_to_run = []
             
             if not task_info.get("is_folder"):
-                # Single File Resume
                 if task_info['type'] == 'upload':
                     tasks_to_run.append(
                         self._upload_single_file(
@@ -605,7 +523,6 @@ class TransferService:
                         )
                     )
             else:
-                # Folder Resume
                 child_tasks = task_info.get("child_tasks", {})
                 for sub_id, sub_data in child_tasks.items():
                     if sub_data['status'] == 'completed':
@@ -620,7 +537,7 @@ class TransferService:
                                 sub_data['file_path'], sub_data['parent_id'],
                                 progress_callback,
                                 resume_context=sub_data.get('split_files_info'),
-                                pre_calculated_hash=sub_data.get('file_hash') # Pass the stored hash
+                                pre_calculated_hash=sub_data.get('file_hash')
                             )
                         )
                     else:
@@ -646,40 +563,26 @@ class TransferService:
                 del self.shared_state.active_tasks[task_id]
 
     def pause_transfer(self, task_id: str):
-        """
-        Pauses an active transfer.
-        Cancels the main orchestrator task and any running child tasks.
-        """
-        # 1. Cancel Orchestrator/Main Task
         task = self.shared_state.active_tasks.get(task_id)
         if task and not task.done():
             self.shared_state.loop.call_soon_threadsafe(task.cancel)
         
-        # 2. Cancel Active Sub-Tasks
         sub_tasks = self._active_sub_tasks.get(task_id, set()).copy()
         for sub_id in sub_tasks:
             sub_task = self.shared_state.active_tasks.get(sub_id)
             if sub_task and not sub_task.done():
                  self.shared_state.loop.call_soon_threadsafe(sub_task.cancel)
         
-        # Clear the sub-task tracking
         self._active_sub_tasks[task_id].clear()
-
         self.controller.mark_paused(task_id)
-        
-        # Run DB update in background
         self.shared_state.loop.create_task(self.controller.pause_all_sub_tasks(task_id))
         
         logger.info(f"Task {task_id} marked as paused (Sub-tasks cancelled: {len(sub_tasks)}).")
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
-        """
-        Permanently cancels and removes a transfer, triggering background cleanup.
-        """
         self.pause_transfer(task_id)
         self.watcher.remove_watch(task_id)
         
-        # Ensure cleanup from active map
         if task_id in self._active_sub_tasks:
             del self._active_sub_tasks[task_id]
         
@@ -692,24 +595,15 @@ class TransferService:
         return {"success": True, "message": "任務已取消並開始背景清理。"}
 
     def remove_history_item(self, task_id: str) -> Dict[str, Any]:
-        """
-        Removes a task from the history (state file) without deleting the physical file.
-        """
         self.controller.remove_task(task_id)
         self.watcher.remove_watch(task_id)
-        return {"success": True, "message": "History item removed."}
+        return {"success": True, "message": "歷史項目已移除。"}
 
     def shutdown(self):
-        """
-        Stops the file status watcher and performs any necessary cleanup.
-        """
         if self.watcher:
             self.watcher.stop()
 
     async def _cleanup_task_data(self, task_info: Dict[str, Any]):
-        """
-        Performs slow cleanup operations (Network calls / Disk I/O) after cancellation.
-        """
         try:
             task_type = task_info.get('type')
             is_folder = task_info.get('is_folder')

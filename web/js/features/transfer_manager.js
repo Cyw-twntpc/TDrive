@@ -1,7 +1,3 @@
-/**
- * @fileoverview Manages the entire UI and state for file transfers (uploads and downloads).
- * Optimized for local rendering and simplified data structure.
- */
 const TransferManager = {
     uploads: new Map(),
     downloads: new Map(),
@@ -14,16 +10,14 @@ const TransferManager = {
     UIManager: null,
     refreshCallback: null,
     
-    // [State]
     currentTab: 'uploads', 
     completedSort: { key: 'time', order: 'desc' },
     completedFilter: 'all',
     _completedListDirty: true,
     _validityCheckInterval: null,
     _showCompletedState: false,
-    chunkSize: 33554432, // Default fallback
+    chunkSize: 33554432, 
     
-    // --- Initialization ---
     initialize(AppState, ApiService, UIManager, refreshCallback) {
         this.AppState = AppState;
         this.ApiService = ApiService;
@@ -38,7 +32,6 @@ const TransferManager = {
             window.tdrive_bridge.file_status_changed.connect(this.updateFileExistence.bind(this));
         }
 
-        // Initialize: Get Config -> Then Restore Tasks
         if (this.ApiService.getInitialStats) {
             this.ApiService.getInitialStats().then(data => {
                 if (data) {
@@ -51,15 +44,12 @@ const TransferManager = {
                     }
                 }
                 
-                // Restore tasks after config is loaded
                 this.ApiService.getIncompleteTransfers().then(stateData => {
                     if (stateData) {
                         this.restoreTasks(stateData.uploads, 'upload');
                         this.restoreTasks(stateData.downloads, 'download');
                         this.updateAllUI();
 
-                        // [Sync] Manually fetch current existence status from backend
-                        // This handles cases where the initial signal was emitted before frontend was ready
                         this.ApiService.getAllFileStatuses().then(statuses => {
                             if (statuses) {
                                 const changes = Object.entries(statuses).map(([id, exists]) => ({ id, exists }));
@@ -70,7 +60,6 @@ const TransferManager = {
                 });
             });
         } else {
-            // Fallback for older backend if any
             this.ApiService.getIncompleteTransfers().then(stateData => {
                 if (stateData) {
                     this.restoreTasks(stateData.uploads, 'upload');
@@ -81,7 +70,6 @@ const TransferManager = {
         }
     },
 
-    // Restore tasks from backend state
     restoreTasks(taskMap, type) {
         if (!taskMap) return;
 
@@ -138,7 +126,6 @@ const TransferManager = {
         }
     },
 
-    // --- Task Management ---
     addDownload(item) {
         this._showCompletedState = false;
         if (this.downloads.has(item.task_id)) return;
@@ -169,7 +156,7 @@ const TransferManager = {
     },
     
     updateTask(data) {
-        if (data.parent_id) return; // Only track main tasks
+        if (data.parent_id) return; 
 
         let task = this.downloads.get(data.id) || this.uploads.get(data.id);
 
@@ -182,7 +169,6 @@ const TransferManager = {
             if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
         }
 
-        // Handle Delta vs Absolute Progress
         if (data.delta !== undefined && data.delta !== null) {
             task.progress += data.delta;
             if (task.size > 0 && task.progress > task.size) task.progress = task.size;
@@ -215,7 +201,6 @@ const TransferManager = {
             task.alertShown = true;
         }
 
-        // Local Rendering Optimization
         if (statusChanged) {
             if (this.AppState.currentPage === 'transfer') this.renderDashboard();
         } else {
@@ -231,7 +216,7 @@ const TransferManager = {
     
     tick() {
         this.updateAllUI();
-        this.checkAndArchive(); // Check if we can move tasks to history
+        this.checkAndArchive(); 
 
         const allTransfers = [...this.uploads.values(), ...this.downloads.values()];
         if (allTransfers.length === 0) {
@@ -252,15 +237,12 @@ const TransferManager = {
     },
 
     checkAndArchive() {
-        // Condition: No active tasks (queued, transferring, paused). 
-        // Failed tasks are ignored (don't block archiving).
         const activeUploads = [...this.uploads.values()].filter(t => ['queued', 'transferring', 'paused'].includes(t.status));
         const activeDownloads = [...this.downloads.values()].filter(t => ['queued', 'transferring', 'paused'].includes(t.status));
         
         if (activeUploads.length === 0 && activeDownloads.length === 0) {
             let moved = false;
             
-            // Move completed uploads to history
             for (const [id, task] of this.uploads.entries()) {
                 if (task.status === 'completed' && task.feedbackShown) {
                     this.uploadHistory.set(id, task);
@@ -269,7 +251,6 @@ const TransferManager = {
                 }
             }
             
-            // Move completed downloads to history
             for (const [id, task] of this.downloads.entries()) {
                 if (task.status === 'completed' && task.feedbackShown) {
                     this.downloadHistory.set(id, task);
@@ -294,7 +275,6 @@ const TransferManager = {
         this.updateMainFileListUI();
     },
 
-    // --- Dashboard & Sidebar Rendering ---
     updateSummaryPanel() {
         const panel = document.getElementById('sidebar-transfer-status');
         const titleEl = document.getElementById('sidebar-transfer-title');
@@ -308,7 +288,6 @@ const TransferManager = {
         if (allTasks.length === 0) { this.setPanelToReadyState(); return; }
 
         allTasks.forEach(task => {
-            // [Modified] Completely ignore failed and cancelled tasks for statistics
             if (task.status === 'failed' || task.status === 'cancelled') {
                 if (task.status === 'failed') failedCount++;
                 return;
@@ -374,7 +353,6 @@ const TransferManager = {
         const etaEl = document.getElementById('hero-eta');
         if (etaEl) {
             let totalRemaining = 0;
-            // [Modified] Ignore failed tasks in ETA calculation
             allTasks.forEach(t => { 
                 if(['transferring', 'queued'].includes(t.status)) {
                     totalRemaining += (t.size - t.progress); 
@@ -389,7 +367,6 @@ const TransferManager = {
 
     renderDashboard() {
         const container = document.getElementById('page-transfer');
-        // Stop checker if page is hidden
         if (!container || container.classList.contains('hidden')) {
             this.stopValidityChecker();
             return;
@@ -405,7 +382,6 @@ const TransferManager = {
             if (this._completedListDirty) {
                 this._renderCompletedList();
             } else {
-                // Not dirty, but we still need to refresh paths because folders might have moved
                 this._refreshHistoryPathLabels();
             }
             return;
@@ -451,7 +427,6 @@ const TransferManager = {
         if (countFailed) countFailed.textContent = failedTasks.length;
         if (countQueued) countQueued.textContent = queuedTasks.length;
 
-        // Empty State Handling
         if (activeTasks.length === 0 && failedTasks.length === 0 && queuedTasks.length === 0) {
             if (activeSection) {
                 activeSection.classList.remove('hidden');
@@ -471,7 +446,6 @@ const TransferManager = {
     },
 
     checkEmptyState() {
-        // Optional helper if needed for explicit checks
         const activeCount = [...this.uploads.values(), ...this.downloads.values()].filter(t => !['completed', 'cancelled'].includes(t.status)).length;
         if (activeCount === 0) {
              this.renderDashboard();
@@ -482,7 +456,6 @@ const TransferManager = {
         const listEl = document.getElementById(`list-${type}`);
         if (!listEl) return; 
 
-        // Remove empty state if we have tasks to render
         if (tasks.length > 0) {
             const emptyState = listEl.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
@@ -518,7 +491,6 @@ const TransferManager = {
             if (task.status === 'paused') {
                 speedEl.textContent = '已暫停';
                 speedEl.style.color = '#f59e0b';
-                // [Optimization] Only update button DOM if status changed to prevent click invalidation
                 if (btn && btn.dataset.lastStatus !== 'paused') {
                     btn.innerHTML = '<i class="fas fa-play"></i>';
                     btn.title = '繼續';
@@ -550,7 +522,6 @@ const TransferManager = {
                 }
                 speedEl.textContent = `${speed}/s${eta}`;
                 
-                // [Optimization] For 'transferring' and other states, only update if status changed
                 if (btn && btn.dataset.lastStatus !== 'transferring') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>';
                     btn.title = '暫停';
@@ -566,7 +537,6 @@ const TransferManager = {
         const result = this.findTask(id);
         if (!result) return;
         
-        // Simple Binary Logic: If paused or failed, resume. Otherwise (queued, transferring, etc.), pause.
         if (['paused', 'failed'].includes(result.task.status)) {
             this.resumeTask(id);
         } else {
@@ -646,21 +616,17 @@ const TransferManager = {
         const path = [];
         let current = this.AppState.folderMap.get(folderId);
 
-        // 情況 1: 起始 ID 就不存在
         if (!current) return '路徑不存在';
 
         while (current) {
             path.unshift(current.name);
             
-            // 成功到達根目錄 (parent_id 為 null)
             if (current.parent_id === null) {
                 return path.join(' / ');
             }
 
-            // 向上移動
             const next = this.AppState.folderMap.get(current.parent_id);
             
-            // 情況 2: 追溯鏈條斷裂 (找不到父資料夾)
             if (!next) return '路徑不存在';
             
             current = next;
@@ -674,7 +640,6 @@ const TransferManager = {
         if (!listEl) return; 
         listEl.innerHTML = ''; 
 
-        // [Modified] Source data now includes History Maps AND temporary Completed tasks in Active Maps
         let sourceTasks = [];
         if (this.completedFilter === 'all') {
             sourceTasks = [
@@ -702,7 +667,6 @@ const TransferManager = {
                 const valB = b.completedAt || 0;
                 return order === 'asc' ? valA - valB : valB - valA;
             } else {
-                // Name sort: Case-insensitive and natural numeric sorting
                 return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * (order === 'asc' ? 1 : -1);
             }
         });
@@ -713,10 +677,8 @@ const TransferManager = {
             const isUp = task.type === 'upload';
             row.dataset.type = isUp ? 'upload' : 'download';
             
-            // Calculate path ONCE when rendering the list (entering the tab)
             const cloudPath = isUp ? this._getCloudPath(task.parentFolderId) : '';
             
-            // Apply validity state directly
             const isValid = task.targetExists !== false;
             const itemClass = isValid ? 'history-item' : 'history-item item-invalid';
             
@@ -813,16 +775,13 @@ const TransferManager = {
             this.ApiService.cancelTransfer(id);
             result.map.delete(id);
             
-            // [Fix] Remove placeholder from AppState and re-render
             if (this.AppState && this.AppState.currentFolderContents) {
                 let removed = false;
-                // Check files
                 const fileIndex = this.AppState.currentFolderContents.files.findIndex(f => f.id === id);
                 if (fileIndex > -1) {
                     this.AppState.currentFolderContents.files.splice(fileIndex, 1);
                     removed = true;
                 }
-                // Check folders
                 const folderIndex = this.AppState.currentFolderContents.folders.findIndex(f => f.id === id);
                 if (folderIndex > -1) {
                     this.AppState.currentFolderContents.folders.splice(folderIndex, 1);
@@ -855,7 +814,6 @@ const TransferManager = {
     clearCompleted() {
         const idsToRemove = [];
         
-        // Helper to collect IDs and clean maps
         const cleanMap = (map) => {
             for (let [k, t] of map.entries()) {
                 if (t.status === 'completed') {
@@ -870,7 +828,6 @@ const TransferManager = {
         cleanMap(this.uploadHistory);
         cleanMap(this.downloadHistory);
 
-        // Notify backend to remove from persistent state
         idsToRemove.forEach(id => this.ApiService.removeTransferHistory(id));
 
         this.tick();
@@ -880,7 +837,7 @@ const TransferManager = {
     removeSingleHistoryItem(taskId, type) {
         if (type === 'upload') {
             this.uploadHistory.delete(taskId);
-            this.uploads.delete(taskId); // Check active map too just in case
+            this.uploads.delete(taskId); 
         } else {
             this.downloadHistory.delete(taskId);
             this.downloads.delete(taskId);
@@ -890,13 +847,10 @@ const TransferManager = {
         
         if (this.currentTab === 'completed') this._renderCompletedList();
         
-        // Also update summary/hero if an active-but-completed task was removed
         this.updateSummaryPanel();
     },
 
     setDownloadDestination(path) { this.currentDownloadDestination = path; },
-
-    // --- Validity Checker (Reactive Updates) ---
 
     updateFileExistence(changes) {
         console.log("[TransferManager] Received existence changes:", changes);
@@ -910,7 +864,6 @@ const TransferManager = {
                 if (task.targetExists !== change.exists) {
                     task.targetExists = change.exists;
                     
-                    // Update DOM directly if visible
                     const el = document.querySelector(`.history-item[data-id="${change.id}"]`);
                     if (el) {
                         const isUp = task.type === 'upload';
@@ -929,7 +882,6 @@ const TransferManager = {
                         const btn = isUp ? el.querySelector('.btn-go-cloud') : el.querySelector('.btn-reveal-local');
                         if (btn) btn.title = btnTitle;
 
-                        // Also refresh path label for uploads if status changed
                         if (isUp) {
                             const pathEl = el.querySelector('.sm-name div');
                             if (pathEl) {

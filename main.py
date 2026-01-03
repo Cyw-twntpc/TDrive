@@ -1,5 +1,4 @@
 import os
-# Ensure that the PySide6 backend is used for Qt
 os.environ['QT_API'] = 'pyside6'
 os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '9222'
 
@@ -21,10 +20,6 @@ from core_app.ui.windows.main_window import MainWindow
 logger = logging.getLogger(__name__)
 
 class AppController(QObject):
-    """
-    Manages the application's main lifecycle and window switching between the
-    login window and the main application window.
-    """
     def __init__(self, app: QApplication, loop: asyncio.AbstractEventLoop):
         super().__init__()
         self.app = app
@@ -34,9 +29,6 @@ class AppController(QObject):
         self.tdrive_service = TDriveService(loop=self.loop)
 
     def start(self):
-        """
-        Checks the initial login status and displays the appropriate window.
-        """
         login_status = self.loop.run_until_complete(self.tdrive_service.check_startup_login())
         
         if login_status.get("logged_in"):
@@ -49,17 +41,11 @@ class AppController(QObject):
             self.show_login_window(api_id=api_id, api_hash=api_hash)
 
     def show_login_window(self, api_id=None, api_hash=None):
-        """
-        Initializes and displays the login window.
-        """
         self.login_window = LoginWindow(self.tdrive_service, self.loop, api_id=api_id, api_hash=api_hash)
         self.login_window.login_successful.connect(self.on_login_successful)
         self.login_window.show()
 
     def show_main_window(self, service_instance: TDriveService):
-        """
-        Closes the login window (if it exists) and shows the main application window.
-        """
         if self.login_window:
             self.login_window.close()
         
@@ -73,31 +59,22 @@ class AppController(QObject):
         self.main_window.showMaximized()
 
     def on_login_successful(self, service_instance: TDriveService):
-        """
-        Slot triggered by `login_successful` signal from the LoginWindow.
-        """
         self.show_main_window(service_instance)
 
 def main():
-    """
-    Main entry point for the TDrive application.
-    sets up the application environment, and starts the main event loop.
-    """
     logger_config.setup_logging()
 
-    # Set a custom AppUserModelID for Windows. This is necessary for the
-    # application icon to be displayed correctly in the taskbar.
+    # Set AppUserModelID for Windows taskbar icon
     myappid = 'tdrive.client.v1'
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception as e:
-        logger.warning(f"Could not set AppUserModelID. This may affect the taskbar icon on Windows. Error: {e}")
+        logger.warning(f"Could not set AppUserModelID: {e}")
 
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
     
-    # Use qasync to integrate asyncio with the Qt event loop
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
     

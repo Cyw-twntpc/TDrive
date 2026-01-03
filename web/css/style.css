@@ -3,6 +3,7 @@
 @import url('components/_components.css');
 @import url('pages/_file_tree.css');
 @import url('pages/_file_list.css');
+@import url('pages/_trash.css');
 @import url('components/_transfer_manager.css');
 @import url('components/_global_indicators.css');
 /* Drag and Drop Visuals */

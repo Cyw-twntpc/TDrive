@@ -1,9 +1,3 @@
-"""
-Provides core utilities for file processing, specifically for splitting files
-into chunks for upload and reassembling them after download. This module
-focuses on stream-based processing to handle large files efficiently without
-consuming excessive memory.
-"""
 import logging
 import os
 from typing import Generator, Any, Set, Optional
@@ -15,18 +9,7 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = int(1024 * 1024 * 32)
 
 def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Optional[Set[int]] = None) -> Generator[tuple[int, bytes], Any, None]:
-    """
-    Reads a file in a stream, encrypts it chunk by chunk, and yields them.
-    Supports skipping already uploaded parts for resume functionality.
-
-    Args:
-        file_path: The absolute path to the source file.
-        key: The encryption key to use.
-        completed_parts: A set of part numbers (1-based) that should be skipped.
-    
-    Yields:
-        A tuple of (part_number, encrypted_chunk_bytes).
-    """
+    """Reads file stream, encrypts chunks, yields (part_num, bytes). Skips completed parts."""
     if completed_parts is None:
         completed_parts = set()
 
@@ -50,19 +33,10 @@ def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Option
     logger.debug(f"Finished stream splitting for '{file_path}'.")
 
 def decrypt_bytes_and_write(encrypted_bytes: bytes, output_path: str, key: bytes, offset: int):
-    """
-    Decrypts bytes from memory and writes them to a specific offset in the output file.
-    Designed to run in a background thread.
-    
-    Note: The output_path MUST exist and have sufficient size before calling this.
-    Use prepare_download_file() beforehand.
-    """
+    """Decrypts bytes and writes to offset in output_file (Thread-safe)."""
     try:
-        # Decrypt (CPU bound)
         decrypted_content = cr.decrypt(encrypted_bytes, key)
         
-        # Write to specific offset (I/O bound)
-        # 'r+b' opens for reading and writing without truncating the file
         with open(output_path, 'r+b') as f_out:
             f_out.seek(offset)
             f_out.write(decrypted_content)
@@ -70,12 +44,7 @@ def decrypt_bytes_and_write(encrypted_bytes: bytes, output_path: str, key: bytes
         raise IOError(f"An error occurred while writing to output file '{output_path}': {e}") from e
 
 def get_unique_filepath(directory: str, filename: str) -> str:
-    """
-    Generates a unique file path by appending (N) if a file with the same name
-    already exists in the directory.
-
-    Example: "file.txt" -> "file (1).txt" -> "file (2).txt"
-    """
+    """Generates unique path by appending (N) if needed."""
     base_name, ext = os.path.splitext(filename)
     counter = 0
     unique_filename = filename
@@ -89,17 +58,9 @@ def get_unique_filepath(directory: str, filename: str) -> str:
     return final_path
 
 def prepare_download_file(file_path: str, expected_size: int):
-    """
-    Ensures the destination file exists and has the correct size before downloading.
-    This function expects 'file_path' to be the final, unique path determined by the caller.
-    
-    - If file exists and size matches: Leaves it as is (Resume mode).
-    - If file exists but size mismatches: Resets (overwrites) the file.
-    """
-    # Create directory if needed
+    """Pre-allocates file with zeros or checks existing size for resume."""
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     
-    # If file exists and size matches, it's ready for resume.
     if os.path.exists(file_path):
         current_size = os.path.getsize(file_path)
         if current_size == expected_size:

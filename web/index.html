@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
     <title>TDrive - 您的安全雲端儲存</title>
-    <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
     <script type="text/javascript" src="js/qwebchannel.js"></script>
     <script type="text/javascript">
         window.addEventListener('load', function() {
@@ -25,7 +25,7 @@
             </div>
             
             <div class="sidebar-body">
-                <!-- Hidden Nav Rail (Overlay) -->
+                <!-- Nav Rail -->
                 <nav id="nav-rail" class="nav-rail">
                     <ul class="nav-items">
                         <li class="nav-item active" data-page="files">
@@ -40,14 +40,14 @@
                             <i class="fas fa-share-alt"></i>
                             <span class="nav-text">分享連結</span>
                         </li>
-                        <li class="nav-item disabled" data-page="trash" title="即將推出">
+                        <li class="nav-item" data-page="trash">
                             <i class="fas fa-trash-alt"></i>
                             <span class="nav-text">回收桶</span>
                         </li>
                     </ul>
                 </nav>
 
-                <!-- Base Sidebar Content -->
+                <!-- Sidebar Content -->
                 <div class="sidebar-content">
                     <div class="sidebar-actions">
                         <button id="sidebar-new-btn" class="btn-primary-block" data-popover="new-menu-popover">
@@ -95,7 +95,7 @@
         <main class="main-content">
             <div id="global-progress-bar"><div class="runner"></div></div>
             
-            <!-- Page Container: Files (Default) -->
+            <!-- Files Page -->
             <div id="page-files" class="page-view active">
                 <header class="top-bar">
                     <div class="top-row">
@@ -117,7 +117,7 @@
                     <div class="bottom-row">
                         <nav id="breadcrumb" class="breadcrumb-nav"></nav>
                         <div class="action-buttons">
-                            <!-- Upload/New Folder moved to Sidebar, keeping context actions here if needed or relying on context menu -->
+                            <!-- Context Actions -->
                             <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
                             <button id="move-btn" class="btn"><i class="fas fa-arrow-right-to-bracket"></i> 移動</button>
                             <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
@@ -158,11 +158,52 @@
                 </section>
             </div>
 
-            <!-- Page Container: Transfer Dashboard -->
+            <!-- Trash Page -->
+            <div id="page-trash" class="page-view hidden">
+                <header class="top-bar">
+                    <div class="top-row">
+                        <div class="trash-header-title">
+                            <i class="fas fa-trash-alt"></i> 回收桶 <span class="trash-tip">（移入的項目將在 30 天後永久刪除）</span>
+                        </div>
+                    </div>
+                    <div class="bottom-row">
+                        <div class="action-buttons">
+                            <button id="empty-trash-btn" class="btn" title="清空回收桶">
+                                <i class="fas fa-dumpster"></i> 清空回收桶
+                            </button>
+                        </div>
+                    </div>
+                </header>
+                <section class="file-list-section">
+                    <div class="trash-list-header">
+                        <div class="sortable" data-sort="name">
+                            <div class="header-name-wrapper"><span>名稱</span><span class="sort-icon"></span></div>
+                        </div>
+                        <div class="sortable desc" data-sort="trashed_date">
+                            <div class="header-name-wrapper"><span>刪除時間</span><span class="sort-icon"></span></div>
+                        </div>
+                        <div class="sortable" data-sort="type">
+                            <div class="header-name-wrapper"><span>類型</span><span class="sort-icon"></span></div>
+                        </div>
+                        <div class="sortable" data-sort="original_parent_id">
+                            <div class="header-name-wrapper"><span>原始位置</span><span class="sort-icon"></span></div>
+                        </div>
+                        <div class="sortable" data-sort="size">
+                            <div class="header-name-wrapper"><span>大小</span><span class="sort-icon"></span></div>
+                        </div>
+                    </div>
+                    <div id="trash-list-body" class="trash-list-body">
+                        <!-- Trash items -->
+                    </div>
+                    <div id="trash-selection-box"></div>
+                </section>
+            </div>
+
+            <!-- Transfer Dashboard -->
             <div id="page-transfer" class="page-view hidden">
                 <div class="transfer-dashboard-body">
                     
-                    <!-- 1. Hero Section -->
+                    <!-- Hero Section -->
                     <div class="hero-section">
 
                         <div class="hero-content">
@@ -185,14 +226,14 @@
                         </div>
                     </div>
 
-                    <!-- 2. Tabs -->
+                    <!-- Tabs -->
                     <div class="tabs-container">
                         <div class="tab-item active" data-tab="uploads">上傳中</div>
                         <div class="tab-item" data-tab="downloads">下載中</div>
                         <div class="tab-item" data-tab="completed">已完成</div>
                     </div>
 
-                    <!-- 3. Dynamic Content Container (Uploads/Downloads) -->
+                    <!-- Dynamic Content -->
                     <div id="transfer-live-view">
                         <!-- Active Tasks -->
                         <div id="section-active" class="task-section">
@@ -221,7 +262,7 @@
                         </div>
                     </div>
 
-                    <!-- 4. Completed View (Initially Hidden) -->
+                    <!-- Completed View -->
                     <div id="transfer-completed-view" class="hidden">
                         <div class="completed-filter-bar">
                             <div class="filters-group">
@@ -237,7 +278,6 @@
                             <div class="sort-item" data-sort="name">名稱</div>
                         </div>
                         <div id="list-completed" class="history-list"></div>
-                        <!-- Actions Removed -->
                     </div>
 
                 </div>
@@ -402,6 +442,7 @@
     <script type="text/javascript" src="js/features/file_tree_handler.js"></script>
     <script type="text/javascript" src="js/features/file_list_handler.js"></script>
     <script type="text/javascript" src="js/features/action_handler.js"></script>
+    <script type="text/javascript" src="js/features/trash_handler.js"></script>
     <script type="text/javascript" src="js/main.js"></script>
 </body>
 </html>

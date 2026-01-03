@@ -21,19 +21,12 @@ from core_app.api import telegram_comms
 logger = logging.getLogger(__name__)
 
 class AuthService:
-    """
-    Handles all services related to user authentication, authorization,
-    and session management.
-    """
     def __init__(self, shared_state: 'SharedState'):
         self.shared_state = shared_state
 
     # --- Credential Management ---
 
     def _get_saved_api_credentials(self) -> Optional[tuple[int, str]]:
-        """
-        Retrieves and decrypts API credentials from the local `info.json` file.
-        """
         try:
             info_path = './file/info.json'
             if not os.path.exists(info_path):
@@ -61,16 +54,12 @@ class AuthService:
             return None, None
 
     def _save_api_credentials(self):
-        """
-        Encrypts and saves the current session's API credentials to `info.json`.
-        """
         try:
             os.makedirs('./file', exist_ok=True)
             
             api_id_str = str(self.shared_state.api_id)
             secure_data = {"api_hash": self.shared_state.api_hash}
             
-            # Preserve existing group_id if it exists
             if os.path.exists('./file/info.json'):
                 try:
                     with open('./file/info.json', 'r') as f:
@@ -93,15 +82,6 @@ class AuthService:
     # --- Core Authentication Logic ---
     
     async def check_startup_login(self) -> Dict[str, Any]:
-        """
-        Checks for a valid, saved session on application startup.
-
-        Returns:
-            A dictionary indicating the login status.
-            - {"logged_in": True}: If a valid session is found and drive initialization succeeds.
-            - {"logged_in": False, "expired_session": True, ...}: If a session file exists but is invalid.
-            - {"logged_in": False}: If no credentials are found.
-        """
         api_id, api_hash = self._get_saved_api_credentials()
         if not (api_id and api_hash):
             logger.info("No saved API credentials found. Login required.")
@@ -138,10 +118,6 @@ class AuthService:
             return {"logged_in": False}
 
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
-        """
-        Verifies API credentials by attempting to connect to Telegram.
-        Deletes any old session file to ensure a clean login attempt.
-        """
         client = None
         try:
             os.makedirs('./file', exist_ok=True)
@@ -169,9 +145,6 @@ class AuthService:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": f"連線失敗：{e}"}
 
     async def start_qr_login(self, event_callback: Callable) -> Dict[str, Any]:
-        """
-        Starts the QR code login flow and returns a data URI for the QR image.
-        """
         client = self.shared_state.client
         if not client or not client.is_connected():
             logger.warning("QR login requested, but client is not connected.")
@@ -189,7 +162,6 @@ class AuthService:
             img.save(buffer, format='PNG')
             img_str = base64.b64encode(buffer.getvalue()).decode()
 
-            # Wait for the login to complete in a background task.
             self.shared_state.loop.create_task(self._wait_for_qr_login(qr_login, event_callback))
 
             return {"success": True, "qr_url": f"data:image/png;base64,{img_str}"}
@@ -201,7 +173,6 @@ class AuthService:
             return {"success": False, "error_code": "QR_GENERATION_FAILED", "message": f"QR 碼產生失敗：{e}"}
 
     async def _wait_for_qr_login(self, qr_login, event_callback: Callable):
-        """Helper to wait for QR login and dispatch events."""
         try:
             await qr_login.wait()
             self.shared_state.is_logged_in = True
@@ -214,7 +185,6 @@ class AuthService:
             event_callback({"status": "failed", "error": str(e)})
 
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
-        """Requests a verification code to be sent to the user's phone."""
         client = self.shared_state.client
         if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
@@ -230,7 +200,6 @@ class AuthService:
             return {"success": False, "error_code": "SEND_CODE_FAILED", "message": f"傳送驗證碼失敗：{e}"}
 
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
-        """Submits the verification code received by the user."""
         client = self.shared_state.client
         if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
@@ -248,7 +217,6 @@ class AuthService:
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"驗證失敗：{e}"}
 
     async def submit_password(self, password: str) -> Dict[str, Any]:
-        """Submits the two-factor authentication password."""
         client = self.shared_state.client
         if not client: return {"success": False, "error_code": "CLIENT_NOT_CONNECTED", "message": "用戶端尚未初始化。"}
         try:
@@ -264,9 +232,6 @@ class AuthService:
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": f"登入失敗：{e}"}
 
     async def reset_client_for_new_login_method(self) -> Dict[str, bool]:
-        """
-        Creates a new, clean client instance when switching between login methods.
-        """
         try:
             if self.shared_state.client and self.shared_state.client.is_connected():
                 await self.shared_state.client.disconnect()
@@ -291,10 +256,6 @@ class AuthService:
             return {"success": False}
 
     async def initialize_drive(self) -> Dict[str, Any]:
-        """
-        Initializes the drive by ensuring the storage group exists and syncing the database.
-        Includes a timeout to prevent the application from hanging indefinitely.
-        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client or not self.shared_state.api_id:
             msg = "Cannot initialize drive: Client or App API ID is missing."
@@ -303,7 +264,6 @@ class AuthService:
 
         try:
             logger.info("Initializing TDrive...")
-            # Set a 30-second timeout for the entire initialization process.
             async with asyncio.timeout(30):
                 self.shared_state.group_id = await telegram_comms.get_group(client, self.shared_state.api_id)
                 await telegram_comms.sync_database_file(client, self.shared_state.group_id, mode='sync')
@@ -318,7 +278,6 @@ class AuthService:
             return {"success": False, "error_code": "DRIVE_INITIALIZATION_FAILED", "message": f"初始化失敗：{e}"}
 
     async def get_user_info(self) -> Dict[str, Any]:
-        """Fetches basic information about the currently logged-in user."""
         client = await utils.ensure_client_connected(self.shared_state)
         if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
         try:
@@ -334,9 +293,6 @@ class AuthService:
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "無法取得使用者資訊"}
 
     async def get_user_avatar(self) -> Dict[str, Any]:
-        """
-        Fetches the user's profile picture and returns it as a base64 data URI.
-        """
         client = await utils.ensure_client_connected(self.shared_state)
         if not client: return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗"}
         
@@ -356,16 +312,12 @@ class AuthService:
             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "無法取得使用者頭像"}
 
     async def perform_logout(self) -> Dict[str, Any]:
-        """
-        Logs the user out by disconnecting the client and clearing all local session data.
-        """
         logger.info("Performing logout...")
         client = self.shared_state.client
         if client and client.is_connected():
             await client.disconnect()
             logger.info("Successfully disconnected the client.")
         
-        # Clean up all local session files, credentials, and logs.
         try:
             if os.path.exists('./file'):
                 shutil.rmtree('./file')
@@ -374,7 +326,6 @@ class AuthService:
             logger.error(f"Error during local file cleanup on logout: {e}", exc_info=True)
             return {"success": True, "warning": "登出完成，但無法清除部分本機檔案。"}
         
-        # Reset all in-memory state.
         self.shared_state.client = None
         self.shared_state.api_id = None
         self.shared_state.api_hash = None
