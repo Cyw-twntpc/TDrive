@@ -205,10 +205,10 @@ const FileListHandler = {
                     </div>
                 </div>
                 <div class="name-col-actions">
-                    <button class="item-action-btn rename-btn" title="Rename"><i class="fas fa-pencil-alt"></i></button>
-                    <button class="item-action-btn move-btn" title="Move"><i class="fas fa-arrow-right-to-bracket"></i></button>
-                    <button class="item-action-btn download-btn" title="Download"><i class="fas fa-download"></i></button>
-                    <button class="item-action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
+                    <button class="item-action-btn rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="item-action-btn move-btn" title="移動"><i class="fas fa-arrow-right-to-bracket"></i></button>
+                    <button class="item-action-btn download-btn" title="下載"><i class="fas fa-download"></i></button>
+                    <button class="item-action-btn delete-btn" title="刪除"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
             <div class="file-item-col date">${item.modif_date}</div>

@@ -7,11 +7,80 @@ const TrashHandler = {
     emptyBtn: document.getElementById('empty-trash-btn'),
     selectionBox: document.getElementById('trash-selection-box'),
     section: document.querySelector('#page-trash .file-list-section'),
+    bulkActions: document.getElementById('trash-bulk-actions'),
+    restoreBtn: document.getElementById('trash-restore-btn'),
+    deleteBtn: document.getElementById('trash-delete-btn'),
 
     init() {
         this.setupSortHeaders();
         this.setupEmptyButton();
         this.setupSelection();
+        this.setupBulkActions();
+    },
+
+    updateBulkActionState() {
+        if (AppState.selectedItems.length > 0) {
+            this.bulkActions.classList.remove('hidden');
+        } else {
+            this.bulkActions.classList.add('hidden');
+        }
+    },
+
+    setupBulkActions() {
+        this.restoreBtn.addEventListener('click', async () => {
+            const count = AppState.selectedItems.length;
+            if (count === 0) return;
+
+            UIManager.startProgress();
+            UIManager.setInteractionLock(true);
+            try {
+                // Clone the array because loadTrashItems will clear selectedItems
+                const itemsToRestore = [...AppState.selectedItems];
+                const result = await ApiService.restoreItems(itemsToRestore.map(i => ({ id: i.id, type: i.type })));
+                if (result.success) {
+                    this.loadTrashItems();
+                } else {
+                    UIManager.handleBackendError(result);
+                }
+            } catch (e) {
+                console.error(e);
+                UIManager.handleBackendError({ message: "還原失敗" });
+            } finally {
+                UIManager.stopProgress();
+                UIManager.setInteractionLock(false);
+            }
+        });
+
+        this.deleteBtn.addEventListener('click', async () => {
+            const count = AppState.selectedItems.length;
+            if (count === 0) return;
+
+            const confirmed = await UIModals.showConfirm(
+                '永久刪除',
+                `確定要永久刪除選取的 ${count} 個項目嗎？`,
+                'btn-danger'
+            );
+            
+            if (!confirmed) return;
+
+            UIManager.startProgress();
+            UIManager.setInteractionLock(true);
+            try {
+                const itemsToDelete = [...AppState.selectedItems];
+                const result = await ApiService.deleteItemsPermanently(itemsToDelete.map(i => ({ id: i.id, type: i.type })));
+                if (result.success) {
+                    this.loadTrashItems();
+                } else {
+                    UIManager.handleBackendError(result);
+                }
+            } catch (e) {
+                console.error(e);
+                UIManager.handleBackendError({ message: "刪除失敗" });
+            } finally {
+                UIManager.stopProgress();
+                UIManager.setInteractionLock(false);
+            }
+        });
     },
 
     /**
@@ -94,6 +163,7 @@ const TrashHandler = {
     render() {
         this.listBody.innerHTML = '';
         AppState.selectedItems.length = 0; // Reset selection on render
+        this.updateBulkActionState();
         
         if (AppState.trashItems.length === 0) {
             this.listBody.innerHTML = `
@@ -305,6 +375,7 @@ const TrashHandler = {
                 element.classList.add('selected');
                 AppState.selectedItems.push(item);
             }
+            this.updateBulkActionState();
         });
     },
 
@@ -386,6 +457,7 @@ const TrashHandler = {
                 this.selectionBox.style.display = 'none';
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
+                this.updateBulkActionState();
             };
             
             document.addEventListener('mousemove', onMouseMove);

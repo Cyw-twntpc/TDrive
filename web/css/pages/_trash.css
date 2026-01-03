@@ -37,6 +37,10 @@
     display: flex;
 }
 
+#trash-bulk-actions {
+    margin-right: auto;
+}
+
 /* Empty Trash Button Style */
 #empty-trash-btn {
     padding: 8px 16px;

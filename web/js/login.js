@@ -207,7 +207,7 @@ function startQrLogin() {
                 
                 const overlay = document.createElement('div');
                 overlay.className = 'qr-overlay';
-                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn" title="Regenerate"><i class="fas fa-sync-alt"></i></button>`;
+                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn" title="重新產生"><i class="fas fa-sync-alt"></i></button>`;
                 qrContainer.appendChild(overlay);
                 document.getElementById('centerRefreshQrBtn').addEventListener('click', startQrLogin);
 
