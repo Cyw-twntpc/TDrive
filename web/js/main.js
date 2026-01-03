@@ -170,9 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setupEventListeners() {
         document.getElementById('logout-btn').addEventListener('click', () => ActionHandler.handleLogout());
-        document.getElementById('download-btn').addEventListener('click', () => ActionHandler.handleDownload());
-        document.getElementById('move-btn').addEventListener('click', () => ActionHandler.handleMove());
-        document.getElementById('delete-btn').addEventListener('click', () => ActionHandler.handleDelete());
         
         document.getElementById('new-upload-file-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();

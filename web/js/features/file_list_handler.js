@@ -9,6 +9,14 @@ const FileListHandler = {
     fileListBodyEl: document.getElementById('file-list-body'),
     breadcrumbEl: document.getElementById('breadcrumb'),
     selectionBox: document.getElementById('selection-box'),
+    // Floating Toolbar Elements
+    floatingToolbar: document.getElementById('file-floating-toolbar'),
+    ftDownloadBtn: document.getElementById('ft-download-btn'),
+    ftMoveBtn: document.getElementById('ft-move-btn'),
+    ftRenameBtn: document.getElementById('ft-rename-btn'),
+    ftShareBtn: document.getElementById('ft-share-btn'),
+    ftDetailsBtn: document.getElementById('ft-details-btn'),
+    ftTrashBtn: document.getElementById('ft-trash-btn'),
 
     /**
      * Initializes the FileListHandler by setting up event listeners for sorting and selection.
@@ -17,8 +25,52 @@ const FileListHandler = {
      */
     init(onSort, onUpdateSelection) {
         this.setupSortableHeaders(onSort);
-        this.setupSelection(document.getElementById('file-list-container'), onUpdateSelection);
+        // Integrate floating toolbar update into the selection callback
+        const wrappedOnUpdateSelection = (AppState) => {
+            this.updateToolbarState(AppState);
+            if (onUpdateSelection) onUpdateSelection(AppState);
+        };
+        this.setupSelection(document.getElementById('file-list-container'), wrappedOnUpdateSelection);
+        this.setupFloatingToolbar();
     },
+
+    setupFloatingToolbar() {
+        if (!this.floatingToolbar) return;
+
+        // Bind Actions
+        this.ftDownloadBtn.addEventListener('click', () => ActionHandler.handleDownload());
+        this.ftMoveBtn.addEventListener('click', () => ActionHandler.handleMove());
+        this.ftRenameBtn.addEventListener('click', () => {
+            if (AppState.selectedItems.length === 1) ActionHandler.handleRename(AppState.selectedItems[0]);
+        });
+        this.ftShareBtn.addEventListener('click', () => {
+            UIModals.showAlert('分享', '此功能即將推出！');
+        });
+        // Details button placeholder
+        this.ftDetailsBtn.addEventListener('click', () => {
+             // Future implementation
+             console.log("Details clicked");
+        });
+        this.ftTrashBtn.addEventListener('click', () => ActionHandler.handleDelete());
+    },
+
+    updateToolbarState(AppState) {
+        if (!this.floatingToolbar) return;
+
+        const count = AppState.selectedItems.length;
+        if (count > 0) {
+            this.floatingToolbar.classList.add('visible');
+            
+            // Rename is only allowed for single selection
+            this.ftRenameBtn.disabled = (count !== 1);
+            
+            // Details is allowed for multiple selection (aggregate info)
+            this.ftDetailsBtn.disabled = false;
+        } else {
+            this.floatingToolbar.classList.remove('visible');
+        }
+    },
+
 
     /**
      * Renders the breadcrumb navigation based on the current folder path.
@@ -76,6 +128,7 @@ const FileListHandler = {
     _updateFileListDOM(contents, AppState) {
         this.fileListBodyEl.innerHTML = '';
         AppState.selectedItems.length = 0;
+        this.updateToolbarState(AppState); // Ensure toolbar is hidden on refresh
         
         const fragment = document.createDocumentFragment();
         contents.folders.forEach(folder => fragment.appendChild(this._createItemElement(folder, true, AppState)));
@@ -208,7 +261,7 @@ const FileListHandler = {
                     <button class="item-action-btn rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
                     <button class="item-action-btn move-btn" title="移動"><i class="fas fa-arrow-right-to-bracket"></i></button>
                     <button class="item-action-btn download-btn" title="下載"><i class="fas fa-download"></i></button>
-                    <button class="item-action-btn delete-btn" title="刪除"><i class="fas fa-trash"></i></button>
+                    <button class="item-action-btn delete-btn" title="移至回收桶"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
             <div class="file-item-col date">${item.modif_date}</div>
@@ -386,9 +439,9 @@ const FileListHandler = {
                 element.classList.add('selected');
                 AppState.selectedItems.push(itemWithType);
             }
+            this.updateToolbarState(AppState);
         });
-    },
-    
+    },    
     /**
      * Sets up the drag-to-select functionality.
      * @param {HTMLElement} containerEl - The container element for the file list.

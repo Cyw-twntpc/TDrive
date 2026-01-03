@@ -116,12 +116,6 @@
                     </div>
                     <div class="bottom-row">
                         <nav id="breadcrumb" class="breadcrumb-nav"></nav>
-                        <div class="action-buttons">
-                            <!-- Context Actions -->
-                            <button id="download-btn" class="btn"><i class="fas fa-download"></i> 下載</button>
-                            <button id="move-btn" class="btn"><i class="fas fa-arrow-right-to-bracket"></i> 移動</button>
-                            <button id="delete-btn" class="btn btn-danger"><i class="fas fa-trash"></i> 刪除</button>
-                        </div>
                     </div>
                 </header>
 
@@ -156,6 +150,18 @@
                     </div>
                     <div id="selection-box"></div>
                 </section>
+                
+                <!-- Floating Action Toolbar -->
+                <div id="file-floating-toolbar" class="floating-toolbar">
+                    <button class="toolbar-btn" id="ft-download-btn" title="下載"><i class="fas fa-download"></i></button>
+                    <button class="toolbar-btn" id="ft-move-btn" title="移動"><i class="fas fa-arrow-right-to-bracket"></i></button>
+                    <button class="toolbar-btn" id="ft-rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
+                    <div class="toolbar-separator"></div>
+                    <button class="toolbar-btn" id="ft-share-btn" title="分享 (即將推出)"><i class="fas fa-share-alt"></i></button>
+                    <button class="toolbar-btn" id="ft-details-btn" title="詳細資訊"><i class="fas fa-info-circle"></i></button>
+                    <div class="toolbar-separator"></div>
+                    <button class="toolbar-btn" id="ft-trash-btn" title="移至回收桶"><i class="fas fa-trash"></i></button>
+                </div>
             </div>
 
             <!-- Trash Page -->
