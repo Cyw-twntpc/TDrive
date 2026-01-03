@@ -148,19 +148,36 @@ const FileListHandler = {
     _createItemElement(item, isFolder, AppState) {
         const itemEl = document.createElement('div');
         itemEl.className = 'file-item';
-        itemEl.draggable = true; // [Added] Enable dragging
+        itemEl.draggable = false; // [Modified] Default to false to allow click-then-drag
         itemEl.dataset.id = item.id;
         itemEl.dataset.name = item.name;
         itemEl.dataset.type = isFolder ? 'folder' : 'file';
         
         if (item.isUploading) {
             itemEl.classList.add('is-uploading');
-            itemEl.draggable = false; // Uploading items cannot be dragged
         }
+
+        // --- Drag Activation Logic ---
+        // Only allow dragging if the item is already selected.
+        itemEl.addEventListener('mousedown', (e) => {
+            if (itemEl.classList.contains('is-uploading')) return;
+            
+            // If dragging a selected item, enable drag.
+            // Otherwise, keep draggable=false to allow the mousedown to bubble to the container for marquee selection.
+            if (itemEl.classList.contains('selected')) {
+                itemEl.draggable = true;
+            } else {
+                itemEl.draggable = false;
+            }
+        });
+
+        itemEl.addEventListener('mouseup', () => {
+            itemEl.draggable = false;
+        });
 
         // --- Drag Source Logic ---
         itemEl.addEventListener('dragstart', (e) => {
-            if (itemEl.classList.contains('is-uploading')) {
+            if (itemEl.classList.contains('is-uploading') || !itemEl.draggable) {
                 e.preventDefault();
                 return;
             }
@@ -197,6 +214,7 @@ const FileListHandler = {
         });
 
         itemEl.addEventListener('dragend', (e) => {
+            itemEl.draggable = false; // Reset
             AppState.isDragging = false;
             AppState.draggedItems = [];
             document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
@@ -259,7 +277,6 @@ const FileListHandler = {
                 </div>
                 <div class="name-col-actions">
                     <button class="item-action-btn rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
-                    <button class="item-action-btn move-btn" title="移動"><i class="fas fa-arrow-right-to-bracket"></i></button>
                     <button class="item-action-btn download-btn" title="下載"><i class="fas fa-download"></i></button>
                     <button class="item-action-btn delete-btn" title="移至回收桶"><i class="fas fa-trash"></i></button>
                 </div>
@@ -279,7 +296,6 @@ const FileListHandler = {
         // Dispatch custom events for actions to be handled by a central listener in main.js.
         const itemDetail = { ...item, type: isFolder ? 'folder' : 'file' };
         itemEl.querySelector('.rename-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-rename', { detail: itemDetail, bubbles: true })); });
-        itemEl.querySelector('.move-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-move', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.download-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-download', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-delete', { detail: itemDetail, bubbles: true })); });
 
@@ -442,80 +458,145 @@ const FileListHandler = {
             this.updateToolbarState(AppState);
         });
     },    
-    /**
-     * Sets up the drag-to-select functionality.
-     * @param {HTMLElement} containerEl - The container element for the file list.
-     * @param {Function} onUpdate - Callback to notify when selection changes.
-     */
     setupSelection(containerEl, onUpdate) {
-        let isDragging = false, startX = 0, startY = 0;
-        containerEl.addEventListener('mousedown', e => {
-            // Only start dragging if the mousedown is on the container itself, not an item.
-            if (e.target !== containerEl && e.target !== document.getElementById('file-list-body')) return;
-            
-            containerEl.classList.add('is-selecting');
-            e.preventDefault(); 
-            isDragging = true;
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let autoScrollFrameId = null;
+        let lastClientX = 0, lastClientY = 0;
+
+        const updateSelectionBox = (clientX, clientY) => {
             const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.file-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            const viewTop = rect.top + headerHeight;
+            
+            const clampedX = Math.max(rect.left, Math.min(rect.right, clientX));
+            const clampedY = Math.max(viewTop, Math.min(rect.bottom, clientY));
+
+            const currentContentX = clampedX - rect.left;
+            const currentContentY = clampedY - rect.top + containerEl.scrollTop;
+
+            const newLeft = Math.min(startX, currentContentX);
+            const newTop = Math.min(startY, currentContentY);
+            const newWidth = Math.abs(startX - currentContentX);
+            const newHeight = Math.abs(startY - currentContentY);
+
+            Object.assign(this.selectionBox.style, { 
+                left: `${newLeft}px`, 
+                top: `${newTop}px`, 
+                width: `${newWidth}px`, 
+                height: `${newHeight}px` 
+            });
+
+            const boxRect = this.selectionBox.getBoundingClientRect();
+            document.querySelectorAll('.file-item:not(.is-uploading)').forEach(itemEl => {
+                const itemRect = itemEl.getBoundingClientRect();
+                const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
+                
+                const itemId = parseFloat(itemEl.dataset.id);
+                const itemType = itemEl.dataset.type;
+                const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
+
+                if (intersects) {
+                    if (!isSelected) {
+                        itemEl.classList.add('selected');
+                        const itemData = (itemType === 'folder')
+                            ? AppState.currentFolderContents.folders.find(i => i.id === itemId)
+                            : AppState.currentFolderContents.files.find(i => i.id === itemId);
+                        if (itemData) AppState.selectedItems.push({ ...itemData, type: itemType });
+                    }
+                } else {
+                    if (!window.event?.ctrlKey && isSelected) {
+                        itemEl.classList.remove('selected');
+                        const indexToRemove = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
+                        if (indexToRemove > -1) AppState.selectedItems.splice(indexToRemove, 1);
+                    }
+                }
+            });
+            if (onUpdate) onUpdate(AppState);
+        };
+
+        const autoScrollLoop = () => {
+            if (!isDragging) return;
+            const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.file-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            const viewTop = rect.top + headerHeight;
+            let scrolled = false;
+
+            const BASE_SPEED = 2;
+            const MAX_SPEED = 30;
+            const SENSITIVITY = 0.4;
+
+            if (lastClientY < viewTop) {
+                if (containerEl.scrollTop > 0) {
+                    const dist = viewTop - lastClientY;
+                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
+                    containerEl.scrollTop -= speed;
+                    scrolled = true;
+                }
+            } else if (lastClientY > rect.bottom) {
+                const maxScroll = containerEl.scrollHeight - containerEl.clientHeight;
+                if (containerEl.scrollTop < maxScroll) {
+                    const dist = lastClientY - rect.bottom;
+                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
+                    containerEl.scrollTop += speed;
+                    scrolled = true;
+                }
+            }
+
+            if (scrolled) updateSelectionBox(lastClientX, lastClientY);
+            autoScrollFrameId = requestAnimationFrame(autoScrollLoop);
+        };
+
+        containerEl.addEventListener('mousedown', e => {
+            const clickedItem = e.target.closest('.file-item');
+            if (clickedItem && clickedItem.classList.contains('selected')) return;
+            if (e.target.closest('button') || e.target.closest('a')) return;
+
+            const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.file-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            if (e.clientY < rect.top + headerHeight) return;
+
+            containerEl.classList.add('is-selecting');
+            isDragging = false; 
             startX = e.clientX - rect.left; 
             startY = e.clientY - rect.top + containerEl.scrollTop;
             
-            Object.assign(this.selectionBox.style, { left: `${startX}px`, top: `${startY - containerEl.scrollTop}px`, width: '0px', height: '0px', display: 'block' });
-            
-            // Clear previous selection if Ctrl is not held.
-            if (!e.ctrlKey) {
-                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.length = 0;
+            Object.assign(this.selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
+
+            if (!clickedItem && !e.ctrlKey) {
+                 document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+                 AppState.selectedItems.length = 0;
+                 if (onUpdate) onUpdate(AppState);
             }
 
             const onMouseMove = (moveE) => {
-                if (!isDragging) return;
+                lastClientX = moveE.clientX;
+                lastClientY = moveE.clientY;
 
-                const currentX = moveE.clientX - rect.left;
-                const currentY = moveE.clientY - rect.top + containerEl.scrollTop;
-                const newLeft = Math.min(startX, currentX);
-                const newTop = Math.min(startY, currentY);
-                const newWidth = Math.abs(startX - currentX);
-                const newHeight = Math.abs(startY - currentY);
-                
-                Object.assign(this.selectionBox.style, { left: `${newLeft}px`, top: `${newTop - containerEl.scrollTop}px`, width: `${newWidth}px`, height: `${newHeight}px` });
-                
-                const boxRect = this.selectionBox.getBoundingClientRect();
-
-                document.querySelectorAll('.file-item:not(.is-uploading)').forEach(itemEl => {
-                    const itemRect = itemEl.getBoundingClientRect();
-                    const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                    
-                    const itemId = parseFloat(itemEl.dataset.id);
-                    const itemType = itemEl.dataset.type;
-                    
-                    const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
-
-                    if (intersects) {
-                        if (!isSelected) {
-                            itemEl.classList.add('selected');
-                            const itemData = (itemType === 'folder')
-                                ? AppState.currentFolderContents.folders.find(i => i.id === itemId)
-                                : AppState.currentFolderContents.files.find(i => i.id === itemId);
-                            if (itemData) {
-                                AppState.selectedItems.push({ ...itemData, type: itemType });
-                            }
-                        }
-                    } else {
-                        if (isSelected) {
-                            itemEl.classList.remove('selected');
-                            const indexToRemove = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
-                            if (indexToRemove > -1) AppState.selectedItems.splice(indexToRemove, 1);
-                        }
-                    }
-                });
-                if (onUpdate) onUpdate(AppState);
+                if (!isDragging) {
+                     if (Math.abs(moveE.clientX - e.clientX) < 5 && Math.abs(moveE.clientY - e.clientY) < 5) return;
+                     isDragging = true;
+                     moveE.preventDefault();
+                     if (!e.ctrlKey) {
+                         document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+                         AppState.selectedItems.length = 0;
+                     }
+                     if (!autoScrollFrameId) autoScrollLoop();
+                }
+                updateSelectionBox(moveE.clientX, moveE.clientY);
             };
 
             const onMouseUp = () => {
                 containerEl.classList.remove('is-selecting');
                 isDragging = false; 
                 this.selectionBox.style.display = 'none';
+                if (autoScrollFrameId) {
+                    cancelAnimationFrame(autoScrollFrameId);
+                    autoScrollFrameId = null;
+                }
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
                 if (onUpdate) onUpdate(AppState);

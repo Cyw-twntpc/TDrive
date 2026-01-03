@@ -381,80 +381,142 @@ const TrashHandler = {
 
     setupSelection() {
         const containerEl = this.section;
-        let isDragging = false, startX = 0, startY = 0;
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let autoScrollFrameId = null;
+        let lastClientX = 0, lastClientY = 0;
+
+        const updateSelectionBox = (clientX, clientY) => {
+            const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.trash-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            const viewTop = rect.top + headerHeight;
+            
+            const clampedX = Math.max(rect.left, Math.min(rect.right, clientX));
+            const clampedY = Math.max(viewTop, Math.min(rect.bottom, clientY));
+
+            const currentContentX = clampedX - rect.left;
+            const currentContentY = clampedY - rect.top + containerEl.scrollTop;
+
+            const newLeft = Math.min(startX, currentContentX);
+            const newTop = Math.min(startY, currentContentY);
+            const newWidth = Math.abs(startX - currentContentX);
+            const newHeight = Math.abs(startY - currentContentY);
+
+            Object.assign(this.selectionBox.style, { 
+                left: `${newLeft}px`, 
+                top: `${newTop}px`, 
+                width: `${newWidth}px`, 
+                height: `${newHeight}px` 
+            });
+
+            const boxRect = this.selectionBox.getBoundingClientRect();
+            this.listBody.querySelectorAll('.trash-item').forEach(itemEl => {
+                const itemRect = itemEl.getBoundingClientRect();
+                const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
+                
+                const itemId = parseFloat(itemEl.dataset.id);
+                const itemType = itemEl.dataset.type;
+                const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
+
+                if (intersects) {
+                    if (!isSelected) {
+                        itemEl.classList.add('selected');
+                        const itemData = AppState.trashItems.find(i => i.id === itemId && i.type === itemType);
+                        if (itemData) AppState.selectedItems.push(itemData);
+                    }
+                } else {
+                    if (!window.event?.ctrlKey && isSelected) {
+                        itemEl.classList.remove('selected');
+                        const idx = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
+                        if (idx > -1) AppState.selectedItems.splice(idx, 1);
+                    }
+                }
+            });
+            this.updateBulkActionState();
+        };
+
+        const autoScrollLoop = () => {
+            if (!isDragging) return;
+            const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.trash-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            const viewTop = rect.top + headerHeight;
+            let scrolled = false;
+
+            const BASE_SPEED = 2;
+            const MAX_SPEED = 30;
+            const SENSITIVITY = 0.4;
+
+            if (lastClientY < viewTop) {
+                if (containerEl.scrollTop > 0) {
+                    const dist = viewTop - lastClientY;
+                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
+                    containerEl.scrollTop -= speed;
+                    scrolled = true;
+                }
+            } else if (lastClientY > rect.bottom) {
+                const maxScroll = containerEl.scrollHeight - containerEl.clientHeight;
+                if (containerEl.scrollTop < maxScroll) {
+                    const dist = lastClientY - rect.bottom;
+                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
+                    containerEl.scrollTop += speed;
+                    scrolled = true;
+                }
+            }
+
+            if (scrolled) updateSelectionBox(lastClientX, lastClientY);
+            autoScrollFrameId = requestAnimationFrame(autoScrollLoop);
+        };
 
         containerEl.addEventListener('mousedown', e => {
-            if (e.target !== containerEl && e.target !== this.listBody) return;
-            
-            containerEl.classList.add('is-selecting');
-            e.preventDefault(); 
-            isDragging = true;
+            const clickedItem = e.target.closest('.trash-item');
+            if (clickedItem && clickedItem.classList.contains('selected')) return;
+            if (e.target.closest('.trash-action-btn')) return;
+
             const rect = containerEl.getBoundingClientRect();
+            const headerEl = containerEl.querySelector('.trash-list-header');
+            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+            if (e.clientY < rect.top + headerHeight) return;
+
+            containerEl.classList.add('is-selecting');
+            isDragging = false; 
             startX = e.clientX - rect.left; 
             startY = e.clientY - rect.top + containerEl.scrollTop;
             
-            // Reset selection box style
-            Object.assign(this.selectionBox.style, { 
-                left: `${startX}px`, top: `${startY - containerEl.scrollTop}px`, 
-                width: '0px', height: '0px', display: 'block' 
-            });
-            
-            // Clear previous if Ctrl not held
-            if (!e.ctrlKey) {
+            Object.assign(this.selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
+
+            if (!clickedItem && !e.ctrlKey) {
                 this.listBody.querySelectorAll('.trash-item.selected').forEach(el => el.classList.remove('selected'));
                 AppState.selectedItems.length = 0;
+                this.updateBulkActionState();
             }
 
             const onMouseMove = (moveE) => {
-                if (!isDragging) return;
+                lastClientX = moveE.clientX;
+                lastClientY = moveE.clientY;
 
-                const currentX = moveE.clientX - rect.left;
-                const currentY = moveE.clientY - rect.top + containerEl.scrollTop;
-                const newLeft = Math.min(startX, currentX);
-                const newTop = Math.min(startY, currentY);
-                const newWidth = Math.abs(startX - currentX);
-                const newHeight = Math.abs(startY - currentY);
-                
-                Object.assign(this.selectionBox.style, { 
-                    left: `${newLeft}px`, top: `${newTop - containerEl.scrollTop}px`, 
-                    width: `${newWidth}px`, height: `${newHeight}px` 
-                });
-                
-                const boxRect = this.selectionBox.getBoundingClientRect();
-
-                this.listBody.querySelectorAll('.trash-item').forEach(itemEl => {
-                    const itemRect = itemEl.getBoundingClientRect();
-                    const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                    
-                    const itemId = parseFloat(itemEl.dataset.id);
-                    const itemType = itemEl.dataset.type;
-                    const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
-
-                    if (intersects) {
-                        if (!isSelected) {
-                            itemEl.classList.add('selected');
-                            const itemData = AppState.trashItems.find(i => i.id === itemId && i.type === itemType);
-                            if (itemData) AppState.selectedItems.push(itemData);
-                        }
-                    } else {
-                        // Only deselect if not holding Ctrl (mimic standard OS behavior for drag select)
-                        // Actually standard behavior is: drag selection adds to selection if Ctrl is held? 
-                        // Simplified logic: If it leaves the box and wasn't selected before drag start... (Too complex for now)
-                        // Current logic: If it leaves box, deselect. (Unless Ctrl held? No, current logic deselects)
-                        // Let's stick to simple logic: Box defines selection state for touched items.
-                        if (!e.ctrlKey && isSelected) {
-                             itemEl.classList.remove('selected');
-                             const idx = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
-                             if (idx > -1) AppState.selectedItems.splice(idx, 1);
-                        }
-                    }
-                });
+                if (!isDragging) {
+                     if (Math.abs(moveE.clientX - e.clientX) < 5 && Math.abs(moveE.clientY - e.clientY) < 5) return;
+                     isDragging = true;
+                     moveE.preventDefault();
+                     if (!e.ctrlKey) {
+                         this.listBody.querySelectorAll('.trash-item.selected').forEach(el => el.classList.remove('selected'));
+                         AppState.selectedItems.length = 0;
+                     }
+                     if (!autoScrollFrameId) autoScrollLoop();
+                }
+                updateSelectionBox(moveE.clientX, moveE.clientY);
             };
 
             const onMouseUp = () => {
                 containerEl.classList.remove('is-selecting');
                 isDragging = false; 
                 this.selectionBox.style.display = 'none';
+                if (autoScrollFrameId) {
+                    cancelAnimationFrame(autoScrollFrameId);
+                    autoScrollFrameId = null;
+                }
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
                 this.updateBulkActionState();
