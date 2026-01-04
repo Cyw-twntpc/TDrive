@@ -258,13 +258,12 @@ class TransferService:
 
                 progress_callback(main_task_id, file_name, 0, total_size, 'transferring', 0, is_folder=False)
 
-                split_files_info = await telegram_comms.upload_file_with_info(
+                split_files_info = await telegram_comms.upload_file_to_cloud(
                     client, self.shared_state.group_id, file_path, original_file_hash, 
                     main_task_id,
                     progress_callback=ui_cb, 
                     resume_context=split_files_info,
-                    chunk_callback=chunk_cb, 
-                    parent_id=main_task_id if main_task_id != sub_task_id else None
+                    chunk_callback=chunk_cb
                 )
 
                 await loop.run_in_executor(

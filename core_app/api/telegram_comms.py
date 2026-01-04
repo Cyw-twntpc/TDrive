@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 import random
-from typing import Callable, List, Optional, Set, TypeVar, Awaitable
+from typing import Callable, List, Set, TypeVar, Awaitable
 
 from . import crypto_handler as cr
 from . import file_processor as fp
@@ -153,13 +153,10 @@ async def get_group(client, app_api_id: int) -> int | None:
         logger.error(f"Fatal error while creating group: {e}", exc_info=True)
         return None
 
-async def upload_file_with_info(client, group_id: int, file_path: str, original_file_hash: str, task_id: str, 
-                                progress_callback: Callable | None = None, resume_context: List = None,
-                                chunk_callback: Callable[[int, int, str], None] = None,
-                                parent_id: str | None = None) -> list:
-    """Streams, encrypts, and uploads a file with async I/O."""
-    file_name = os.path.basename(file_path)
-    
+async def upload_file_to_cloud(client, group_id: int, file_path: str, original_file_hash: str, task_id: str, 
+                               progress_callback: Callable | None = None, resume_context: List = None,
+                               chunk_callback: Callable[[int, int, str], None] = None) -> list:
+    """Streams, encrypts, and uploads a file with async I/O."""    
     split_files_info = list(resume_context) if resume_context else []
     completed_parts = {item[0] for item in split_files_info}
     
