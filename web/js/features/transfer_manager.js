@@ -169,11 +169,15 @@ const TransferManager = {
             if (trafficEl) trafficEl.textContent = this.UIManager.formatBytes(data.todayTraffic);
         }
 
-        if (data.delta !== undefined && data.delta !== null) {
-            task.progress += data.delta;
-            if (task.size > 0 && task.progress > task.size) task.progress = task.size;
-        } else if (data.transferred !== undefined) {
-            task.progress = data.transferred;
+        // Fix: Prevent progress reset on pause
+        if (data.status !== 'paused') {
+            if (data.delta !== undefined && data.delta !== null) {
+                task.progress += data.delta;
+                if (task.size > 0 && task.progress > task.size) task.progress = task.size;
+            } else if (data.transferred !== undefined) {
+                task.progress = data.transferred;
+            }
+            if (data.total !== undefined && data.total > 0) task.size = data.total;
         }
 
         let statusChanged = false;

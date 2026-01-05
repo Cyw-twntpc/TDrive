@@ -5,13 +5,21 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Qt, QPoint, Signal
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QApplication, QMainWindow
-from PySide6.QtGui import QIcon, QCloseEvent, QGuiApplication, QColor
+from PySide6.QtGui import QIcon, QCloseEvent, QGuiApplication, QColor, QDesktopServices
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEnginePage
 
 from core_app.main_service import TDriveService
 from core_app.bridge import Bridge
 
 logger = logging.getLogger(__name__)
+
+class ExternalLinkPage(QWebEnginePage):
+    def acceptNavigationRequest(self, url, _type, isMainFrame):
+        if _type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+            QDesktopServices.openUrl(url)
+            return False
+        return super().acceptNavigationRequest(url, _type, isMainFrame)
 
 class LoginWindow(QMainWindow):
     login_successful = Signal(TDriveService)
@@ -51,6 +59,7 @@ class LoginWindow(QMainWindow):
         self.channel.registerObject("tdrive_bridge", self.bridge)
 
         self.web_view = QWebEngineView()
+        self.web_view.setPage(ExternalLinkPage(self.web_view))
         self.web_view.page().setWebChannel(self.channel)
         self.web_view.page().setBackgroundColor(QColor(0, 0, 0, 0))
         self.web_view.loadFinished.connect(self.on_load_finished)

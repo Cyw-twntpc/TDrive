@@ -6,9 +6,10 @@ import sys
 import ctypes
 import asyncio
 import logging
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from qasync import QEventLoop
 
@@ -16,14 +17,16 @@ from core_app.common import logger_config
 from core_app.main_service import TDriveService
 from core_app.ui.windows.login_window import LoginWindow
 from core_app.ui.windows.main_window import MainWindow
+from core_app.ui.windows.splash_screen import SplashScreen
 
 logger = logging.getLogger(__name__)
 
 class AppController(QObject):
-    def __init__(self, app: QApplication, loop: asyncio.AbstractEventLoop):
+    def __init__(self, app: QApplication, loop: asyncio.AbstractEventLoop, splash: QWidget = None):
         super().__init__()
         self.app = app
         self.loop = loop
+        self.splash = splash
         self.login_window = None
         self.main_window = None
         self.tdrive_service = TDriveService(loop=self.loop)
@@ -39,6 +42,9 @@ class AppController(QObject):
             api_id = login_status.get("api_id")
             api_hash = login_status.get("api_hash")
             self.show_login_window(api_id=api_id, api_hash=api_hash)
+            
+        if self.splash:
+            self.splash.close()
 
     def show_login_window(self, api_id=None, api_hash=None):
         self.login_window = LoginWindow(self.tdrive_service, self.loop, api_id=api_id, api_hash=api_hash)
@@ -75,10 +81,14 @@ def main():
 
     app = QApplication(sys.argv)
     
+    # Show the custom animated splash screen
+    splash = SplashScreen()
+    splash.show()
+    
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
     
-    controller = AppController(app, loop)
+    controller = AppController(app, loop, splash)
     controller.start()
 
     with loop:
