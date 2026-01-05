@@ -6,7 +6,7 @@ from . import crypto_handler as cr
 logger = logging.getLogger(__name__)
 
 # The size of each file chunk in bytes.
-CHUNK_SIZE = int(1024 * 1024 * 32)
+CHUNK_SIZE = int(1024 * 1024 * 8)
 
 def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Optional[Set[int]] = None) -> Generator[tuple[int, bytes], Any, None]:
     """Reads file stream, encrypts chunks, yields (part_num, bytes). Skips completed parts."""
