@@ -83,15 +83,26 @@ class TransferService:
             total_size = 0
             file_list = []
             
-            for root, dirs, files in os.walk(local_folder_path):
+            # Handle long paths on Windows
+            scan_path = local_folder_path
+            if os.name == 'nt' and not scan_path.startswith('\\\\?\\'):
+                scan_path = f"\\\\?\\{os.path.abspath(scan_path)}"
+
+            for root, dirs, files in os.walk(scan_path):
                 for f in files:
                     full_path = os.path.join(root, f)
                     try:
                         f_size = os.path.getsize(full_path)
                         total_size += f_size
-                        file_list.append((full_path, f_size))
-                    except OSError:
-                        pass
+                        # Store original path (without \\?\ prefix if possible) for consistency
+                        stored_path = full_path
+                        if stored_path.startswith("\\\\?\\"):
+                            stored_path = stored_path[4:]
+                        file_list.append((stored_path, f_size))
+                    except OSError as e:
+                        logger.warning(f"[SizeCalc] Skipping file due to error: {full_path} - {e}")
+            
+            logger.info(f"[SizeCalc] Initial scan complete. Total files: {len(file_list)}, Total Size: {total_size}")
 
             self.controller.add_upload_task(
                 main_task_id, local_folder_path, parent_id, total_size, is_folder=True
@@ -109,6 +120,7 @@ class TransferService:
             try:
                 try:
                     root_remote_id = await loop.run_in_executor(None, self.db.add_folder, parent_id, base_folder_name)
+                    self.controller.record_created_artifact(main_task_id, 'folder', root_remote_id)
                 except errors.ItemAlreadyExistsError:
                     existing = await loop.run_in_executor(None, self.db.get_folder_contents, parent_id)
                     found = next((f for f in existing['folders'] if f['name'] == base_folder_name), None)
@@ -117,16 +129,30 @@ class TransferService:
                     else:
                         raise Exception("資料夾已存在但無法找到。")
 
-                path_to_remote_id = {local_folder_path: root_remote_id}
+                # Normalize local_folder_path for consistent mapping
+                local_folder_abspath = os.path.abspath(local_folder_path)
+                path_to_remote_id = {local_folder_abspath: root_remote_id}
                 
-                for root, dirs, _ in os.walk(local_folder_path):
-                    current_remote_id = path_to_remote_id.get(root)
+                # Use the same scan_path logic for folder creation
+                scan_path_structure = local_folder_path
+                if os.name == 'nt' and not scan_path_structure.startswith('\\\\?\\'):
+                    scan_path_structure = f"\\\\?\\{os.path.abspath(scan_path_structure)}"
+                
+                for root, dirs, _ in os.walk(scan_path_structure):
+                    # Normalize root key
+                    current_root_key = root
+                    if current_root_key.startswith("\\\\?\\"):
+                        current_root_key = current_root_key[4:]
+                    current_root_key = os.path.abspath(current_root_key)
+
+                    current_remote_id = path_to_remote_id.get(current_root_key)
                     if current_remote_id is None: continue
 
                     for d in dirs:
-                        local_dir_path = os.path.join(root, d)
+                        local_dir_path = os.path.join(current_root_key, d)
                         try:
                             new_folder_id = await loop.run_in_executor(None, self.db.add_folder, current_remote_id, d)
+                            self.controller.record_created_artifact(main_task_id, 'folder', new_folder_id)
                             path_to_remote_id[local_dir_path] = new_folder_id
                         except errors.ItemAlreadyExistsError:
                             contents = await loop.run_in_executor(None, self.db.get_folder_contents, current_remote_id)
@@ -136,6 +162,7 @@ class TransferService:
 
                 child_tasks_map = {}
                 tasks_to_run = []
+                real_total_size = 0
                 
                 for file_path, f_size in file_list:
                     sub_task_id = str(uuid.uuid4())
@@ -143,6 +170,7 @@ class TransferService:
                     target_parent_id = path_to_remote_id.get(file_dir)
                     
                     if target_parent_id:
+                        real_total_size += f_size
                         child_tasks_map[sub_task_id] = {
                             "file_path": file_path,
                             "parent_id": target_parent_id,
@@ -157,6 +185,17 @@ class TransferService:
                                 progress_callback
                             )
                         )
+                    else:
+                        logger.warning(f"[TaskGen] Skipping file {file_path} because parent folder ID not found for: {file_dir}")
+
+                # Correction: If real size differs from initial scan (e.g. due to skipped folders), update it.
+                logger.info(f"[TaskGen] Generation complete. Real Total Size: {real_total_size}, Initial Total: {total_size}")
+                if real_total_size != total_size:
+                    logger.warning(f"Task {main_task_id}: Size mismatch (Initial: {total_size}, Real: {real_total_size}). Updating DB...")
+                    self.controller.update_task_total_size(main_task_id, real_total_size)
+                    total_size = real_total_size
+                    # Notify UI with corrected total
+                    progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
 
                 self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
@@ -237,10 +276,12 @@ class TransferService:
                 if existing_file_id:
                     logger.info(f"Sec-upload (Deduplication) triggered for {file_name}")
                     try:
-                        await loop.run_in_executor(
-                            None, 
-                            lambda: self.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
-                        )
+                        def _dedup_add():
+                            fid = self.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
+                            self.controller.record_created_artifact(main_task_id, 'file', fid)
+                            return fid
+
+                        await loop.run_in_executor(None, _dedup_add)
                         self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
                         
                         remaining = total_size - last_uploaded
@@ -256,7 +297,11 @@ class TransferService:
                         self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "檔案已存在")
                         return
 
-                progress_callback(main_task_id, file_name, 0, total_size, 'transferring', 0, is_folder=False)
+                # If this is part of a folder upload (sub-task), do NOT send the single file size as 'total'
+                # because the frontend will interpret it as the total size of the main task (the folder).
+                # Sending 0 or -1 tells the frontend to keep the existing total size.
+                report_total = total_size if main_task_id == sub_task_id else 0
+                progress_callback(main_task_id, file_name, 0, report_total, 'transferring', 0, is_folder=False)
 
                 split_files_info = await telegram_comms.upload_file_to_cloud(
                     client, self.shared_state.group_id, file_path, original_file_hash, 
@@ -266,13 +311,15 @@ class TransferService:
                     chunk_callback=chunk_cb
                 )
 
-                await loop.run_in_executor(
-                    None,
-                    lambda: self.db.add_file(
+                def _add_file_and_record():
+                    fid = self.db.add_file(
                         parent_id, file_name, time.time(), 
                         file_hash=original_file_hash, size=total_size, chunks_data=split_files_info
                     )
-                )
+                    self.controller.record_created_artifact(main_task_id, 'file', fid)
+                    return fid
+
+                await loop.run_in_executor(None, _add_file_and_record)
                 
                 self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
 
@@ -375,6 +422,7 @@ class TransferService:
 
             child_tasks_map = {}
             tasks_to_run = []
+            real_total_size = 0
 
             for f in file_items:
                 sub_task_id = str(uuid.uuid4())
@@ -384,6 +432,7 @@ class TransferService:
                     "hash": f['hash'],
                     "chunks": f['chunks']
                 }
+                real_total_size += f['size']
                 child_tasks_map[sub_task_id] = {
                     "db_id": f['db_id'],
                     "save_path": f['local_path'],
@@ -398,6 +447,12 @@ class TransferService:
                         progress_callback
                     )
                 )
+
+            if real_total_size != total_size:
+                logger.warning(f"Download Task {main_task_id}: Size mismatch (Initial: {total_size}, Real: {real_total_size}). Updating DB...")
+                self.controller.update_task_total_size(main_task_id, real_total_size)
+                total_size = real_total_size
+                progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
 
             self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
@@ -452,7 +507,8 @@ class TransferService:
                 self.shared_state.active_tasks[sub_task_id] = asyncio.current_task()
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
 
-                progress_callback(main_task_id, file_details['name'], 0, file_details['size'], 'transferring', 0)
+                report_total = file_details['size'] if main_task_id == sub_task_id else 0
+                progress_callback(main_task_id, file_details['name'], 0, report_total, 'transferring', 0)
 
                 await telegram_comms.download_file(
                     client, self.shared_state.group_id, file_details, os.path.dirname(save_path),
@@ -631,6 +687,37 @@ class TransferService:
 
                 message_ids_to_delete = []
 
+                # 1. Clean up created DB artifacts (files/folders)
+                # We do this first to ensure local DB is clean, and we collect msg IDs for cloud deletion.
+                task_id = task_info.get('task_id')
+                logger.info(f"Cleanup: Starting artifact cleanup for task {task_id}")
+                if task_id:
+                    artifacts = await self.shared_state.loop.run_in_executor(None, self.controller.get_created_artifacts, task_id)
+                    logger.info(f"Cleanup: Found {len(artifacts)} artifacts to remove.")
+                    
+                    def _cleanup_db_items():
+                        db_msgs = []
+                        # Artifacts are ordered by ID DESC (newest first). 
+                        # This works well: delete files/subfolders before their parents.
+                        for artifact in artifacts:
+                            try:
+                                logger.info(f"Cleanup: Removing artifact {artifact['artifact_type']} ID {artifact['db_id']}")
+                                if artifact['artifact_type'] == 'file':
+                                    msgs = self.db.remove_file(artifact['db_id'])
+                                    db_msgs.extend(msgs)
+                                elif artifact['artifact_type'] == 'folder':
+                                    # Since we tracked it as created by this task, we remove it.
+                                    # remove_folder is recursive and returns msg_ids of deleted content.
+                                    msgs = self.db.remove_folder(artifact['db_id'])
+                                    db_msgs.extend(msgs)
+                            except Exception as e:
+                                logger.warning(f"Failed to cleanup artifact {artifact}: {e}")
+                        return db_msgs
+
+                    db_message_ids = await self.shared_state.loop.run_in_executor(None, _cleanup_db_items)
+                    logger.info(f"Cleanup: DB removal collected {len(db_message_ids)} message IDs.")
+                    message_ids_to_delete.extend(db_message_ids)
+
                 def collect_msg_ids(info_list):
                     if info_list:
                         for item in info_list:
@@ -645,9 +732,11 @@ class TransferService:
                     collect_msg_ids(task_info.get('split_files_info'))
 
                 if message_ids_to_delete:
+                    # Deduplicate IDs
+                    unique_ids = list(set(message_ids_to_delete))
                     batch_size = 100
-                    for i in range(0, len(message_ids_to_delete), batch_size):
-                        batch = message_ids_to_delete[i:i + batch_size]
+                    for i in range(0, len(unique_ids), batch_size):
+                        batch = unique_ids[i:i + batch_size]
                         try:
                             await client.delete_messages(self.shared_state.group_id, batch)
                         except Exception: pass

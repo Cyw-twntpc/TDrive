@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import logging
+import time
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -69,13 +70,49 @@ class TransferDBHandler:
                 bytes INTEGER DEFAULT 0
             )
             ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS created_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                artifact_type TEXT NOT NULL, -- 'file' or 'folder'
+                db_id INTEGER NOT NULL,
+                created_at REAL,
+                FOREIGN KEY (task_id) REFERENCES main_tasks (task_id) ON DELETE CASCADE
+            )
+            ''')
             
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sub_main ON sub_tasks(main_task_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_main_updated ON main_tasks(updated_at)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_artifacts_task ON created_artifacts(task_id)')
 
             conn.commit()
         except Exception as e:
             logger.error(f"Failed to initialize transfer DB: {e}")
+        finally:
+            conn.close()
+
+    # --- Artifact Tracking ---
+
+    def add_created_artifact(self, task_id: str, artifact_type: str, db_id: int):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute('''
+                INSERT INTO created_artifacts (task_id, artifact_type, db_id, created_at)
+                VALUES (?, ?, ?, ?)
+                ''', (task_id, artifact_type, db_id, time.time()))
+        except Exception as e:
+            logger.error(f"Error adding created artifact: {e}")
+        finally:
+            conn.close()
+
+    def get_created_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM created_artifacts WHERE task_id = ? ORDER BY id DESC", (task_id,))
+            return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
@@ -172,6 +209,14 @@ class TransferDBHandler:
         finally:
             conn.close()
 
+    def update_main_task_total_size(self, task_id: str, new_size: int):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute("UPDATE main_tasks SET total_size = ? WHERE task_id = ?", (new_size, task_id))
+        finally:
+            conn.close()
+
     def update_sub_task_status(self, sub_task_id: str, status: str):
         conn = self._get_conn()
         try:
@@ -231,6 +276,7 @@ class TransferDBHandler:
                 task = dict(row)
                 task['is_folder'] = bool(task['is_folder'])
                 task_data = {
+                    "task_id": task['task_id'],
                     "type": task['type'],
                     "is_folder": task['is_folder'],
                     "status": task['status'],
@@ -308,6 +354,7 @@ class TransferDBHandler:
             is_folder = bool(main_task['is_folder'])
             task_type = main_task['type']
             task_data = {
+                "task_id": main_task['task_id'],
                 "type": task_type,
                 "is_folder": is_folder,
                 "status": main_task['status'],

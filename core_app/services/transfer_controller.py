@@ -186,6 +186,9 @@ class TransferController:
     def mark_resumed(self, task_id: str):
         self.db.update_main_task_status(task_id, "queued", time.time())
 
+    def update_task_total_size(self, task_id: str, new_size: int):
+        self.db.update_main_task_total_size(task_id, new_size)
+
     def remove_task(self, task_id: str):
         self.db.delete_task(task_id)
 
@@ -205,3 +208,11 @@ class TransferController:
     async def pause_all_sub_tasks(self, main_task_id: str):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.db.pause_active_sub_tasks, main_task_id)
+
+    # --- Artifact Tracking ---
+
+    def record_created_artifact(self, task_id: str, artifact_type: str, db_id: int):
+        self.db.add_created_artifact(task_id, artifact_type, db_id)
+
+    def get_created_artifacts(self, task_id: str) -> list:
+        return self.db.get_created_artifacts(task_id)
