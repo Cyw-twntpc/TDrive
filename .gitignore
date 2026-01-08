@@ -4,7 +4,6 @@ __pycache__/
 icon.png
 venv/
 file/
-chrome/
+vlc/
 *.md
-*.txt
 *.pdf

@@ -61,4 +61,5 @@ const ApiService = {
     // --- Gallery API ---
     getThumbnails: (folderId) => ApiService._callBridge('get_thumbnails', folderId),
     getPreview: (fileId) => ApiService._callBridge('get_preview', fileId),
+    playVideo: (fileId) => ApiService._callBridge('play_video', fileId),
 };

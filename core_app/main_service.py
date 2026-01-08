@@ -9,6 +9,10 @@ from .services.file_service import FileService
 from .services.folder_service import FolderService
 from .services.transfer_service import TransferService
 from .services.gallery_manager import GalleryManager
+from .services.stream_buffer import StreamBuffer
+from .services.streaming_service import StreamingService
+from .services.player_service import PlayerService
+from .data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,12 @@ class TDriveService:
 
         # Initialize Gallery Manager (Shared Instance)
         self.gallery_manager = GalleryManager()
+        
+        # Initialize Streaming Components
+        self.db_handler = DatabaseHandler()
+        self.stream_buffer = StreamBuffer(self._shared_state)
+        self.streaming_service = StreamingService(self.stream_buffer, self.db_handler)
+        self.player_service = PlayerService()
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
@@ -130,6 +140,13 @@ class TDriveService:
         # Stop the file status watcher
         self._transfer_service.shutdown()
         
+        # Stop Streaming Proxy and Player
+        if self.streaming_service:
+            await self.streaming_service.stop()
+        
+        if self.player_service:
+            self.player_service.terminate_all()
+        
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
         
@@ -142,6 +159,22 @@ class TDriveService:
                 logger.error(f"Error during Telegram client disconnection: {e}", exc_info=True)
 
         logger.info("TDriveService has been closed.")
+
+    # --- Streaming Logic ---
+    async def play_video(self, file_id: int) -> Dict[str, Any]:
+        """
+        Starts the streaming proxy (if needed) and launches VLC.
+        """
+        # Ensure proxy is running
+        if not self.streaming_service.runner:
+            await self.streaming_service.start()
+            
+        url = self.streaming_service.get_stream_url(file_id)
+        if not url:
+            return {"success": False, "message": "Failed to generate stream URL"}
+            
+        success, msg = self.player_service.play_video(url)
+        return {"success": success, "message": msg}
 
     # --- Authentication Service ---
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:

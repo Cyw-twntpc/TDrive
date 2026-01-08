@@ -187,6 +187,10 @@ class Bridge(QObject):
     def get_preview(self, file_id):
         return self._async_call(self._service._file_service.get_preview(file_id))
 
+    @Slot(int, result=dict)
+    def play_video(self, file_id):
+        return self._async_call(self._service.play_video(file_id))
+
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
     def get_folder_contents(self, folder_id, request_id):

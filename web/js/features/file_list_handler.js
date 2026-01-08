@@ -238,12 +238,15 @@ const FileListHandler = {
             this._setupDropTarget(itemEl, item.id);
             itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
         } else {
-            // Image Double Click -> Gallery
             const ext = item.name.split('.').pop().toLowerCase();
             if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
                 itemEl.addEventListener('dblclick', () => {
-                    // Dispatch event to open gallery
                     itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
+            else if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
                 });
             }
         }
@@ -421,11 +424,17 @@ const FileListHandler = {
         if (isFolder) {
             itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
         } else {
-            // [Added] Image Double Click -> Gallery (List View)
             const ext = item.name.split('.').pop().toLowerCase();
+            // Image Double Click -> Gallery
             if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
                 itemEl.addEventListener('dblclick', () => {
                     itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
+                });
+            } 
+            // Video Double Click -> Player
+            else if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
                 });
             }
         }

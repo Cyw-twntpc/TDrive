@@ -472,4 +472,19 @@ const ActionHandler = {
             }
         }
     },
+
+    async handlePlayVideo(fileId) {
+        this._uiManager.startProgress();
+        try {
+            const result = await this._apiService.playVideo(fileId);
+            if (!result.success) {
+                this._uiManager.handleBackendError(result);
+            }
+        } catch (error) {
+            console.error("Play video failed:", error);
+            this._uiManager.handleBackendError({ message: "播放請求失敗。" });
+        } finally {
+            this._uiManager.stopProgress();
+        }
+    },
 };

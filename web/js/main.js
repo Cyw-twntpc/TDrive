@@ -263,6 +263,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('open-gallery', (e) => {
             if (GalleryHandler) GalleryHandler.openGallery(e.detail.id);
         });
+
+        document.addEventListener('play-video', (e) => {
+            ActionHandler.handlePlayVideo(e.detail.id);
+        });
     }
 
     async function initialize() {
