@@ -92,6 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const requestId = Date.now().toString();
         AppState.currentViewRequestId = requestId;
         AppState.currentFolderId = folderId;
+        AppState.currentThumbnails = {}; // Clear thumbnail cache
 
         UIManager.startProgress();
         AppState.currentFolderContents = { folders: [], files: [] };
@@ -218,6 +219,22 @@ document.addEventListener('DOMContentLoaded', () => {
             if (AppState.isSearching) ActionHandler.handleSearch(AppState.searchTerm);
         });
 
+        document.getElementById('view-toggle-btn')?.addEventListener('click', (e) => {
+            const btn = e.currentTarget;
+            const icon = btn.querySelector('i');
+            
+            if (AppState.viewMode === 'list') {
+                AppState.viewMode = 'grid';
+                icon.className = 'fas fa-list';
+                btn.title = "切換至列表";
+            } else {
+                AppState.viewMode = 'list';
+                icon.className = 'fas fa-th-large';
+                btn.title = "切換至縮圖";
+            }
+            FileListHandler.sortAndRender(AppState);
+        });
+
         let searchTimeout;
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
@@ -242,6 +259,10 @@ document.addEventListener('DOMContentLoaded', () => {
             ActionHandler.handleDelete();
         });
         fileListBodyEl.addEventListener('folder-dblclick', e => navigateTo(e.detail.id));
+        
+        document.addEventListener('open-gallery', (e) => {
+            if (GalleryHandler) GalleryHandler.openGallery(e.detail.id);
+        });
     }
 
     async function initialize() {

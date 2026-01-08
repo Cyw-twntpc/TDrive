@@ -57,4 +57,8 @@ const ApiService = {
     getIncompleteTransfers: () => ApiService._callBridge('get_incomplete_transfers'),
     getAllFileStatuses: () => ApiService._callBridge('get_all_file_statuses'),
     getInitialStats: () => ApiService._callBridge('get_initial_stats'),
+
+    // --- Gallery API ---
+    getThumbnails: (folderId) => ApiService._callBridge('get_thumbnails', folderId),
+    getPreview: (fileId) => ApiService._callBridge('get_preview', fileId),
 };

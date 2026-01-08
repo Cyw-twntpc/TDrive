@@ -8,7 +8,8 @@ import asyncio
 import json
 import logging
 import random
-from typing import Callable, List, Set, TypeVar, Awaitable
+import io
+from typing import Callable, List, Set, TypeVar, Awaitable, Optional
 
 from . import crypto_handler as cr
 from . import file_processor as fp
@@ -238,6 +239,84 @@ async def upload_file_to_cloud(client, group_id: int, file_path: str, original_f
     except Exception as e:
         logger.error(f"Upload failed: {e}", exc_info=True)
         raise
+
+async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original_hash: str, 
+                              progress_callback: Callable | None = None) -> list:
+    """
+    Uploads raw bytes as a file (stream split and encrypted).
+    Used for thumbnails DB and preview images.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        key = cr.generate_key(original_hash[:32], original_hash[-32:])
+        total_size = len(data_bytes)
+        
+        # Split bytes into chunks
+        chunks = []
+        for i in range(0, total_size, fp.CHUNK_SIZE):
+            chunks.append(data_bytes[i:i + fp.CHUNK_SIZE])
+            
+        split_files_info = []
+        uploaded_accumulated = 0
+        
+        for idx, chunk in enumerate(chunks):
+            part_num = idx + 1
+            encrypted_chunk = cr.encrypt(chunk, key)
+            part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_chunk)
+            
+            async def _upload_chunk():
+                return await client.send_file(
+                    group_id,
+                    file=encrypted_chunk,
+                    progress_callback=lambda c, t: progress_callback(c, total_size) if progress_callback else None
+                )
+
+            message = await _retry_with_backoff(_upload_chunk)
+            split_files_info.append([part_num, message.id, part_hash])
+            
+            uploaded_accumulated += len(encrypted_chunk)
+            if progress_callback:
+                progress_callback(uploaded_accumulated, total_size)
+
+        return split_files_info
+
+    except Exception as e:
+        logger.error(f"Data upload failed: {e}", exc_info=True)
+        raise
+
+async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], original_hash: str) -> Optional[bytes]:
+    """
+    Downloads messages and reassembles them into bytes in memory.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        messages = await client.get_messages(group_id, ids=msg_ids)
+        messages = [m for m in messages if m]
+        
+        if not messages:
+            return None
+            
+        key = cr.generate_key(original_hash[:32], original_hash[-32:])
+        final_buffer = io.BytesIO()
+        
+        # Sort messages by ID to ensure correct order if they are sequential chunks
+        # In a robust system, we should use the 'part_num' from DB, but for simple data blobs 
+        # uploaded via upload_data_as_file, the message IDs are usually sequential.
+        # For strict correctness, the caller should provide sorted IDs or we trust Telethon's return order.
+        # Here we assume msg_ids passed in are already sorted/ordered correctly by the caller.
+        
+        for message in messages:
+            encrypted_bytes = await message.download_media(file=bytes)
+            if not encrypted_bytes: continue
+            
+            decrypted_chunk = cr.decrypt(encrypted_bytes, key)
+            final_buffer.write(decrypted_chunk)
+            
+        return final_buffer.getvalue()
+
+    except Exception as e:
+        logger.error(f"Data download failed: {e}", exc_info=True)
+        return None
 
 async def download_file(client, group_id: int, file_details: dict, download_dir: str, task_id: str, 
                         progress_callback: Callable | None = None, completed_parts: Set[int] = None,

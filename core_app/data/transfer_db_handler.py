@@ -44,6 +44,7 @@ class TransferDBHandler:
                 sub_task_id TEXT PRIMARY KEY,
                 main_task_id TEXT NOT NULL,
                 status TEXT DEFAULT 'queued',
+                stage TEXT DEFAULT 'init',
                 local_path TEXT NOT NULL,
                 remote_id INTEGER,
                 total_size INTEGER DEFAULT 0,
@@ -81,10 +82,23 @@ class TransferDBHandler:
                 FOREIGN KEY (task_id) REFERENCES main_tasks (task_id) ON DELETE CASCADE
             )
             ''')
+
+            cursor.execute("DROP TABLE IF EXISTS task_thumbnails")
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS task_thumbnails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                target_folder_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                thumbnail_blob BLOB,
+                FOREIGN KEY (task_id) REFERENCES main_tasks (task_id) ON DELETE CASCADE
+            )
+            ''')
             
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sub_main ON sub_tasks(main_task_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_main_updated ON main_tasks(updated_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_artifacts_task ON created_artifacts(task_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_thumbs_task ON task_thumbnails(task_id)')
 
             conn.commit()
         except Exception as e:
@@ -113,6 +127,46 @@ class TransferDBHandler:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM created_artifacts WHERE task_id = ? ORDER BY id DESC", (task_id,))
             return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def update_sub_task_stage(self, sub_task_id: str, stage: str):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute("UPDATE sub_tasks SET stage = ? WHERE sub_task_id = ?", (stage, sub_task_id))
+        finally:
+            conn.close()
+
+    # --- Thumbnail Staging ---
+
+    def add_task_thumbnail(self, task_id: str, folder_id: int, file_id: int, thumb_blob: bytes):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute('''
+                INSERT INTO task_thumbnails (task_id, target_folder_id, file_id, thumbnail_blob)
+                VALUES (?, ?, ?, ?)
+                ''', (task_id, folder_id, file_id, thumb_blob))
+        except Exception as e:
+            logger.error(f"Error adding task thumbnail: {e}")
+        finally:
+            conn.close()
+
+    def get_task_thumbnails(self, task_id: str) -> List[Dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT task_id, target_folder_id, file_id, thumbnail_blob FROM task_thumbnails WHERE task_id = ?", (task_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+            
+    def delete_task_thumbnails(self, task_id: str):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute("DELETE FROM task_thumbnails WHERE task_id = ?", (task_id,))
         finally:
             conn.close()
 

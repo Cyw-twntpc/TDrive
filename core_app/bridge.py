@@ -179,6 +179,14 @@ class Bridge(QObject):
         logger.info("Frontend has confirmed login completion. Emitting signal to switch window.")
         self.login_and_initialization_complete.emit()
 
+    @Slot(int, result=dict)
+    def get_thumbnails(self, folder_id):
+        return self._async_call(self._service._file_service.get_thumbnails(folder_id))
+
+    @Slot(int, result=dict)
+    def get_preview(self, file_id):
+        return self._async_call(self._service._file_service.get_preview(file_id))
+
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
     def get_folder_contents(self, folder_id, request_id):

@@ -3,15 +3,19 @@ import asyncio
 import os
 import uuid
 import time
+import base64
 from typing import TYPE_CHECKING, List, Dict, Any, Callable, Optional
 from collections import defaultdict
 
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
+    from .gallery_manager import GalleryManager
 
 from . import utils
 from .transfer_controller import TransferController
 from .file_status_watcher import FileStatusWatcher
+from .image_processor import ImageProcessor
+from .gallery_manager import GalleryManager
 from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler
@@ -22,11 +26,12 @@ logger = logging.getLogger(__name__)
 CONCURRENCY_LIMIT = 3
 
 class TransferService:
-    def __init__(self, shared_state: 'SharedState'):
+    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager'):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
         self.controller = TransferController()
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.db, status_change_callback=lambda x: None)
+        self.gallery_manager = gallery_manager
         self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
         self._active_sub_tasks: Dict[str, set] = defaultdict(set)
         self.controller.reset_zombie_tasks()
@@ -36,6 +41,66 @@ class TransferService:
     def set_file_status_callback(self, callback: Callable):
         self.watcher._callback = callback
         self.watcher.start()
+
+    async def _finalize_thumbnails(self, client, main_task_id: str):
+        """
+        Aggregates thumbnails from transfer DB, updates thumbs.db (downloading old if needed),
+        and uploads the new version.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            logger.info(f"Processing thumbnails for task {main_task_id}...")
+            thumbs = await loop.run_in_executor(None, self.controller.db.get_task_thumbnails, main_task_id)
+            
+            if thumbs:
+                thumbs_by_folder = defaultdict(dict)
+                for item in thumbs:
+                    thumbs_by_folder[item['target_folder_id']][item['file_id']] = item['thumbnail_blob']
+                
+                for f_id, new_thumbs_map in thumbs_by_folder.items():
+                    # --- Fix Issue 2: Ensure existing DB is loaded ---
+                    if not self.gallery_manager.has_db(f_id):
+                        db_info = await loop.run_in_executor(None, self._get_folder_db_info, f_id)
+                        if db_info and db_info['thumbs_db_msg_id']:
+                            logger.info(f"Downloading existing thumbs.db for folder {f_id} before update...")
+                            old_db_bytes = await telegram_comms.download_data_as_bytes(
+                                client, self.shared_state.group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
+                            )
+                            if old_db_bytes:
+                                self.gallery_manager.load_thumbs_db_from_bytes(f_id, old_db_bytes)
+
+                    logger.info(f"Updating thumbs.db for folder {f_id} with {len(new_thumbs_map)} new items.")
+                    
+                    db_bytes = self.gallery_manager.update_thumbs_db(f_id, new_thumbs_map)
+                    
+                    if db_bytes:
+                        db_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, db_bytes)
+                        
+                        def hidden_progress(current, total):
+                            asyncio.create_task(self.controller.update_transferred_bytes(current))
+
+                        upload_info = await telegram_comms.upload_data_as_file(
+                            client, self.shared_state.group_id, db_bytes, db_hash,
+                            progress_callback=hidden_progress
+                        )
+                        
+                        if upload_info:
+                            msg_id = upload_info[0][1]
+                            await loop.run_in_executor(None, self.db.update_folder_thumbs_info, f_id, msg_id, db_hash)
+                
+                await loop.run_in_executor(None, self.controller.db.delete_task_thumbnails, main_task_id)
+                
+        except Exception as e:
+            logger.error(f"Error during thumbnail DB sync for task {main_task_id}: {e}", exc_info=True)
+
+    def _get_folder_db_info(self, folder_id):
+        conn = self.db._get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+            return cur.fetchone()
+        finally:
+            conn.close()
 
     # --- UPLOAD OPERATIONS ---
 
@@ -73,6 +138,10 @@ class TransferService:
             )
             
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
+
+        # Finalize thumbnails for each individual task (Fix Issue 1)
+        for item in upload_items:
+            await self._finalize_thumbnails(client, item['task_id'])
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
         base_folder_name = os.path.basename(local_folder_path)
@@ -205,6 +274,9 @@ class TransferService:
 
                 await utils.trigger_db_upload_in_background(self.shared_state)
                 
+                # --- Post-Upload: Thumbnail Database Sync ---
+                await self._finalize_thumbnails(client, main_task_id)
+                
                 task_info = self.controller.get_task(main_task_id)
                 if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
                     self.controller.mark_sub_task_completed(main_task_id, main_task_id)
@@ -301,7 +373,30 @@ class TransferService:
                 # because the frontend will interpret it as the total size of the main task (the folder).
                 # Sending 0 or -1 tells the frontend to keep the existing total size.
                 report_total = total_size if main_task_id == sub_task_id else 0
-                progress_callback(main_task_id, file_name, 0, report_total, 'transferring', 0, is_folder=False)
+                initial_transferred = 0 if main_task_id == sub_task_id else -1
+                progress_callback(main_task_id, file_name, initial_transferred, report_total, 'transferring', 0, is_folder=False)
+
+                # --- Image Processing (Phase 1 Integration) ---
+                thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
+                preview_msg_id = None
+                preview_hash = None
+
+                if preview_bytes:
+                    logger.info(f"Uploading preview image for {file_name}...")
+                    preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_bytes)
+                    
+                    # Hidden progress callback (updates traffic stats but not UI)
+                    def hidden_progress(current, total):
+                        asyncio.create_task(self.controller.update_transferred_bytes(current))
+
+                    preview_upload_info = await telegram_comms.upload_data_as_file(
+                        client, self.shared_state.group_id, preview_bytes, preview_hash,
+                        progress_callback=hidden_progress
+                    )
+                    
+                    if preview_upload_info:
+                        # Assuming single chunk for preview usually
+                        preview_msg_id = preview_upload_info[0][1]
 
                 split_files_info = await telegram_comms.upload_file_to_cloud(
                     client, self.shared_state.group_id, file_path, original_file_hash, 
@@ -314,9 +409,14 @@ class TransferService:
                 def _add_file_and_record():
                     fid = self.db.add_file(
                         parent_id, file_name, time.time(), 
-                        file_hash=original_file_hash, size=total_size, chunks_data=split_files_info
+                        file_hash=original_file_hash, size=total_size, chunks_data=split_files_info,
+                        preview_msg_id=preview_msg_id, preview_hash=preview_hash
                     )
                     self.controller.record_created_artifact(main_task_id, 'file', fid)
+                    
+                    if thumb_bytes:
+                        self.controller.db.add_task_thumbnail(main_task_id, parent_id, fid, thumb_bytes)
+                        
                     return fid
 
                 await loop.run_in_executor(None, _add_file_and_record)
@@ -508,7 +608,8 @@ class TransferService:
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
 
                 report_total = file_details['size'] if main_task_id == sub_task_id else 0
-                progress_callback(main_task_id, file_details['name'], 0, report_total, 'transferring', 0)
+                initial_transferred = 0 if main_task_id == sub_task_id else -1
+                progress_callback(main_task_id, file_details['name'], initial_transferred, report_total, 'transferring', 0)
 
                 await telegram_comms.download_file(
                     client, self.shared_state.group_id, file_details, os.path.dirname(save_path),

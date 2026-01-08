@@ -42,6 +42,8 @@ class DatabaseHandler:
             name TEXT NOT NULL,
             total_size REAL DEFAULT 0,
             modif_date REAL,
+            thumbs_db_msg_id INTEGER,
+            thumbs_db_hash TEXT,
             FOREIGN KEY (parent_id) REFERENCES folders (id) ON DELETE CASCADE,
             UNIQUE (parent_id, name)
         )
@@ -54,7 +56,9 @@ class DatabaseHandler:
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hash TEXT UNIQUE NOT NULL,
-            size REAL NOT NULL
+            size REAL NOT NULL,
+            preview_msg_id INTEGER,
+            preview_hash TEXT
         )
         ''')
 
@@ -264,16 +268,17 @@ class DatabaseHandler:
             folders = []
             files = []
 
-            cursor.execute("SELECT id, name, total_size, modif_date FROM folders WHERE parent_id = ?", (folder_id,))
+            cursor.execute("SELECT id, name, total_size, modif_date, thumbs_db_msg_id FROM folders WHERE parent_id = ?", (folder_id,))
             for row in cursor.fetchall():
                 folders.append({
                     "id": row['id'], "name": row['name'], "raw_size": row['total_size'],
                     "size": self._format_size(row['total_size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
+                    "modif_date": self._format_timestamp(row['modif_date']),
+                    "thumbs_db_msg_id": row['thumbs_db_msg_id']
                 })
 
             cursor.execute("""
-                SELECT m.id, m.name, f.size, m.modif_date 
+                SELECT m.id, m.name, f.size, m.modif_date, f.preview_msg_id 
                 FROM file_folder_map m
                 JOIN files f ON m.file_id = f.id
                 WHERE m.folder_id = ?
@@ -283,7 +288,8 @@ class DatabaseHandler:
                 files.append({
                     "id": row['id'], "name": row['name'], "raw_size": row['size'],
                     "size": self._format_size(row['size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
+                    "modif_date": self._format_timestamp(row['modif_date']),
+                    "preview_msg_id": row['preview_msg_id']
                 })
             
             return {"folders": folders, "files": files}
@@ -337,7 +343,9 @@ class DatabaseHandler:
             if conn:
                 conn.close()
 
-    def add_file(self, folder_id: int, name: str, modif_date_ts: float, file_id: int | None = None, file_hash: str | None = None, size: float | None = None, chunks_data: list | None = None):
+    def add_file(self, folder_id: int, name: str, modif_date_ts: float, file_id: int | None = None, 
+                 file_hash: str | None = None, size: float | None = None, chunks_data: list | None = None,
+                 preview_msg_id: int | None = None, preview_hash: str | None = None):
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
 
@@ -360,8 +368,8 @@ class DatabaseHandler:
                         raise ValueError("file_hash and size are required when creating new file content.")
                     
                     cursor.execute(
-                        "INSERT INTO files (hash, size) VALUES (?, ?)",
-                        (file_hash, size)
+                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash) VALUES (?, ?, ?, ?)",
+                        (file_hash, size, preview_msg_id, preview_hash)
                     )
                     target_file_id = cursor.lastrowid
                     target_size = size
@@ -396,7 +404,7 @@ class DatabaseHandler:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT m.folder_id, m.file_id, f.size 
+                    SELECT m.folder_id, m.file_id, f.size, f.preview_msg_id 
                     FROM file_folder_map m
                     JOIN files f ON m.file_id = f.id
                     WHERE m.id = ?
@@ -420,8 +428,11 @@ class DatabaseHandler:
 
                 message_ids = []
                 if not still_referenced:
+                    if map_info['preview_msg_id']:
+                        message_ids.append(map_info['preview_msg_id'])
+                        
                     cursor.execute("SELECT message_id FROM chunks WHERE file_id = ?", (file_id,))
-                    message_ids = [row['message_id'] for row in cursor.fetchall()]
+                    message_ids.extend([row['message_id'] for row in cursor.fetchall()])
                     cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
 
                 self._increment_db_version(cursor)
@@ -436,10 +447,14 @@ class DatabaseHandler:
             with conn:
                 cursor = conn.cursor()
                 
-                cursor.execute("SELECT parent_id, total_size FROM folders WHERE id = ?", (folder_id,))
+                cursor.execute("SELECT parent_id, total_size, thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
                 folder_info = cursor.fetchone()
                 if not folder_info:
                     return []
+
+                all_message_ids = []
+                if folder_info['thumbs_db_msg_id']:
+                    all_message_ids.append(folder_info['thumbs_db_msg_id'])
 
                 get_descendants_query = """
                 WITH RECURSIVE folder_hierarchy(id) AS (
@@ -453,7 +468,7 @@ class DatabaseHandler:
                 all_folder_ids = [row['id'] for row in cursor.fetchall()]
                 
                 if not all_folder_ids:
-                    return []
+                    return all_message_ids
 
                 folder_placeholders = ','.join(['?'] * len(all_folder_ids))
 
@@ -464,8 +479,6 @@ class DatabaseHandler:
                 cursor.execute(f"DELETE FROM folders WHERE id IN ({folder_placeholders})", all_folder_ids)
                 cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,))
 
-                all_message_ids = []
-                
                 if affected_content_ids:
                     content_placeholders = ','.join(['?'] * len(affected_content_ids))
                     cursor.execute(f"SELECT DISTINCT file_id FROM file_folder_map WHERE file_id IN ({content_placeholders})", affected_content_ids)
@@ -474,8 +487,15 @@ class DatabaseHandler:
 
                     if orphan_content_ids:
                         orphan_placeholders = ','.join(['?'] * len(orphan_content_ids))
+                        
+                        # Chunks messages
                         cursor.execute(f"SELECT message_id FROM chunks WHERE file_id IN ({orphan_placeholders})", orphan_content_ids)
-                        all_message_ids = [row['message_id'] for row in cursor.fetchall()]
+                        all_message_ids.extend([row['message_id'] for row in cursor.fetchall()])
+                        
+                        # Preview messages
+                        cursor.execute(f"SELECT preview_msg_id FROM files WHERE id IN ({orphan_placeholders}) AND preview_msg_id IS NOT NULL", orphan_content_ids)
+                        all_message_ids.extend([row['preview_msg_id'] for row in cursor.fetchall()])
+                        
                         cursor.execute(f"DELETE FROM files WHERE id IN ({orphan_placeholders})", orphan_content_ids)
 
                 if folder_info['parent_id'] is not None:
@@ -812,7 +832,7 @@ class DatabaseHandler:
             conn = self._get_conn()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash 
+                SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash
                 FROM file_folder_map m
                 JOIN files f ON m.file_id = f.id
                 WHERE m.id = ?
@@ -831,6 +851,8 @@ class DatabaseHandler:
                 "name": file_row['name'],
                 "size": file_row['size'],
                 "hash": file_row['hash'],
+                "preview_msg_id": file_row['preview_msg_id'],
+                "preview_hash": file_row['preview_hash'],
                 "chunks": [{"part_num": r['part_num'], "message_id": r['message_id'], "part_hash": r['part_hash']} for r in chunks_data]
             }
         except Exception as e:
@@ -839,6 +861,28 @@ class DatabaseHandler:
         finally:
             if conn:
                 conn.close()
+
+    def update_folder_thumbs_info(self, folder_id: int, msg_id: int, hash_val: str):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?",
+                    (msg_id, hash_val, folder_id)
+                )
+        finally:
+            conn.close()
+
+    def update_file_preview_info(self, file_id: int, msg_id: int, hash_val: str):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?",
+                    (msg_id, hash_val, file_id)
+                )
+        finally:
+            conn.close()
 
     def get_folder_contents_recursive(self, folder_id: int) -> dict | None:
         conn = None

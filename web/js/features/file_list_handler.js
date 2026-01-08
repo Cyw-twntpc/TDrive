@@ -128,13 +128,138 @@ const FileListHandler = {
     _updateFileListDOM(contents, AppState) {
         this.fileListBodyEl.innerHTML = '';
         AppState.selectedItems.length = 0;
-        this.updateToolbarState(AppState); // Ensure toolbar is hidden on refresh
+        this.updateToolbarState(AppState); 
         
+        const isGrid = AppState.viewMode === 'grid';
+        if (isGrid) {
+            this.fileListBodyEl.classList.add('grid-view');
+        } else {
+            this.fileListBodyEl.classList.remove('grid-view');
+        }
+
         const fragment = document.createDocumentFragment();
-        contents.folders.forEach(folder => fragment.appendChild(this._createItemElement(folder, true, AppState)));
-        contents.files.forEach(file => fragment.appendChild(this._createItemElement(file, false, AppState)));
+        const createFn = isGrid ? this._createGridItemElement.bind(this) : this._createItemElement.bind(this);
+
+        contents.folders.forEach(folder => fragment.appendChild(createFn(folder, true, AppState)));
+        contents.files.forEach(file => fragment.appendChild(createFn(file, false, AppState)));
         
         this.fileListBodyEl.appendChild(fragment);
+
+        if (contents.files.length > 0) {
+            this.loadThumbnails(AppState.currentFolderId);
+        }
+    },
+
+    async loadThumbnails(folderId) {
+        if (!folderId) return;
+        try {
+            const result = await ApiService.getThumbnails(folderId);
+            console.log("[FileListHandler] loadThumbnails result:", result);
+            
+            if (result && result.success && result.thumbnails) {
+                AppState.currentThumbnails = result.thumbnails; // Cache for Gallery
+                
+                Object.entries(result.thumbnails).forEach(([fileId, b64]) => {
+                    const src = `data:image/jpeg;base64,${b64}`;
+                    
+                    // Update Grid View
+                    const gridImg = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"] .grid-thumb-img`);
+                    if (gridImg) {
+                        gridImg.src = src;
+                        gridImg.classList.remove('hidden');
+                        const gridIcon = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"] .grid-thumb-icon`);
+                        if (gridIcon) gridIcon.classList.add('hidden');
+                    }
+
+                    // Update List View
+                    const listImg = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"] .list-thumb-img`);
+                    if (listImg) {
+                        listImg.src = src;
+                        listImg.classList.remove('hidden');
+                        const listIcon = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"] .list-thumb-icon`);
+                        if (listIcon) listIcon.classList.add('hidden');
+                    }
+                });
+            }
+        } catch (e) {
+            console.error("Failed to load thumbnails:", e);
+        }
+    },
+
+    _createGridItemElement(item, isFolder, AppState) {
+        const itemEl = document.createElement('div');
+        itemEl.className = 'file-item grid-item';
+        itemEl.draggable = false;
+        itemEl.dataset.id = item.id;
+        itemEl.dataset.name = item.name;
+        itemEl.dataset.type = isFolder ? 'folder' : 'file';
+        
+        if (item.isUploading) itemEl.classList.add('is-uploading');
+
+        // --- Drag & Drop Logic (Same as List) ---
+        itemEl.addEventListener('mousedown', (e) => {
+            if (itemEl.classList.contains('is-uploading')) return;
+            if (itemEl.classList.contains('selected')) itemEl.draggable = true;
+            else itemEl.draggable = false;
+        });
+        itemEl.addEventListener('mouseup', () => { itemEl.draggable = false; });
+        
+        itemEl.addEventListener('dragstart', (e) => {
+            if (itemEl.classList.contains('is-uploading') || !itemEl.draggable) {
+                e.preventDefault(); return;
+            }
+            const isSelected = itemEl.classList.contains('selected');
+            if (!isSelected) {
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+                AppState.selectedItems.length = 0;
+                itemEl.classList.add('selected');
+                AppState.selectedItems.push({ ...item, type: isFolder ? 'folder' : 'file' });
+            }
+            AppState.isDragging = true;
+            AppState.draggedItems = [...AppState.selectedItems];
+            const ghost = this._createDragGhost(AppState.draggedItems);
+            document.body.appendChild(ghost);
+            e.dataTransfer.setDragImage(ghost, 0, 0);
+            setTimeout(() => document.body.removeChild(ghost), 0);
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', JSON.stringify(AppState.draggedItems.map(i => i.id)));
+            requestAnimationFrame(() => {
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.add('dragging'));
+            });
+        });
+        itemEl.addEventListener('dragend', (e) => {
+            itemEl.draggable = false;
+            AppState.isDragging = false;
+            AppState.draggedItems = [];
+            document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
+        });
+
+        if (isFolder) {
+            this._setupDropTarget(itemEl, item.id);
+            itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
+        } else {
+            // Image Double Click -> Gallery
+            const ext = item.name.split('.').pop().toLowerCase();
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    // Dispatch event to open gallery
+                    itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
+        }
+
+        const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
+        
+        itemEl.innerHTML = `
+            <div class="grid-thumb-container">
+                <i class="${iconClass} grid-thumb-icon"></i>
+                <img class="grid-thumb-img hidden" draggable="false" />
+            </div>
+            <div class="grid-name" title="${item.name}">${item.name}</div>
+        `;
+
+        this._addSelectionListener(itemEl, item, isFolder ? 'folder' : 'file', AppState);
+        return itemEl;
     },
     
     /**
@@ -227,9 +352,14 @@ const FileListHandler = {
 
         // Determine the correct icon based on item type or upload status.
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
-        let iconHtml = `<i class="${iconClass}"></i>`;
+        let iconHtml = `<i class="${iconClass} list-thumb-icon"></i>`;
+        
+        // Thumbnail Image (Hidden by default)
+        let thumbHtml = `<img class="list-thumb-img hidden" draggable="false" />`;
+
         if (item.isUploading) {
-             iconHtml = `<i class="fas fa-spinner fa-spin"></i>`;
+             iconHtml = `<i class="fas fa-spinner fa-spin list-thumb-icon"></i>`;
+             thumbHtml = ''; // No thumb while uploading
         }
 
         // If in search mode, generate and display the item's relative path.
@@ -270,6 +400,7 @@ const FileListHandler = {
             <div class="file-item-col name">
                 <div class="name-col-main">
                     ${iconHtml}
+                    ${thumbHtml}
                     <div class="name-and-path">
                         <div class="name-wrapper">${nameHtml}</div>
                         ${pathHtml} 
@@ -289,6 +420,14 @@ const FileListHandler = {
         // Add a double-click listener for folders to navigate into them.
         if (isFolder) {
             itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
+        } else {
+            // [Added] Image Double Click -> Gallery (List View)
+            const ext = item.name.split('.').pop().toLowerCase();
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
         }
 
         this._addSelectionListener(itemEl, item, isFolder ? 'folder' : 'file', AppState);

@@ -8,6 +8,7 @@ from .services.auth_service import AuthService
 from .services.file_service import FileService
 from .services.folder_service import FolderService
 from .services.transfer_service import TransferService
+from .services.gallery_manager import GalleryManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +28,14 @@ class TDriveService:
                 self._shared_state.loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(self._shared_state.loop)
 
+        # Initialize Gallery Manager (Shared Instance)
+        self.gallery_manager = GalleryManager()
+
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
-        self._file_service = FileService(self._shared_state)
+        self._file_service = FileService(self._shared_state, self.gallery_manager)
         self._folder_service = FolderService(self._shared_state)
-        self._transfer_service = TransferService(self._shared_state)
+        self._transfer_service = TransferService(self._shared_state, self.gallery_manager)
 
     # --- Helper: Progress Adapter ---
     
@@ -73,14 +77,18 @@ class TDriveService:
                     data = {
                         "id": args[0],
                         "name": args[1],
-                        "transferred": args[2],
-                        "total": args[3],
                         "status": args[4],
                         "speed": args[5],
                         "is_folder": kwargs.get("is_folder", False),
                         "error_message": kwargs.get("message", ""),
                         "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
+                    
+                    if args[2] >= 0:
+                        data["transferred"] = args[2]
+                    
+                    if args[3] > 0:
+                        data["total"] = args[3]
 
             # Type 2: Delta Update (Progress)
             elif len(args) == 3:

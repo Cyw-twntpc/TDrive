@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
+    from core_app.services.gallery_manager import GalleryManager
 
 from . import utils
 from core_app.common import errors
@@ -14,8 +15,111 @@ from core_app.data.db_handler import DatabaseHandler
 logger = logging.getLogger(__name__)
 
 class FileService:
-    def __init__(self, shared_state: 'SharedState'):
+    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager'):
         self.shared_state = shared_state
+        self.gallery_manager = gallery_manager
+
+    # --- Gallery Integration ---
+
+    async def get_thumbnails(self, folder_id: int) -> Dict[str, Any]:
+        """Returns base64 thumbnails for the folder. Downloads DB if not in memory."""
+        try:
+            if not self.gallery_manager.has_db(folder_id):
+                # Try to load from cloud
+                def _get_db_info():
+                    db = DatabaseHandler()
+                    # We can reuse get_folder_contents or make a specific query.
+                    # get_folder_contents returns a dict with 'folders' list, we need the parent folder's info.
+                    # Actually, get_folder_contents gets children. We need info of the folder_id itself.
+                    # We need a method to get single folder info or use a raw query here.
+                    conn = db._get_conn()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+                        return cur.fetchone()
+                    finally:
+                        conn.close()
+
+                db_info = await asyncio.to_thread(_get_db_info)
+                
+                if db_info and db_info['thumbs_db_msg_id']:
+                    client = await utils.ensure_client_connected(self.shared_state)
+                    if client:
+                        logger.info(f"Downloading thumbs.db for folder {folder_id}...")
+                        db_bytes = await telegram_comms.download_data_as_bytes(
+                            client, self.shared_state.group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
+                        )
+                        if db_bytes:
+                            self.gallery_manager.load_thumbs_db_from_bytes(folder_id, db_bytes)
+            
+            thumbs = self.gallery_manager.get_folder_thumbnails(folder_id)
+            logger.info(f"FileService returning thumbnails for {folder_id}: Type={type(thumbs)}")
+            return {"success": True, "thumbnails": thumbs}
+        except Exception as e:
+            logger.error(f"Error fetching thumbnails: {e}", exc_info=True)
+            return {"success": False, "thumbnails": {}}
+
+    async def get_preview(self, file_id: int) -> Dict[str, Any]:
+        try:
+            # 1. Check Cache
+            preview_b64 = self.gallery_manager.get_cached_preview(file_id)
+            if preview_b64:
+                return {"success": True, "preview": preview_b64}
+
+            # 2. If not in cache, check DB for preview info
+            def _get_file_preview_info():
+                db = DatabaseHandler()
+                conn = db._get_conn()
+                try:
+                    cur = conn.cursor()
+                    # Since file_id here refers to the 'files' table ID (content ID) or 'file_folder_map' ID?
+                    # The API likely receives the Map ID (item.id from frontend).
+                    # Let's verify: Frontend sends `item.id`. This is Map ID.
+                    # We need to join to get `files` table info.
+                    query = """
+                        SELECT f.preview_msg_id, f.preview_hash, f.id as content_id
+                        FROM file_folder_map m
+                        JOIN files f ON m.file_id = f.id
+                        WHERE m.id = ?
+                    """
+                    cur.execute(query, (file_id,))
+                    return cur.fetchone()
+                finally:
+                    conn.close()
+
+            info = await asyncio.to_thread(_get_file_preview_info)
+            
+            if not info or not info['preview_msg_id']:
+                return {"success": False, "message": "No preview available"}
+
+            # 3. Download
+            client = await utils.ensure_client_connected(self.shared_state)
+            if not client:
+                return {"success": False, "message": "Client not connected"}
+
+            logger.info(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
+            preview_bytes = await telegram_comms.download_data_as_bytes(
+                client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
+            )
+
+            if preview_bytes:
+                # 4. Cache and Return
+                # We cache by Map ID or Content ID? 
+                # GalleryManager cache uses `file_id`. 
+                # To be consistent with frontend requests, let's use the Map ID (which is unique per item in folder).
+                # However, if multiple maps point to same file, we duplicate cache. 
+                # Ideally cache by content_id, but frontend sends map_id.
+                # Let's stick to Map ID for now as the key for simplicity in 1:1 mapping with UI.
+                self.gallery_manager.cache_preview(file_id, preview_bytes)
+                import base64
+                b64_str = base64.b64encode(preview_bytes).decode('utf-8')
+                return {"success": True, "preview": b64_str}
+            
+            return {"success": False, "message": "Download failed"}
+
+        except Exception as e:
+            logger.error(f"Error fetching preview: {e}", exc_info=True)
+            return {"success": False}
 
     async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
         logger.info(f"Fetching contents for folder_id: {folder_id} from database.")
