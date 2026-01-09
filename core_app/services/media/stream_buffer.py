@@ -2,9 +2,9 @@ import asyncio
 import logging
 import io
 from collections import OrderedDict
-from typing import Optional, Dict, List, Tuple
+from typing import Dict
 
-from core_app.api import telegram_comms, crypto_handler
+from core_app.api import telegram_comms
 from core_app.api import file_processor as fp
 from core_app.data.db_handler import DatabaseHandler
 

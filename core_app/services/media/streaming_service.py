@@ -6,7 +6,7 @@ from aiohttp import web
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core_app.services.stream_buffer import StreamBuffer
+    from .stream_buffer import StreamBuffer
     from core_app.data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)

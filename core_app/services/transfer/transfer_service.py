@@ -9,13 +9,13 @@ from collections import defaultdict
 
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
-    from .gallery_manager import GalleryManager
+    from ..media.gallery_manager import GalleryManager
 
-from . import utils
+from ..common import utils
 from .transfer_controller import TransferController
-from .file_status_watcher import FileStatusWatcher
-from .image_processor import ImageProcessor
-from .gallery_manager import GalleryManager
+from ..file_system.file_status_watcher import FileStatusWatcher
+from ..media.image_processor import ImageProcessor
+from ..media.gallery_manager import GalleryManager
 from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.data.db_handler import DatabaseHandler

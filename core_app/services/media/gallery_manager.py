@@ -4,8 +4,6 @@ import base64
 from typing import Dict, Optional
 from collections import OrderedDict
 
-# Import DB Handler if needed for future persistence logic, 
-# though this manager primarily handles transient memory DBs.
 from core_app.data.db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)

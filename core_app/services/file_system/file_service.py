@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
-    from core_app.services.gallery_manager import GalleryManager
+    from ..media.gallery_manager import GalleryManager
 
-from . import utils
+from ..common import utils
 from core_app.common import errors
 from core_app.api import telegram_comms
 from core_app.data.db_handler import DatabaseHandler

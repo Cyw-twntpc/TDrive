@@ -1,5 +1,4 @@
 import logging
-import io
 from typing import Optional, Tuple
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
