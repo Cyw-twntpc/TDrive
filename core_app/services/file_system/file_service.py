@@ -179,7 +179,7 @@ class FileService:
             await asyncio.to_thread(_sync_create)
             
             logger.info(f"Successfully created folder '{folder_name}' under parent_id {parent_id}.")
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True}
         except errors.ItemAlreadyExistsError as e:
             logger.warning(f"Failed to create folder '{folder_name}': {e}")
@@ -204,7 +204,7 @@ class FileService:
             await asyncio.to_thread(_sync_rename)
             
             logger.info(f"Successfully renamed {item_type} with id {item_id} to '{new_name}'.")
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True}
         except errors.ItemAlreadyExistsError as e:
             logger.warning(f"Failed to rename item {item_id}: {e}")
@@ -227,7 +227,7 @@ class FileService:
             await asyncio.to_thread(_sync_soft_delete)
             
             logger.info(f"Successfully moved {len(items)} items to Recycle Bin.")
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True, "message": f"成功將 {len(items)} 個項目移至回收桶。"}
         
         except errors.PathNotFoundError as e:
@@ -255,7 +255,7 @@ class FileService:
             restored_names = await asyncio.to_thread(_sync_restore)
             
             logger.info(f"Successfully restored {len(items)} items.")
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True, "message": f"成功還原 {len(items)} 個項目。"}
 
         except errors.PathNotFoundError as e:
@@ -311,9 +311,7 @@ class FileService:
                     chunk = unique_ids[i:i + 100]
                     await client.delete_messages(self.shared_state.group_id, chunk)
             
-            # 5. Sync DB Snapshot
-            await utils.trigger_db_upload_in_background(self.shared_state)
-
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True, "message": f"成功永久刪除 {len(items)} 個項目。"}
 
         except errors.PathNotFoundError as e:
@@ -359,7 +357,7 @@ class FileService:
                     chunk = unique_ids[i:i + 100]
                     await client.delete_messages(self.shared_state.group_id, chunk)
             
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True, "message": "回收桶已清空。"}
 
         except Exception as e:
@@ -420,7 +418,7 @@ class FileService:
 
             moved_count = await asyncio.to_thread(_sync_move)
                 
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Adaptive sync handled by DatabaseHandler
             return {"success": True, "message": f"成功移動 {moved_count} 個項目。"}
 
         except errors.PathNotFoundError as e:

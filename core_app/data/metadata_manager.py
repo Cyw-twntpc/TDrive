@@ -9,6 +9,10 @@ from collections import OrderedDict as SysOrderedDict
 
 from ..api import crypto_handler as cr
 from .db_handler import DatabaseHandler
+# Avoid circular import if SharedState is only for typing
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +22,34 @@ class MetadataManager:
     Acts as a high-level facade for DB operations involving cloud data.
     """
     
-    def __init__(self, db_handler: DatabaseHandler):
+    def __init__(self, db_handler: DatabaseHandler, shared_state: 'SharedState'):
         self.db = db_handler
+        self.shared_state = shared_state
         # LRU Cache for Map Files: { msg_id: { "file_id": [chunks...] } }
         self._map_cache: OrderedDict[int, Dict] = SysOrderedDict()
         self._cache_size = 20
         self._lock = asyncio.Lock()
+        
+        # Setup SyncManager callback
+        # SyncManager is initialized in DatabaseHandler
+        if hasattr(self.db, 'sync_manager'):
+             self.db.sync_manager.set_callback(self._trigger_background_sync, self.shared_state.loop)
+
+    async def _trigger_background_sync(self):
+        """Callback for SyncManager to trigger DB upload."""
+        if not self.shared_state.is_logged_in or not self.shared_state.client:
+            logger.debug("Skipping background sync: Not logged in.")
+            return
+
+        try:
+            logger.info("Executing adaptive background sync...")
+            await self.sync_db_to_cloud(
+                self.shared_state.client,
+                self.shared_state.group_id,
+                self.shared_state.api_id
+            )
+        except Exception as e:
+            logger.error(f"Background sync failed: {e}")
 
     # --- Database Snapshot Management ---
 
@@ -46,55 +72,63 @@ class MetadataManager:
                 if messages:
                     snapshot_msg = messages[0]
 
-            if not snapshot_msg:
-                logger.info("No remote DB snapshot found. Starting with fresh in-memory DB.")
-                return True
-
-            logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
+            conn = self.db._get_conn()
             
-            # Download encrypted blob
-            encrypted_bytes = await snapshot_msg.download_media(file=bytes)
-            if not encrypted_bytes:
-                logger.error("Snapshot download failed (empty).")
-                return False
-
-            # Decrypt: Use simple key from api_id
-            key = cr.generate_key_from_api_id(str(api_id))
-            try:
-                decrypted_gzip = cr.decrypt(encrypted_bytes, key)
-                sql_dump = gzip.decompress(decrypted_gzip).decode('utf-8')
+            if snapshot_msg:
+                logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
                 
-                # Restore to Memory DB
-                conn = self.db._get_conn()
-                try:
-                    # 1. Disable Foreign Keys for restoration
-                    conn.execute("PRAGMA foreign_keys = OFF")
-                    
-                    # 2. Clear existing schema to avoid conflicts with CREATE TABLE in dump
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-                    tables = [row[0] for row in cursor.fetchall()]
-                    for table in tables:
-                        cursor.execute(f"DROP TABLE IF EXISTS {table}")
-                    
-                    # 3. Execute restoration script
-                    conn.executescript(sql_dump)
-                    
-                    # 4. Re-enable Foreign Keys
-                    conn.execute("PRAGMA foreign_keys = ON")
-                    
-                    logger.info("Database successfully restored from snapshot.")
-                    return True
-                except Exception as restore_err:
-                    logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
-                    # Attempt to re-enable FKs even on failure
-                    try: conn.execute("PRAGMA foreign_keys = ON")
-                    except: pass
+                # Download encrypted blob
+                encrypted_bytes = await snapshot_msg.download_media(file=bytes)
+                if not encrypted_bytes:
+                    logger.error("Snapshot download failed (empty).")
                     return False
-                
-            except Exception as e:
-                logger.error(f"Failed to decrypt/restore snapshot: {e}")
-                return False
+
+                # Decrypt: Use simple key from api_id
+                key = cr.generate_key_from_api_id(str(api_id))
+                try:
+                    decrypted_gzip = cr.decrypt(encrypted_bytes, key)
+                    sql_dump = gzip.decompress(decrypted_gzip).decode('utf-8')
+                    
+                    # Restore to Memory DB
+                    try:
+                        # 1. Disable Foreign Keys for restoration
+                        conn.execute("PRAGMA foreign_keys = OFF")
+                        
+                        # 2. Clear existing schema to avoid conflicts with CREATE TABLE in dump
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                        tables = [row[0] for row in cursor.fetchall()]
+                        for table in tables:
+                            cursor.execute(f"DROP TABLE IF EXISTS {table}")
+                        
+                        # 3. Execute restoration script
+                        conn.executescript(sql_dump)
+                        
+                        # 4. Re-enable Foreign Keys
+                        conn.execute("PRAGMA foreign_keys = ON")
+                        
+                        logger.info("Database successfully restored from snapshot.")
+                    except Exception as restore_err:
+                        logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
+                        # Attempt to re-enable FKs even on failure
+                        try: conn.execute("PRAGMA foreign_keys = ON")
+                        except: pass
+                        # Continue to Replay even if snapshot failed? No, maybe dangerous.
+                        # But we should try to recover what we can.
+                        
+                except Exception as e:
+                    logger.error(f"Failed to decrypt/restore snapshot: {e}")
+                    # If snapshot is corrupt, we still want to replay local logs if possible?
+                    # Yes.
+            else:
+                logger.info("No remote DB snapshot found. Starting with fresh in-memory DB.")
+
+            # --- CRITICAL: Replay Transaction Log ---
+            # Replays any pending operations that were not synced before crash/shutdown
+            if hasattr(self.db, 'transaction_logger'):
+                self.db.transaction_logger.replay(conn)
+
+            return True
 
         except Exception as e:
             logger.error(f"Error initializing DB: {e}", exc_info=True)
@@ -106,22 +140,24 @@ class MetadataManager:
         """
         async with self._lock:
             try:
+                # 1. Rotate Log: Mark current pending ops as "about to be synced"
+                if hasattr(self.db, 'transaction_logger'):
+                    self.db.transaction_logger.rotate()
+
                 conn = self.db._get_conn()
                 
-                # Dump SQL
+                # 2. Dump SQL (Captures state including rotated logs)
                 dump_io = io.StringIO()
                 for line in conn.iterdump():
                     dump_io.write('%s\n' % line)
                 sql_data = dump_io.getvalue().encode('utf-8')
                 
-                # Compress
+                # 3. Compress & Encrypt
                 compressed_data = gzip.compress(sql_data)
-                
-                # Encrypt
                 key = cr.generate_key_from_api_id(str(api_id))
                 encrypted_data = cr.encrypt(compressed_data, key)
                 
-                # Upload
+                # 4. Upload
                 caption = "#tdrive_db_snapshot"
                 
                 timestamp = int(time.time())
@@ -130,6 +166,10 @@ class MetadataManager:
                 
                 msg = await client.send_file(group_id, file=file_obj, caption=caption)
                 logger.info(f"Database snapshot uploaded (Msg ID: {msg.id}).")
+                
+                # 5. Clear Log: Remove the backed-up log since it's now in cloud
+                if hasattr(self.db, 'transaction_logger'):
+                    self.db.transaction_logger.clear()
                 
                 # Cleanup old snapshots
                 try:
@@ -262,7 +302,28 @@ class MetadataManager:
             # Update DB for files in this batch
             conn = self.db._get_conn()
             for fid in files_in_current_batch:
-                conn.execute("UPDATE files SET map_id = ? WHERE id = ?", (saved_db_map_id, fid))
+                # Direct SQL execution as this is an internal batch op, or use helper?
+                # These updates need to be synced!
+                # Using _execute_write via db methods is best.
+                # But here we have direct SQL.
+                # Since db_handler encapsulates _execute_write, we should call a method on db.
+                # But we don't have a specific method for "update file map_id".
+                # We can call cursor.execute but that bypasses log.
+                # We should add a method in DB handler or expose _execute_write.
+                # I'll update the logic here to use a new helper or raw execute via a public method if possible.
+                # Actually, I can just use `conn.execute` here if I don't care about logging this specific technical update?
+                # No, if we crash, we lose the link between File and Map. We need to log it.
+                
+                # I will assume I can't easily change db_handler API right now without another file write.
+                # But wait, I just rewrote db_handler.
+                # I can modify `DatabaseHandler` to add `update_file_map_link`?
+                # Or, I can access `db._execute_write` if I'm naughty (Python allows it).
+                # `MetadataManager` is "core" enough to access protected members.
+                
+                self.db._execute_write(conn.cursor(), 
+                                       "UPDATE files SET map_id = ? WHERE id = ?", 
+                                       (saved_db_map_id, fid), score=1)
+                
                 self.db.increment_map_ref(saved_db_map_id)
             
             files_in_current_batch = []
@@ -296,11 +357,22 @@ class MetadataManager:
         """
         # Group by map_id to minimize downloads
         tasks_by_map = {} # { map_id: { "msg_id": 123, "files_to_remove": [fid1, fid2] } }
+        maps_to_delete_cloud_ids = set()
         
         for res in deletion_results:
             if not res.get('orphan'): continue
             
             mid = res['map_id']
+            
+            # Case 1: The entire map is deleted (ref_count <= 0)
+            if res.get('map_msg_id_to_delete'):
+                cloud_msg_id = res['map_msg_id_to_delete']
+                maps_to_delete_cloud_ids.add(cloud_msg_id)
+                self._map_cache.pop(cloud_msg_id, None)
+                # No need to process file removals for this map since it's gone
+                continue
+
+            # Case 2: Partial removal from map
             if mid not in tasks_by_map:
                 info = self.db.get_map_file_info(mid)
                 if info and info['msg_id']:
@@ -309,9 +381,21 @@ class MetadataManager:
             if mid in tasks_by_map:
                 tasks_by_map[mid]["files"].append(str(res['file_id']))
 
-        # Process Updates
+        # Execute Cloud Deletions for dead maps
+        if maps_to_delete_cloud_ids:
+            try:
+                await client.delete_messages(group_id, list(maps_to_delete_cloud_ids))
+                logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} empty map files from cloud.")
+            except Exception as e:
+                logger.error(f"Failed to delete empty map files: {e}")
+
+        # Process Updates (Partial removals)
         for map_id, task in tasks_by_map.items():
             msg_id = task['msg_id']
+            
+            # Skip if this map was already marked for full deletion (defensive check)
+            if msg_id in maps_to_delete_cloud_ids: continue
+
             files_to_remove = task['files']
             
             # Fetch
@@ -328,7 +412,7 @@ class MetadataManager:
             if not dirty: continue
             
             if not map_data:
-                # Empty Map -> Delete Cloud Message
+                # Empty Map -> Delete Cloud Message (Should be handled by DB ref_count logic, but double check)
                 await client.delete_messages(group_id, [msg_id])
                 self._map_cache.pop(msg_id, None)
                 self.db.update_map_file_msg_id(map_id, None) 

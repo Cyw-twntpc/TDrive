@@ -38,7 +38,7 @@ class TDriveService:
 
         # Initialize Data Layer
         self.db_handler = DatabaseHandler() # Singleton, In-Memory
-        self.metadata_manager = MetadataManager(self.db_handler)
+        self.metadata_manager = MetadataManager(self.db_handler, self._shared_state)
         self._shared_state.metadata_manager = self.metadata_manager
         
         # Initialize Gallery Manager (Shared Instance)

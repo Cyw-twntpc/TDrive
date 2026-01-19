@@ -118,43 +118,59 @@ class TransferService:
                 progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗")
             return
 
-        tasks_to_run = []
-        for item in upload_items:
-            task_id = item['task_id']
-            file_path = item['local_path']
-            file_name = os.path.basename(file_path)
-            
-            try:
-                total_size = os.path.getsize(file_path)
-            except OSError:
-                total_size = 0
+        # Suppress sync during batch upload
+        self.db.sync_manager.set_busy(True)
+        
+        try:
+            tasks_to_run = []
+            for item in upload_items:
+                task_id = item['task_id']
+                file_path = item['local_path']
+                file_name = os.path.basename(file_path)
+                
+                try:
+                    total_size = os.path.getsize(file_path)
+                except OSError:
+                    total_size = 0
 
-            self.controller.add_upload_task(
-                task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None
-            )
-
-            progress_callback(task_id, file_name, 0, total_size, 'queued', 0, is_folder=False)
-
-            tasks_to_run.append(
-                self._upload_single_file(
-                    client, task_id, task_id, 
-                    file_path, parent_id,
-                    progress_callback
+                self.controller.add_upload_task(
+                    task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None
                 )
-            )
+
+                progress_callback(task_id, file_name, 0, total_size, 'queued', 0, is_folder=False)
+
+                tasks_to_run.append(
+                    self._upload_single_file(
+                        client, task_id, task_id, 
+                        file_path, parent_id,
+                        progress_callback
+                    )
+                )
+                
+            await asyncio.gather(*tasks_to_run, return_exceptions=True)
+
+            # Sync DB Snapshot after batch upload (Explicit sync handled by set_busy(False) logic if needed, 
+            # or we can keep explicit sync here to be sure, but set_busy(False) triggers it if score > 0)
+            # Keeping explicit sync call here is redundant if set_busy(False) works, but harmless.
+            # Actually, `sync_db_to_cloud` inside MetadataManager handles the actual upload.
+            # set_busy(False) calls _trigger_sync_now which calls the callback.
+            # So we can remove explicit sync call if we trust the manager.
+            # But wait, `upload_folder` logic below had an explicit sync.
+            # Let's rely on set_busy(False) to trigger the catch-up sync.
             
-        await asyncio.gather(*tasks_to_run, return_exceptions=True)
-
-        # Sync DB Snapshot after batch upload
-        await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
-
-        for item in upload_items:
-            await self._finalize_thumbnails(client, item['task_id'])
+            for item in upload_items:
+                await self._finalize_thumbnails(client, item['task_id'])
+        
+        finally:
+            self.db.sync_manager.set_busy(False)
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
         base_folder_name = os.path.basename(local_folder_path)
         logger.info(f"Starting folder upload: '{local_folder_path}' (Task: {main_task_id})")
         self.shared_state.active_tasks[main_task_id] = asyncio.current_task()
+        
+        # Suppress sync during folder upload
+        self.db.sync_manager.set_busy(True)
 
         try:
             total_size = 0
@@ -279,18 +295,6 @@ class TransferService:
                 # Batch Process Map Files
                 logger.info(f"Processing batch map updates for task {main_task_id}...")
                 
-                # Group results by parent_id
-                # results contains (fid, chunks) or None or Exception
-                # We need to map fid back to parent_id. 
-                # Since we don't have fid->parent_id map easily available here, we can rebuild it or track it.
-                # child_tasks_map key is sub_task_id. Not useful.
-                # Let's iterate tasks_to_run? No, they are coroutines.
-                
-                # Better approach: 
-                # _upload_single_file returns (fid, chunks).
-                # We need to know which folder `fid` belongs to.
-                # We can query DB `SELECT folder_id FROM file_folder_map WHERE file_id = fid`.
-                
                 transfers_by_folder = defaultdict(dict) # { folder_id: { fid: chunks } }
                 
                 for res in results:
@@ -304,7 +308,6 @@ class TransferService:
                     if not chunks: continue
                     
                     # Resolve folder_id
-                    # This adds a small DB read overhead but saves massive Map IO.
                     def _get_fid_parent():
                         conn = self.db._get_conn()
                         cur = conn.cursor()
@@ -324,8 +327,7 @@ class TransferService:
                             folder_id, file_map
                         )
 
-                # Sync Snapshot once folder upload is done
-                await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
+                # Sync handled by finally block
                 
                 await self._finalize_thumbnails(client, main_task_id)
                 
@@ -345,6 +347,9 @@ class TransferService:
         finally:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
+            
+            # Ensure busy mode is disabled
+            self.db.sync_manager.set_busy(False)
 
     async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
                                   file_path: str, parent_id: int, 

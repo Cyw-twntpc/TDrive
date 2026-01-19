@@ -61,38 +61,6 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
         shared_state.connection_emitter('restored')
     return None
 
-def _upload_db(shared_state: 'SharedState'):
-    async def upload_task():
-        try:
-            logger.info("Executing delayed database upload task...")
-            client = await ensure_client_connected(shared_state)
-            if not client or not shared_state.api_id:
-                logger.error("Aborting DB upload task: client connection or api_id is missing.")
-                return
-            
-            if not shared_state.metadata_manager:
-                logger.error("Aborting DB upload task: MetadataManager is not initialized.")
-                return
-
-            await shared_state.metadata_manager.sync_db_to_cloud(client, shared_state.group_id, shared_state.api_id)
-            logger.info("Background database upload task completed.")
-        except Exception as e:
-            logger.error(f"Background database upload task failed: {e}", exc_info=True)
-
-    if shared_state.loop and shared_state.loop.is_running():
-        shared_state.loop.call_soon_threadsafe(lambda: asyncio.create_task(upload_task()))
-    else:
-        logger.warning("Event loop is not running. Cannot schedule database upload.")
-
-async def trigger_db_upload_in_background(shared_state: 'SharedState'):
-    if shared_state.db_upload_timer:
-        shared_state.db_upload_timer.cancel()
-        logger.debug("Cancelled previous database upload timer.")
-
-    shared_state.db_upload_timer = threading.Timer(2.0, lambda: _upload_db(shared_state))
-    shared_state.db_upload_timer.start()
-    logger.debug("Scheduled a new database upload in 2 seconds.")
-
 def check_path_exists(path: str) -> bool:
     return os.path.exists(path)
 

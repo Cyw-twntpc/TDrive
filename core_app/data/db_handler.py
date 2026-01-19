@@ -7,6 +7,8 @@ import math
 import threading
 
 from ..common import errors
+from .transaction_logger import TransactionLogger
+from .sync_manager import SyncManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,8 @@ class DatabaseHandler:
             
         self.db_path = db_path # Should be ':memory:' for production as per requirement
         self._connection = None
+        self.transaction_logger = TransactionLogger()
+        self.sync_manager = SyncManager()
         self._init_db()
         self._initialized = True
 
@@ -51,13 +55,24 @@ class DatabaseHandler:
         
         return self._connection
 
+    def _execute_write(self, cursor: sqlite3.Cursor, sql: str, params: tuple, score: int = 1):
+        """
+        統一處理寫入操作：
+        1. 執行 SQL
+        2. 寫入重放日誌
+        3. 增加同步積分
+        """
+        cursor.execute(sql, params)
+        # 僅當操作成功後才記錄 Log (由於是記憶體 DB，rollback 機率低，這裡簡化處理)
+        self.transaction_logger.append(sql, params)
+        self.sync_manager.add_change(score)
+
     def _init_db(self):
         logger.debug(f"Initializing database schema in {self.db_path}...")
         conn = self._get_conn()
         cursor = conn.cursor()
 
         # Map Files Table (New Middleware Table)
-        # Maps logical map ID to physical cloud message ID
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS map_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +141,7 @@ class DatabaseHandler:
         # Init Root
         cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
         if cursor.fetchone() is None:
+            # Init data doesn't trigger sync/log
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date) VALUES (?, ?, ?)", 
                            (None, 'TDrive', time.time()))
 
@@ -135,8 +151,57 @@ class DatabaseHandler:
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
                            (None, 'Recycle Bin', time.time(), 0))
         
+        # --- FTS5 Search Index ---
+        # Create virtual table for full-text search
+        cursor.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+            name, 
+            item_type UNINDEXED, 
+            item_id UNINDEXED, 
+            folder_id UNINDEXED, 
+            tokenize='porter unicode61'
+        )
+        ''')
+
+        # Triggers for Folders
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS folders_ai AFTER INSERT ON folders BEGIN
+            INSERT INTO search_index(name, item_type, item_id, folder_id) 
+            VALUES (new.name, 'folder', new.id, new.parent_id);
+        END;
+        ''')
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS folders_ad AFTER DELETE ON folders BEGIN
+            DELETE FROM search_index WHERE item_type='folder' AND item_id=old.id;
+        END;
+        ''')
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS folders_au AFTER UPDATE ON folders BEGIN
+            UPDATE search_index SET name=new.name, folder_id=new.parent_id 
+            WHERE item_type='folder' AND item_id=new.id;
+        END;
+        ''')
+
+        # Triggers for Files (file_folder_map)
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON file_folder_map BEGIN
+            INSERT INTO search_index(name, item_type, item_id, folder_id) 
+            VALUES (new.name, 'file', new.id, new.folder_id);
+        END;
+        ''')
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON file_folder_map BEGIN
+            DELETE FROM search_index WHERE item_type='file' AND item_id=old.id;
+        END;
+        ''')
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON file_folder_map BEGIN
+            UPDATE search_index SET name=new.name, folder_id=new.folder_id 
+            WHERE item_type='file' AND item_id=new.id;
+        END;
+        ''')
+        
         conn.commit()
-        # Do not close connection for in-memory DB
 
     def get_expired_items(self) -> list:
         conn = self._get_conn()
@@ -154,14 +219,17 @@ class DatabaseHandler:
         conn = self._get_conn()
         with conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO map_files (msg_id, folder_id, ref_count) VALUES (?, ?, 0)", (msg_id, folder_id))
+            self._execute_write(cursor, 
+                "INSERT INTO map_files (msg_id, folder_id, ref_count) VALUES (?, ?, 0)", 
+                (msg_id, folder_id), score=1)
             return cursor.lastrowid
 
     def update_map_file_msg_id(self, map_id: int, new_msg_id: int | None):
         """Updates the cloud message ID for a given map record (O(1) update)."""
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE map_files SET msg_id = ? WHERE id = ?", (new_msg_id, map_id))
+            # Metadata update only, low priority sync
+            self._execute_write(conn, "UPDATE map_files SET msg_id = ? WHERE id = ?", (new_msg_id, map_id), score=1)
 
     def get_map_file_info(self, map_id: int) -> dict | None:
         conn = self._get_conn()
@@ -173,17 +241,17 @@ class DatabaseHandler:
     def increment_map_ref(self, map_id: int):
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,))
+            self._execute_write(conn, "UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,), score=0)
 
     def decrement_map_ref(self, map_id: int):
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (map_id,))
+            self._execute_write(conn, "UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (map_id,), score=0)
 
     def set_folder_active_map(self, folder_id: int, map_id: int | None):
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE folders SET active_map_id = ? WHERE id = ?", (map_id, folder_id))
+            self._execute_write(conn, "UPDATE folders SET active_map_id = ? WHERE id = ?", (map_id, folder_id), score=1)
             
     def get_folder_active_map(self, folder_id: int) -> int | None:
         conn = self._get_conn()
@@ -218,7 +286,7 @@ class DatabaseHandler:
     def _update_folder_size_recursively(self, cursor: sqlite3.Cursor, folder_id: int, size_delta: float):
         current_id = folder_id
         while current_id is not None:
-            cursor.execute("UPDATE folders SET total_size = total_size + ? WHERE id = ?", (size_delta, current_id))
+            self._execute_write(cursor, "UPDATE folders SET total_size = total_size + ? WHERE id = ?", (size_delta, current_id), score=0)
             cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (current_id,))
             result = cursor.fetchone()
             current_id = result['parent_id'] if result else None
@@ -303,9 +371,9 @@ class DatabaseHandler:
 
             self._check_name_collision(cursor, parent_id, name, 'folder')
 
-            cursor.execute(
+            self._execute_write(cursor,
                 "INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)",
-                (parent_id, name, time.time(), 0)
+                (parent_id, name, time.time(), 0), score=2
             )
             return cursor.lastrowid
 
@@ -313,10 +381,6 @@ class DatabaseHandler:
                  file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
                  preview_msg_id: int | None = None, preview_hash: str | None = None,
                  map_id: int | None = None):
-        """
-        Modified add_file to support new Schema.
-        If file_id is None (new content), map_id MUST be provided.
-        """
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
 
@@ -337,23 +401,22 @@ class DatabaseHandler:
                 if file_hash is None or size is None:
                     raise ValueError("file_hash and size are required when creating new file content.")
                 
-                cursor.execute(
+                self._execute_write(cursor,
                     "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_id) VALUES (?, ?, ?, ?, ?)",
-                    (file_hash, size, preview_msg_id, preview_hash, map_id)
+                    (file_hash, size, preview_msg_id, preview_hash, map_id), score=1
                 )
                 target_file_id = cursor.lastrowid
                 
-                # Increment ref count for the used map if map_id is provided
                 if map_id is not None:
-                    cursor.execute("UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,))
+                    self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,), score=0)
             else:
                 cursor.execute("SELECT size FROM files WHERE id = ?", (target_file_id,))
                 row = cursor.fetchone()
                 target_size = row['size']
 
-            cursor.execute(
+            self._execute_write(cursor,
                 "INSERT INTO file_folder_map (folder_id, file_id, name, modif_date) VALUES (?, ?, ?, ?)",
-                (folder_id, target_file_id, name, modif_date_ts)
+                (folder_id, target_file_id, name, modif_date_ts), score=1
             )
 
             self._update_folder_size_recursively(cursor, folder_id, target_size)
@@ -361,10 +424,6 @@ class DatabaseHandler:
             return target_file_id
 
     def remove_file(self, map_id: int) -> dict | None:
-        """
-        Removes file mapping. If content becomes orphaned, returns the affected map_id and file_id info.
-        Return structure: { "orphan": bool, "file_id": int, "map_id": int, "msg_ids_to_delete": list }
-        """
         conn = self._get_conn()
         with conn:
             cursor = conn.cursor()
@@ -385,8 +444,8 @@ class DatabaseHandler:
             size = map_info['size']
             used_map_id = map_info['map_id']
 
-            cursor.execute("DELETE FROM file_folder_map WHERE id = ?", (map_id,))
-            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'file'", (map_id,))
+            self._execute_write(cursor, "DELETE FROM file_folder_map WHERE id = ?", (map_id,), score=5)
+            self._execute_write(cursor, "DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'file'", (map_id,), score=0)
             
             self._update_folder_size_recursively(cursor, folder_id, -size)
             
@@ -397,7 +456,8 @@ class DatabaseHandler:
                 "orphan": False, 
                 "file_id": file_id, 
                 "map_id": used_map_id,
-                "msg_ids_to_delete": []
+                "msg_ids_to_delete": [],
+                "map_msg_id_to_delete": None # New field
             }
 
             if not still_referenced:
@@ -405,17 +465,22 @@ class DatabaseHandler:
                 if map_info['preview_msg_id']:
                     result['msg_ids_to_delete'].append(map_info['preview_msg_id'])
                 
-                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                self._execute_write(cursor, "DELETE FROM files WHERE id = ?", (file_id,), score=1)
                 
                 # Decrement map ref count
-                cursor.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (used_map_id,))
+                self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (used_map_id,), score=0)
+
+                # Check if map is dead
+                cursor.execute("SELECT ref_count, msg_id FROM map_files WHERE id = ?", (used_map_id,))
+                map_row = cursor.fetchone()
+                if map_row and map_row['ref_count'] <= 0:
+                    self._execute_write(cursor, "DELETE FROM map_files WHERE id = ?", (used_map_id,), score=1)
+                    if map_row['msg_id']:
+                         result["map_msg_id_to_delete"] = map_row['msg_id']
 
             return result
 
     def remove_folder(self, folder_id: int) -> list:
-        """
-        Recursively removes folder. Returns list of result dicts similar to remove_file.
-        """
         conn = self._get_conn()
         with conn:
             cursor = conn.cursor()
@@ -445,7 +510,7 @@ class DatabaseHandler:
 
             f_placeholders = ','.join(['?'] * len(all_folder_ids))
             
-            # Find all files in these folders
+            # Find all files in these folders (Need map_ids for trash cleanup)
             cursor.execute(f"SELECT id FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids)
             map_ids = [row['id'] for row in cursor.fetchall()]
             
@@ -454,37 +519,51 @@ class DatabaseHandler:
                 results.append({"msg_ids_to_delete": msgs_to_delete})
             
             cursor.execute(f"SELECT m.file_id, f.size, f.preview_msg_id, f.map_id FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.folder_id IN ({f_placeholders})", all_folder_ids)
-            files_info = cursor.fetchall() # [(file_id, size, prev_id, map_id), ...]
+            files_info = cursor.fetchall()
             
-            # Delete maps
-            cursor.execute(f"DELETE FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids)
+            # Delete maps (Path mappings)
+            self._execute_write(cursor, f"DELETE FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids, score=5)
             
-            # Check orphans
+            # [FIX] Clean up Trash Metadata for these files
+            if map_ids:
+                m_placeholders = ','.join(['?'] * len(map_ids))
+                self._execute_write(cursor, f"DELETE FROM trash_metadata WHERE item_type = 'file' AND item_id IN ({m_placeholders})", map_ids, score=0)
+            
+            # Check orphans & Cleanup Map Files
             orphans = []
             for finfo in files_info:
                 fid = finfo['file_id']
+                mid = finfo['map_id']
+
                 cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (fid,))
                 if not cursor.fetchone():
-                    orphans.append(finfo)
-            
-            # Process orphans
-            for o in orphans:
-                cursor.execute("DELETE FROM files WHERE id = ?", (o['file_id'],))
-                cursor.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (o['map_id'],))
-                
-                res = {
-                    "orphan": True,
-                    "file_id": o['file_id'],
-                    "map_id": o['map_id'],
-                    "msg_ids_to_delete": []
-                }
-                if o['preview_msg_id']:
-                    res['msg_ids_to_delete'].append(o['preview_msg_id'])
-                results.append(res)
+                    # It's an orphan
+                    self._execute_write(cursor, "DELETE FROM files WHERE id = ?", (fid,), score=1)
+                    self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (mid,), score=0)
+                    
+                    # Check Map Liveness
+                    cursor.execute("SELECT ref_count, msg_id FROM map_files WHERE id = ?", (mid,))
+                    map_row = cursor.fetchone()
+                    
+                    map_msg_id_del = None
+                    if map_row and map_row['ref_count'] <= 0:
+                        self._execute_write(cursor, "DELETE FROM map_files WHERE id = ?", (mid,), score=1)
+                        map_msg_id_del = map_row['msg_id']
+                    
+                    res = {
+                        "orphan": True,
+                        "file_id": fid,
+                        "map_id": mid,
+                        "msg_ids_to_delete": [],
+                        "map_msg_id_to_delete": map_msg_id_del
+                    }
+                    if finfo['preview_msg_id']:
+                        res['msg_ids_to_delete'].append(finfo['preview_msg_id'])
+                    results.append(res)
 
             # Delete folders
-            cursor.execute(f"DELETE FROM folders WHERE id IN ({f_placeholders})", all_folder_ids)
-            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,))
+            self._execute_write(cursor, f"DELETE FROM folders WHERE id IN ({f_placeholders})", all_folder_ids, score=20) # Force sync
+            self._execute_write(cursor, "DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,), score=0)
 
             if folder_info['parent_id']:
                 self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])
@@ -513,20 +592,20 @@ class DatabaseHandler:
             if current_parent_id == recycle_bin_id:
                 raise errors.InvalidOperationError("項目已在回收桶中。")
 
-            cursor.execute("""
+            self._execute_write(cursor, """
                 INSERT OR REPLACE INTO trash_metadata (item_id, item_type, original_parent_id, original_name, trashed_date)
                 VALUES (?, ?, ?, ?, ?)
-            """, (item_id, item_type, info['parent_id'], info['name'], time.time()))
+            """, (item_id, item_type, info['parent_id'], info['name'], time.time()), score=5)
             
             timestamp_suffix = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
             new_name = f"{info['name']}_deleted_{timestamp_suffix}"
             
             if item_type == 'folder':
-                cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                               (recycle_bin_id, new_name, time.time(), item_id))
+                self._execute_write(cursor, "UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (recycle_bin_id, new_name, time.time(), item_id), score=1)
             else:
-                cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                               (recycle_bin_id, new_name, time.time(), item_id))
+                self._execute_write(cursor, "UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (recycle_bin_id, new_name, time.time(), item_id), score=1)
                                
             self._update_folder_size_recursively(cursor, info['parent_id'], -info['total_size'])
             self._update_folder_size_recursively(cursor, recycle_bin_id, info['total_size'])
@@ -566,17 +645,17 @@ class DatabaseHandler:
             if item_type == 'folder':
                 cursor.execute("SELECT total_size FROM folders WHERE id = ?", (item_id,))
                 size = cursor.fetchone()['total_size']
-                cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                               (original_parent_id, target_name, time.time(), item_id))
+                self._execute_write(cursor, "UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (original_parent_id, target_name, time.time(), item_id), score=5)
             else:
                 cursor.execute("""
                     SELECT f.size FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?
                 """, (item_id,))
                 size = cursor.fetchone()['size']
-                cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                               (original_parent_id, target_name, time.time(), item_id))
+                self._execute_write(cursor, "UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (original_parent_id, target_name, time.time(), item_id), score=5)
             
-            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = ?", (item_id, item_type))
+            self._execute_write(cursor, "DELETE FROM trash_metadata WHERE item_id = ? AND item_type = ?", (item_id, item_type), score=1)
             self._update_folder_size_recursively(cursor, recycle_bin_id, -size)
             self._update_folder_size_recursively(cursor, original_parent_id, size)
             return target_name
@@ -682,7 +761,7 @@ class DatabaseHandler:
             info = cursor.fetchone()
             if not info: raise errors.PathNotFoundError(f"Folder {folder_id} not found")
             self._check_name_collision(cursor, info['parent_id'], new_name, 'folder', exclude_id=folder_id)
-            cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), folder_id))
+            self._execute_write(cursor, "UPDATE folders SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), folder_id), score=1)
 
     def rename_file(self, map_id: int, new_name: str):
         if not self._is_valid_item_name(new_name): raise errors.InvalidNameError(f"Invalid name '{new_name}'")
@@ -693,7 +772,7 @@ class DatabaseHandler:
             info = cursor.fetchone()
             if not info: raise errors.PathNotFoundError(f"File {map_id} not found")
             self._check_name_collision(cursor, info['folder_id'], new_name, 'file', exclude_id=map_id)
-            cursor.execute("UPDATE file_folder_map SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), map_id))
+            self._execute_write(cursor, "UPDATE file_folder_map SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), map_id), score=1)
 
     def move_file(self, map_id: int, new_parent_id: int):
         conn = self._get_conn()
@@ -716,8 +795,8 @@ class DatabaseHandler:
                 if dest['name'] == 'Recycle Bin': raise errors.InvalidOperationError("Use delete to move to Recycle Bin")
 
             self._check_name_collision(cursor, new_parent_id, info['name'], 'file')
-            cursor.execute("UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
-                           (new_parent_id, time.time(), map_id))
+            self._execute_write(cursor, "UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
+                           (new_parent_id, time.time(), map_id), score=5)
             self._update_folder_size_recursively(cursor, old_parent_id, -info['size'])
             self._update_folder_size_recursively(cursor, new_parent_id, info['size'])
 
@@ -746,8 +825,8 @@ class DatabaseHandler:
                     check_id = res['parent_id'] if res else None
 
             self._check_name_collision(cursor, new_parent_id, info['name'], 'folder')
-            cursor.execute("UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
-                           (new_parent_id, time.time(), folder_id))
+            self._execute_write(cursor, "UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
+                           (new_parent_id, time.time(), folder_id), score=5)
             self._update_folder_size_recursively(cursor, old_parent_id, -info['total_size'])
             self._update_folder_size_recursively(cursor, new_parent_id, info['total_size'])
 
@@ -792,8 +871,18 @@ class DatabaseHandler:
     def search_db_items(self, search_term: str, base_folder_id: int, progress_callback: callable):
         conn = self._get_conn()
         cursor = conn.cursor()
-        folders_to_visit = [base_folder_id]
-        visited = set()
+        
+        # Sanitize for FTS5: Escape double quotes and enclose in double quotes for phrase search
+        clean_term = search_term.replace('"', '""')
+        # Prefix search: "term*"
+        fts_query = f'"{clean_term}" *'
+
+        # Check if base_folder_id is Root (TDrive), if so, no need to filter by parent
+        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (base_folder_id,))
+        root_check = cursor.fetchone()
+        is_global_search = (root_check and root_check['parent_id'] is None)
+
+        # Batching variables
         folders_batch, files_batch = [], []
         
         def yield_batch():
@@ -802,49 +891,89 @@ class DatabaseHandler:
                 progress_callback({"folders": folders_batch, "files": files_batch})
                 folders_batch, files_batch = [], []
 
-        while folders_to_visit:
-            curr = folders_to_visit.pop(0)
-            if curr in visited: continue
-            visited.add(curr)
-            
-            # Search here
-            pattern = f'%{search_term}%'
-            cursor.execute("SELECT id, name, total_size, modif_date, parent_id FROM folders WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE", (curr, pattern))
-            for row in cursor.fetchall():
-                folders_batch.append({
-                    "id": row['id'], "parent_id": row['parent_id'], "name": row['name'],
-                    "raw_size": row['total_size'], "size": self._format_size(row['total_size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
-                })
-
-            cursor.execute("""
-                SELECT m.id, m.folder_id, m.name, f.size, m.modif_date 
-                FROM file_folder_map m JOIN files f ON m.file_id = f.id
-                WHERE m.folder_id = ? AND m.name LIKE ? COLLATE NOCASE
-            """, (curr, pattern))
-            for row in cursor.fetchall():
-                files_batch.append({
-                    "id": row['id'], "parent_id": row['folder_id'], "name": row['name'],
-                    "raw_size": row['size'], "size": self._format_size(row['size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
-                })
-
-            if len(folders_batch) + len(files_batch) >= 50: yield_batch()
-
-            cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (curr,))
-            for r in cursor.fetchall(): folders_to_visit.append(r['id'])
+        # Query structure with optional ancestry check
+        ancestry_cte = ""
+        ancestry_filter_folder = ""
+        ancestry_filter_file = ""
         
-        yield_batch()
+        if not is_global_search:
+            ancestry_cte = """
+            ancestors(id) AS (
+                SELECT id FROM folders WHERE id = ?
+                UNION ALL
+                SELECT f.id FROM folders f JOIN ancestors a ON f.parent_id = a.id
+            )
+            """
+            ancestry_filter_folder = "AND f.parent_id IN (SELECT id FROM ancestors)"
+            ancestry_filter_file = "AND m.folder_id IN (SELECT id FROM ancestors)"
+            params = (base_folder_id, fts_query, fts_query)
+        else:
+            params = (fts_query, fts_query)
+
+        full_sql = f"""
+        WITH RECURSIVE 
+            {ancestry_cte if not is_global_search else ''}
+        SELECT 
+            'folder' as type, f.id, f.parent_id, f.name, f.total_size as size, f.modif_date
+        FROM search_index s
+        JOIN folders f ON s.item_id = f.id
+        WHERE s.item_type = 'folder' AND search_index MATCH ? {ancestry_filter_folder}
+        
+        UNION ALL
+        
+        SELECT 
+            'file' as type, m.id, m.folder_id as parent_id, m.name, fl.size, m.modif_date
+        FROM search_index s
+        JOIN file_folder_map m ON s.item_id = m.id
+        JOIN files fl ON m.file_id = fl.id
+        WHERE s.item_type = 'file' AND search_index MATCH ? {ancestry_filter_file}
+        """
+
+        # Handle params carefully
+        # If not global: [base_folder_id, term, term]
+        # If global: [term, term]
+        
+        sql_params = list(params)
+
+        try:
+            cursor.execute(full_sql, sql_params)
+            
+            count = 0
+            for row in cursor.fetchall():
+                if row['type'] == 'folder':
+                    folders_batch.append({
+                        "id": row['id'], "parent_id": row['parent_id'], "name": row['name'],
+                        "raw_size": row['size'], "size": self._format_size(row['size']),
+                        "modif_date": self._format_timestamp(row['modif_date'])
+                    })
+                else:
+                    files_batch.append({
+                        "id": row['id'], "parent_id": row['parent_id'], "name": row['name'],
+                        "raw_size": row['size'], "size": self._format_size(row['size']),
+                        "modif_date": self._format_timestamp(row['modif_date'])
+                    })
+                
+                count += 1
+                if count >= 50:
+                    yield_batch()
+                    count = 0
+            
+            yield_batch()
+            
+        except sqlite3.OperationalError as e:
+            logger.error(f"FTS5 Search failed: {e}")
+            # Fallback or empty results
+            pass
 
     def update_folder_thumbs_info(self, folder_id: int, msg_id: int, hash_val: str):
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?", (msg_id, hash_val, folder_id))
+            self._execute_write(conn, "UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?", (msg_id, hash_val, folder_id), score=1)
     
     def update_file_preview_info(self, file_id: int, msg_id: int, hash_val: str):
         conn = self._get_conn()
         with conn:
-            conn.execute("UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?", (msg_id, hash_val, file_id))
+            self._execute_write(conn, "UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?", (msg_id, hash_val, file_id), score=1)
 
     def check_folder_exists(self, folder_id: int) -> bool:
         conn = self._get_conn()
