@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtWidgets import QMainWindow, QApplication
 from PySide6.QtGui import QIcon, QCloseEvent
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.tdrive_service = tdrive_service
         self._loop = loop
-        self._is_ready_to_close = False
+        # Removed self._is_ready_to_close as we now quit app directly
 
         self.setWindowTitle("TDrive")
         self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
@@ -40,15 +40,19 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.web_view)
 
     async def _graceful_shutdown(self):
-        logger.info("Performing graceful shutdown...")
-        await self.tdrive_service.close()
-        logger.info("Async shutdown procedures complete. Window can now close.")
-        self._is_ready_to_close = True
-        self.close() 
+        logger.info("Performing graceful shutdown (Window hidden)...")
+        try:
+            await self.tdrive_service.close()
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+        finally:
+            logger.info("Shutdown complete. Quitting application.")
+            QApplication.instance().quit()
 
     def closeEvent(self, event: QCloseEvent):
-        if self._is_ready_to_close:
-            event.accept()
-        else:
-            event.ignore()
-            asyncio.create_task(self._graceful_shutdown())
+        # Hide window immediately for better UX
+        self.hide()
+        event.ignore() # Prevent Qt from killing the app immediately
+        
+        # Start background shutdown task
+        asyncio.create_task(self._graceful_shutdown())

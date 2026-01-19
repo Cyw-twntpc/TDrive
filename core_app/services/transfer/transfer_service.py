@@ -3,13 +3,13 @@ import asyncio
 import os
 import uuid
 import time
-import base64
 from typing import TYPE_CHECKING, List, Dict, Any, Callable, Optional
 from collections import defaultdict
 
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
     from ..media.gallery_manager import GalleryManager
+    from core_app.data.metadata_manager import MetadataManager
 
 from ..common import utils
 from .transfer_controller import TransferController
@@ -26,9 +26,10 @@ logger = logging.getLogger(__name__)
 CONCURRENCY_LIMIT = 3
 
 class TransferService:
-    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager'):
+    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager', metadata_manager: 'MetadataManager'):
         self.shared_state = shared_state
         self.db = DatabaseHandler()
+        self.metadata_manager = metadata_manager # Injected
         self.controller = TransferController()
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.db, status_change_callback=lambda x: None)
         self.gallery_manager = gallery_manager
@@ -41,6 +42,15 @@ class TransferService:
     def set_file_status_callback(self, callback: Callable):
         self.watcher._callback = callback
         self.watcher.start()
+
+    def _normalize_path(self, path: str) -> str:
+        """Helper to normalize paths for dictionary lookups, removing Windows long path prefix."""
+        if not path:
+            return ""
+        # Remove any variation of the Windows long path prefix
+        p = path.replace(r'\\?\\', '').replace('\\\\?\\', '')
+        # Ensure it's an absolute path and normalized for the OS
+        return os.path.normpath(os.path.abspath(p))
 
     async def _finalize_thumbnails(self, client, main_task_id: str):
         """
@@ -58,7 +68,6 @@ class TransferService:
                     thumbs_by_folder[item['target_folder_id']][item['file_id']] = item['thumbnail_blob']
                 
                 for f_id, new_thumbs_map in thumbs_by_folder.items():
-                    # --- Fix Issue 2: Ensure existing DB is loaded ---
                     if not self.gallery_manager.has_db(f_id):
                         db_info = await loop.run_in_executor(None, self._get_folder_db_info, f_id)
                         if db_info and db_info['thumbs_db_msg_id']:
@@ -95,12 +104,9 @@ class TransferService:
 
     def _get_folder_db_info(self, folder_id):
         conn = self.db._get_conn()
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
-            return cur.fetchone()
-        finally:
-            conn.close()
+        cur = conn.cursor()
+        cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+        return cur.fetchone()
 
     # --- UPLOAD OPERATIONS ---
 
@@ -139,7 +145,9 @@ class TransferService:
             
         await asyncio.gather(*tasks_to_run, return_exceptions=True)
 
-        # Finalize thumbnails for each individual task (Fix Issue 1)
+        # Sync DB Snapshot after batch upload
+        await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
+
         for item in upload_items:
             await self._finalize_thumbnails(client, item['task_id'])
 
@@ -154,8 +162,8 @@ class TransferService:
             
             # Handle long paths on Windows
             scan_path = local_folder_path
-            if os.name == 'nt' and not scan_path.startswith('\\\\?\\'):
-                scan_path = f"\\\\?\\{os.path.abspath(scan_path)}"
+            if os.name == 'nt' and not scan_path.startswith(r'\\?\\'):
+                scan_path = r'\\?\\' + os.path.abspath(scan_path)
 
             for root, dirs, files in os.walk(scan_path):
                 for f in files:
@@ -163,16 +171,12 @@ class TransferService:
                     try:
                         f_size = os.path.getsize(full_path)
                         total_size += f_size
-                        # Store original path (without \\?\ prefix if possible) for consistency
-                        stored_path = full_path
-                        if stored_path.startswith("\\\\?\\"):
-                            stored_path = stored_path[4:]
+                        # Store normalized path for consistency
+                        stored_path = self._normalize_path(full_path)
                         file_list.append((stored_path, f_size))
                     except OSError as e:
                         logger.warning(f"[SizeCalc] Skipping file due to error: {full_path} - {e}")
             
-            logger.info(f"[SizeCalc] Initial scan complete. Total files: {len(file_list)}, Total Size: {total_size}")
-
             self.controller.add_upload_task(
                 main_task_id, local_folder_path, parent_id, total_size, is_folder=True
             )
@@ -199,35 +203,35 @@ class TransferService:
                         raise Exception("資料夾已存在但無法找到。")
 
                 # Normalize local_folder_path for consistent mapping
-                local_folder_abspath = os.path.abspath(local_folder_path)
-                path_to_remote_id = {local_folder_abspath: root_remote_id}
+                local_folder_normalized = self._normalize_path(local_folder_path).lower()
+                path_to_remote_id = {local_folder_normalized: root_remote_id}
                 
-                # Use the same scan_path logic for folder creation
-                scan_path_structure = local_folder_path
-                if os.name == 'nt' and not scan_path_structure.startswith('\\\\?\\'):
-                    scan_path_structure = f"\\\\?\\{os.path.abspath(scan_path_structure)}"
+                # Use standard abspath for os.walk, but ensure prefix is clean if needed
+                scan_path_structure = os.path.abspath(local_folder_path)
+                if os.name == 'nt' and not scan_path_structure.startswith(r'\\?\\'):
+                    scan_path_structure = r'\\?\\' + scan_path_structure
                 
                 for root, dirs, _ in os.walk(scan_path_structure):
-                    # Normalize root key
-                    current_root_key = root
-                    if current_root_key.startswith("\\\\?\\"):
-                        current_root_key = current_root_key[4:]
-                    current_root_key = os.path.abspath(current_root_key)
+                    current_root_key = self._normalize_path(root).lower()
 
                     current_remote_id = path_to_remote_id.get(current_root_key)
-                    if current_remote_id is None: continue
+                    if current_remote_id is None:
+                        continue
 
                     for d in dirs:
-                        local_dir_path = os.path.join(current_root_key, d)
+                        # Construct full local path for the subdirectory
+                        real_dir_path = os.path.join(root, d)
+                        local_dir_key = self._normalize_path(real_dir_path).lower()
+                        
                         try:
                             new_folder_id = await loop.run_in_executor(None, self.db.add_folder, current_remote_id, d)
                             self.controller.record_created_artifact(main_task_id, 'folder', new_folder_id)
-                            path_to_remote_id[local_dir_path] = new_folder_id
+                            path_to_remote_id[local_dir_key] = new_folder_id
                         except errors.ItemAlreadyExistsError:
                             contents = await loop.run_in_executor(None, self.db.get_folder_contents, current_remote_id)
                             found = next((f for f in contents['folders'] if f['name'] == d), None)
                             if found:
-                                path_to_remote_id[local_dir_path] = found['id']
+                                path_to_remote_id[local_dir_key] = found['id']
 
                 child_tasks_map = {}
                 tasks_to_run = []
@@ -235,7 +239,9 @@ class TransferService:
                 
                 for file_path, f_size in file_list:
                     sub_task_id = str(uuid.uuid4())
-                    file_dir = os.path.dirname(file_path)
+                    # Ensure lookup key matches the creation key
+                    file_dir = self._normalize_path(os.path.dirname(file_path)).lower() 
+                    
                     target_parent_id = path_to_remote_id.get(file_dir)
                     
                     if target_parent_id:
@@ -251,30 +257,76 @@ class TransferService:
                             self._upload_single_file(
                                 client, main_task_id, sub_task_id,
                                 file_path, target_parent_id,
-                                progress_callback
+                                progress_callback,
+                                defer_map_processing=True
                             )
                         )
                     else:
-                        logger.warning(f"[TaskGen] Skipping file {file_path} because parent folder ID not found for: {file_dir}")
+                        logger.warning(f"[TaskGen] Skipping file {file_path} because parent folder ID not found.")
 
-                # Correction: If real size differs from initial scan (e.g. due to skipped folders), update it.
-                logger.info(f"[TaskGen] Generation complete. Real Total Size: {real_total_size}, Initial Total: {total_size}")
                 if real_total_size != total_size:
-                    logger.warning(f"Task {main_task_id}: Size mismatch (Initial: {total_size}, Real: {real_total_size}). Updating DB...")
                     self.controller.update_task_total_size(main_task_id, real_total_size)
                     total_size = real_total_size
-                    # Notify UI with corrected total
                     progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
 
                 self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
                 progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
                 
-                await asyncio.gather(*tasks_to_run, return_exceptions=True)
-
-                await utils.trigger_db_upload_in_background(self.shared_state)
+                # Execute uploads in parallel with deferred map processing
+                results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
                 
-                # --- Post-Upload: Thumbnail Database Sync ---
+                # Batch Process Map Files
+                logger.info(f"Processing batch map updates for task {main_task_id}...")
+                
+                # Group results by parent_id
+                # results contains (fid, chunks) or None or Exception
+                # We need to map fid back to parent_id. 
+                # Since we don't have fid->parent_id map easily available here, we can rebuild it or track it.
+                # child_tasks_map key is sub_task_id. Not useful.
+                # Let's iterate tasks_to_run? No, they are coroutines.
+                
+                # Better approach: 
+                # _upload_single_file returns (fid, chunks).
+                # We need to know which folder `fid` belongs to.
+                # We can query DB `SELECT folder_id FROM file_folder_map WHERE file_id = fid`.
+                
+                transfers_by_folder = defaultdict(dict) # { folder_id: { fid: chunks } }
+                
+                for res in results:
+                    if isinstance(res, Exception):
+                        logger.error(f"Sub-task failed: {res}")
+                        continue
+                    if res is None:
+                        continue # Skipped or Deduplicated
+                    
+                    fid, chunks = res
+                    if not chunks: continue
+                    
+                    # Resolve folder_id
+                    # This adds a small DB read overhead but saves massive Map IO.
+                    def _get_fid_parent():
+                        conn = self.db._get_conn()
+                        cur = conn.cursor()
+                        cur.execute("SELECT folder_id FROM file_folder_map WHERE file_id = ?", (fid,))
+                        row = cur.fetchone()
+                        return row['folder_id'] if row else None
+                    
+                    folder_id = await loop.run_in_executor(None, _get_fid_parent)
+                    if folder_id:
+                        transfers_by_folder[folder_id][fid] = chunks
+
+                # Execute Batch Updates
+                for folder_id, file_map in transfers_by_folder.items():
+                    if file_map:
+                        await self.metadata_manager.batch_process_file_transfers(
+                            client, self.shared_state.group_id, self.shared_state.api_id,
+                            folder_id, file_map
+                        )
+
+                # Sync Snapshot once folder upload is done
+                await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
+                
                 await self._finalize_thumbnails(client, main_task_id)
                 
                 task_info = self.controller.get_task(main_task_id)
@@ -297,7 +349,8 @@ class TransferService:
     async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
                                   file_path: str, parent_id: int, 
                                   progress_callback: Callable,
-                                  resume_context: List = None, pre_calculated_hash: str = None):
+                                  resume_context: List = None, pre_calculated_hash: str = None,
+                                  defer_map_processing: bool = False):
         file_name = os.path.basename(file_path)
         
         def chunk_cb(part_num, msg_id, part_hash):
@@ -322,7 +375,6 @@ class TransferService:
         async with self._semaphore:
             main_status = self.controller.db.get_main_task_status(main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
-                logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
                 return
 
             try:
@@ -345,6 +397,7 @@ class TransferService:
                     
                 existing_file_id = await loop.run_in_executor(None, self.db.find_file_by_hash, original_file_hash)
                 
+                # Deduplication Check
                 if existing_file_id:
                     logger.info(f"Sec-upload (Deduplication) triggered for {file_name}")
                     try:
@@ -357,35 +410,29 @@ class TransferService:
                         self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
                         
                         remaining = total_size - last_uploaded
-                        if remaining > 0:
-                            progress_callback(main_task_id, remaining, 0)
+                        if remaining > 0: progress_callback(main_task_id, remaining, 0)
                         
                         if main_task_id == sub_task_id:
                             progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
                             self.watcher.add_watch(main_task_id, parent_id, 'remote')
                             
-                        return
+                        # If deferred, return None as we handled it (no chunks needed for map update since file reused)
+                        return None
                     except errors.ItemAlreadyExistsError:
                         self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "檔案已存在")
                         return
 
-                # If this is part of a folder upload (sub-task), do NOT send the single file size as 'total'
-                # because the frontend will interpret it as the total size of the main task (the folder).
-                # Sending 0 or -1 tells the frontend to keep the existing total size.
                 report_total = total_size if main_task_id == sub_task_id else 0
                 initial_transferred = 0 if main_task_id == sub_task_id else -1
                 progress_callback(main_task_id, file_name, initial_transferred, report_total, 'transferring', 0, is_folder=False)
 
-                # --- Image Processing (Phase 1 Integration) ---
+                # --- Image Preview ---
                 thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
                 preview_msg_id = None
                 preview_hash = None
 
                 if preview_bytes:
-                    logger.info(f"Uploading preview image for {file_name}...")
                     preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_bytes)
-                    
-                    # Hidden progress callback (updates traffic stats but not UI)
                     def hidden_progress(current, total):
                         asyncio.create_task(self.controller.update_transferred_bytes(current))
 
@@ -393,11 +440,10 @@ class TransferService:
                         client, self.shared_state.group_id, preview_bytes, preview_hash,
                         progress_callback=hidden_progress
                     )
-                    
                     if preview_upload_info:
-                        # Assuming single chunk for preview usually
                         preview_msg_id = preview_upload_info[0][1]
 
+                # --- Phase 1: Upload Chunks ---
                 split_files_info = await telegram_comms.upload_file_to_cloud(
                     client, self.shared_state.group_id, file_path, original_file_hash, 
                     main_task_id,
@@ -406,24 +452,36 @@ class TransferService:
                     chunk_callback=chunk_cb
                 )
 
-                def _add_file_and_record():
-                    fid = self.db.add_file(
+                # --- Phase 2: Process Map (Metadata Manager) ---
+                def _pre_insert_file():
+                    # Insert with NULL map_id first
+                    return self.db.add_file(
                         parent_id, file_name, time.time(), 
-                        file_hash=original_file_hash, size=total_size, chunks_data=split_files_info,
-                        preview_msg_id=preview_msg_id, preview_hash=preview_hash
+                        file_hash=original_file_hash, size=total_size, 
+                        preview_msg_id=preview_msg_id, preview_hash=preview_hash,
+                        map_id=None # Allowed temporarily
                     )
-                    self.controller.record_created_artifact(main_task_id, 'file', fid)
-                    
-                    if thumb_bytes:
-                        self.controller.db.add_task_thumbnail(main_task_id, parent_id, fid, thumb_bytes)
-                        
-                    return fid
-
-                await loop.run_in_executor(None, _add_file_and_record)
+                
+                fid = await loop.run_in_executor(None, _pre_insert_file)
+                self.controller.record_created_artifact(main_task_id, 'file', fid)
+                
+                if thumb_bytes:
+                    self.controller.db.add_task_thumbnail(main_task_id, parent_id, fid, thumb_bytes)
                 
                 self.controller.mark_sub_task_completed(main_task_id, sub_task_id)
 
+                if defer_map_processing:
+                    return (fid, split_files_info)
+
+                # If not deferred, process immediately
+                await self.metadata_manager.process_file_transfer(
+                    client, self.shared_state.group_id, self.shared_state.api_id,
+                    parent_id, fid, split_files_info
+                )
+                
                 if main_task_id == sub_task_id:
+                    # Single file upload -> Sync DB now
+                    await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
                     progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
                     self.watcher.add_watch(main_task_id, parent_id, 'remote')
 
@@ -455,10 +513,24 @@ class TransferService:
                 db_id = item['db_id']
                 
                 loop = asyncio.get_running_loop()
-                file_details = await loop.run_in_executor(None, self.db.get_file_details, db_id)
-                if not file_details: 
+                
+                # Fetch basic details from DB
+                file_details_basic = await loop.run_in_executor(None, self.db.get_file_details, db_id)
+                if not file_details_basic: 
                     progress_callback(task_id, item['name'], 0, 0, 'failed', 0, message="找不到檔案資訊")
                     continue
+
+                # Fetch Chunks from Metadata Manager (Cloud Map)
+                file_id = file_details_basic['file_id']
+                chunks = await self.metadata_manager.get_file_chunks(client, self.shared_state.group_id, self.shared_state.api_id, file_id)
+                
+                # Construct full file details
+                file_details = {
+                    "name": file_details_basic['name'],
+                    "size": file_details_basic['size'],
+                    "hash": file_details_basic['hash'],
+                    "chunks": [{"part_num": c[0], "message_id": c[1], "part_hash": c[2]} for c in chunks]
+                }
 
                 save_path = await loop.run_in_executor(None, fp.get_unique_filepath, destination_dir, file_details['name'])
 
@@ -492,10 +564,14 @@ class TransferService:
             
             root_folder_name = contents['folder_name']
             local_root_path = os.path.join(dest_path, root_folder_name)
-            
             os.makedirs(local_root_path, exist_ok=True)
+            
             total_size = 0
             file_items = []
+            
+            # Note: get_folder_contents_recursive no longer returns chunks. 
+            # We need to fetch them individually or implement batch fetch in metadata manager.
+            # For now, fetch individually in loop (concurrency limited by semaphore anyway).
             
             for item in contents['items']:
                 relative_path = item['relative_path']
@@ -511,7 +587,6 @@ class TransferService:
                         "local_path": full_local_path,
                         "size": item['size'],
                         "hash": item['hash'],
-                        "chunks": item['chunks'],
                         "name": item['name']
                     })
 
@@ -522,17 +597,28 @@ class TransferService:
 
             child_tasks_map = {}
             tasks_to_run = []
-            real_total_size = 0
 
             for f in file_items:
                 sub_task_id = str(uuid.uuid4())
+                
+                # Fetch chunks (Lazy fetch inside coroutine would be better, but we need details for DB recording)
+                # But fetch_map_file is async. We can't do it easily in sync loop.
+                # Let's defer chunk fetching to the worker coroutine? 
+                # But add_download_task expects file_details_json.
+                # We can store basic details and fetch chunks just-in-time.
+                
+                # However, for robustness, let's fetch here concurrently?
+                # This might delay start.
+                # Let's use Just-In-Time fetching in _download_single_item if chunks are missing.
+                
                 file_details = {
                     "name": f['name'],
                     "size": f['size'],
                     "hash": f['hash'],
-                    "chunks": f['chunks']
+                    "chunks": [], # Empty initially
+                    "file_id": f['file_id'] # Store ID to fetch later
                 }
-                real_total_size += f['size']
+                
                 child_tasks_map[sub_task_id] = {
                     "db_id": f['db_id'],
                     "save_path": f['local_path'],
@@ -540,6 +626,7 @@ class TransferService:
                     "status": "queued",
                     "file_details": file_details
                 }
+                
                 tasks_to_run.append(
                     self._download_single_item(
                         client, main_task_id, sub_task_id,
@@ -548,27 +635,17 @@ class TransferService:
                     )
                 )
 
-            if real_total_size != total_size:
-                logger.warning(f"Download Task {main_task_id}: Size mismatch (Initial: {total_size}, Real: {real_total_size}). Updating DB...")
-                self.controller.update_task_total_size(main_task_id, real_total_size)
-                total_size = real_total_size
-                progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
-
             self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
             progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
-            task_info = self.controller.get_task(main_task_id)
-            if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
-                self.controller.mark_sub_task_completed(main_task_id, main_task_id)
-                progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
-                self.watcher.add_watch(main_task_id, local_root_path, 'local')
+            self.controller.mark_sub_task_completed(main_task_id, main_task_id)
+            progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
+            self.watcher.add_watch(main_task_id, local_root_path, 'local')
 
-        except asyncio.CancelledError:
-            raise
         except Exception as e:
-            logger.error(f"Download folder failed: {e}")
+            logger.error(f"Download folder failed: {e}", exc_info=True)
             self.controller.mark_failed(main_task_id, str(e))
         finally:
             if main_task_id in self.shared_state.active_tasks:
@@ -600,12 +677,21 @@ class TransferService:
         async with self._semaphore:
             main_status = self.controller.db.get_main_task_status(main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
-                logger.info(f"Sub-task {sub_task_id} aborted before start (Main status: {main_status})")
                 return
 
             try:
                 self.shared_state.active_tasks[sub_task_id] = asyncio.current_task()
                 self._active_sub_tasks[main_task_id].add(sub_task_id)
+
+                # JIT Chunk Fetching
+                if not file_details.get('chunks') and file_details.get('file_id'):
+                    chunks = await self.metadata_manager.get_file_chunks(
+                        client, self.shared_state.group_id, self.shared_state.api_id, file_details['file_id']
+                    )
+                    file_details['chunks'] = [{"part_num": c[0], "message_id": c[1], "part_hash": c[2]} for c in chunks]
+
+                if not file_details.get('chunks'):
+                    raise Exception("Unable to retrieve file chunks from cloud.")
 
                 report_total = file_details['size'] if main_task_id == sub_task_id else 0
                 initial_transferred = 0 if main_task_id == sub_task_id else -1
@@ -708,6 +794,9 @@ class TransferService:
 
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
+            if task_info['type'] == 'upload':
+                 await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
+
             self.controller.mark_sub_task_completed(task_id, task_id)
             progress_callback(task_id, 0, 0, status='completed')
 
@@ -788,36 +877,38 @@ class TransferService:
 
                 message_ids_to_delete = []
 
-                # 1. Clean up created DB artifacts (files/folders)
-                # We do this first to ensure local DB is clean, and we collect msg IDs for cloud deletion.
+                # Clean up created DB artifacts via Metadata Manager (handles map cleanup)
                 task_id = task_info.get('task_id')
                 logger.info(f"Cleanup: Starting artifact cleanup for task {task_id}")
                 if task_id:
                     artifacts = await self.shared_state.loop.run_in_executor(None, self.controller.get_created_artifacts, task_id)
-                    logger.info(f"Cleanup: Found {len(artifacts)} artifacts to remove.")
+                    
+                    # We need to use metadata_manager.handle_deletion for proper cleanup
+                    # But handle_deletion expects deletion results from db.remove_file
                     
                     def _cleanup_db_items():
-                        db_msgs = []
-                        # Artifacts are ordered by ID DESC (newest first). 
-                        # This works well: delete files/subfolders before their parents.
+                        results = []
                         for artifact in artifacts:
                             try:
-                                logger.info(f"Cleanup: Removing artifact {artifact['artifact_type']} ID {artifact['db_id']}")
                                 if artifact['artifact_type'] == 'file':
-                                    msgs = self.db.remove_file(artifact['db_id'])
-                                    db_msgs.extend(msgs)
+                                    res = self.db.remove_file(artifact['db_id'])
+                                    if res: results.append(res)
                                 elif artifact['artifact_type'] == 'folder':
-                                    # Since we tracked it as created by this task, we remove it.
-                                    # remove_folder is recursive and returns msg_ids of deleted content.
-                                    msgs = self.db.remove_folder(artifact['db_id'])
-                                    db_msgs.extend(msgs)
-                            except Exception as e:
-                                logger.warning(f"Failed to cleanup artifact {artifact}: {e}")
-                        return db_msgs
+                                    # remove_folder returns a list of results
+                                    res_list = self.db.remove_folder(artifact['db_id'])
+                                    results.extend(res_list)
+                            except Exception: pass
+                        return results
 
-                    db_message_ids = await self.shared_state.loop.run_in_executor(None, _cleanup_db_items)
-                    logger.info(f"Cleanup: DB removal collected {len(db_message_ids)} message IDs.")
-                    message_ids_to_delete.extend(db_message_ids)
+                    deletion_results = await self.shared_state.loop.run_in_executor(None, _cleanup_db_items)
+                    
+                    # Process cloud cleanup
+                    await self.metadata_manager.handle_deletion(client, self.shared_state.group_id, self.shared_state.api_id, deletion_results)
+                    
+                    # Collect extra msg ids if any returned directly
+                    for res in deletion_results:
+                        if res.get('msg_ids_to_delete'):
+                            message_ids_to_delete.extend(res['msg_ids_to_delete'])
 
                 def collect_msg_ids(info_list):
                     if info_list:
@@ -833,14 +924,14 @@ class TransferService:
                     collect_msg_ids(task_info.get('split_files_info'))
 
                 if message_ids_to_delete:
-                    # Deduplicate IDs
                     unique_ids = list(set(message_ids_to_delete))
                     batch_size = 100
                     for i in range(0, len(unique_ids), batch_size):
                         batch = unique_ids[i:i + batch_size]
                         try:
                             await client.delete_messages(self.shared_state.group_id, batch)
-                        except Exception: pass
+                        except Exception:
+                            pass
                             
             logger.info("Cleanup completed successfully.")
 

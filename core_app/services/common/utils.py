@@ -5,8 +5,6 @@ import os
 from typing import TYPE_CHECKING, Optional
 from telethon import TelegramClient
 
-from core_app.api import telegram_comms
-
 # Use a forward reference for type hinting to avoid circular imports.
 if TYPE_CHECKING:
     from core_app.data.shared_state import SharedState
@@ -71,8 +69,12 @@ def _upload_db(shared_state: 'SharedState'):
             if not client or not shared_state.api_id:
                 logger.error("Aborting DB upload task: client connection or api_id is missing.")
                 return
+            
+            if not shared_state.metadata_manager:
+                logger.error("Aborting DB upload task: MetadataManager is not initialized.")
+                return
 
-            await telegram_comms.sync_database_file(client, shared_state.group_id, mode='upload')
+            await shared_state.metadata_manager.sync_db_to_cloud(client, shared_state.group_id, shared_state.api_id)
             logger.info("Background database upload task completed.")
         except Exception as e:
             logger.error(f"Background database upload task failed: {e}", exc_info=True)

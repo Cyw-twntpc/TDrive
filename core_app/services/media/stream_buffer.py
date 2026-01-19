@@ -152,17 +152,22 @@ class StreamBuffer:
 
     async def _get_chunk_map(self, file_id: int) -> Dict[int, int]:
         """
-        Returns { part_num: message_id } for the given file_id.
+        Returns { part_num: message_id } for the given file_id via MetadataManager.
         """
-        loop = asyncio.get_running_loop()
-        def query():
-            conn = self._db._get_conn()
-            try:
-                cur = conn.cursor()
-                # Assuming file_id passed here is the 'files.id' (content ID).
-                cur.execute("SELECT part_num, message_id FROM chunks WHERE file_id = ? ORDER BY part_num", (file_id,))
-                return {row['part_num']: row['message_id'] for row in cur.fetchall()}
-            finally:
-                conn.close()
-        
-        return await loop.run_in_executor(None, query)
+        if not self.shared_state.metadata_manager:
+            logger.error("MetadataManager not initialized in SharedState.")
+            return {}
+
+        client = self.shared_state.client
+        if not client:
+            return {}
+
+        try:
+            chunks = await self.shared_state.metadata_manager.get_file_chunks(
+                client, self.shared_state.group_id, self.shared_state.api_id, file_id
+            )
+            # chunks is list of [part_num, message_id, part_hash]
+            return {c[0]: c[1] for c in chunks}
+        except Exception as e:
+            logger.error(f"Failed to get chunk map for file {file_id}: {e}")
+            return {}

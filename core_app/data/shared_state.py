@@ -34,3 +34,6 @@ class SharedState:
         self.active_tasks: Dict[str, asyncio.Task] = {}
         # Timer for debouncing database uploads after modifications.
         self.db_upload_timer: Optional[threading.Timer] = None
+        
+        # --- Core Managers ---
+        self.metadata_manager: Optional[Any] = None

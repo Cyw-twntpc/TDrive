@@ -4,6 +4,7 @@ import time
 import datetime
 import logging
 import math
+import threading
 
 from ..common import errors
 
@@ -11,28 +12,60 @@ logger = logging.getLogger(__name__)
 
 class DatabaseHandler:
     TRASH_RETENTION_DAYS = 30
-    _is_initialized = False
+    _instance = None
+    _lock = threading.Lock()
+    
+    # Singleton Pattern
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(DatabaseHandler, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
 
-    def __init__(self, db_path='./file/tdrive.db'):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        if not DatabaseHandler._is_initialized:
-            self._init_db()
-            DatabaseHandler._is_initialized = True
+    def __init__(self, db_path=':memory:'):
+        # Only initialize once
+        if self._initialized:
+            return
+            
+        self.db_path = db_path # Should be ':memory:' for production as per requirement
+        self._connection = None
+        self._init_db()
+        self._initialized = True
 
     def _get_conn(self, db_path=None):
-        path_to_connect = db_path if db_path else self.db_path
-        conn = sqlite3.connect(path_to_connect)
-        conn.execute('PRAGMA synchronous=NORMAL')
-        conn.row_factory = sqlite3.Row
-        return conn
+        """
+        In memory mode, we must return the SAME connection instance every time.
+        If db_path is provided (e.g. for checking old file DBs), we create a new connection.
+        """
+        if db_path and db_path != ':memory:':
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+        if self._connection is None:
+            self._connection = sqlite3.connect(':memory:', check_same_thread=False)
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute('PRAGMA foreign_keys = ON')
+        
+        return self._connection
 
     def _init_db(self):
-        logger.debug(f"Initializing database schema at {self.db_path}...")
+        logger.debug(f"Initializing database schema in {self.db_path}...")
         conn = self._get_conn()
-        conn.execute('PRAGMA journal_mode=WAL')
         cursor = conn.cursor()
+
+        # Map Files Table (New Middleware Table)
+        # Maps logical map ID to physical cloud message ID
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS map_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            msg_id INTEGER, -- Cloud Message ID
+            folder_id INTEGER, -- If aggregated, belongs to this folder
+            ref_count INTEGER DEFAULT 0 -- Garbage collection helper
+        )
+        ''')
 
         # Folder hierarchy table
         cursor.execute('''
@@ -44,26 +77,27 @@ class DatabaseHandler:
             modif_date REAL,
             thumbs_db_msg_id INTEGER,
             thumbs_db_hash TEXT,
+            active_map_id INTEGER, -- Points to map_files.id (Current aggregated map for writing)
             FOREIGN KEY (parent_id) REFERENCES folders (id) ON DELETE CASCADE,
+            FOREIGN KEY (active_map_id) REFERENCES map_files (id) ON DELETE SET NULL,
             UNIQUE (parent_id, name)
         )
         ''')
 
         # Files table (Content Entity)
-        # Stores the unique file content and its properties (hash, size).
-        # De-duplicated by hash.
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hash TEXT UNIQUE NOT NULL,
             size REAL NOT NULL,
             preview_msg_id INTEGER,
-            preview_hash TEXT
+            preview_hash TEXT,
+            map_id INTEGER, -- Reference to map_files table
+            FOREIGN KEY (map_id) REFERENCES map_files (id) ON DELETE SET NULL
         )
         ''')
 
-        # File-Folder Mapping table (File Structure/Metadata)
-        # Maps a logical file (name) in a specific folder to its content (files table).
+        # File-Folder Mapping table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS file_folder_map (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,34 +106,12 @@ class DatabaseHandler:
             name TEXT NOT NULL,
             modif_date REAL,
             FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE,
-            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE RESTRICT, -- RESTRICT prevents deleting files content if still referenced by map
+            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE RESTRICT,
             UNIQUE (folder_id, name)
         )
         ''')
 
-        # Table to store information about each file chunk
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chunks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            part_num INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            part_hash TEXT NOT NULL,
-            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE,
-            UNIQUE (file_id, part_num)
-        )
-        ''')
-
-        # Key-value store for application metadata, like database version
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-        ''')
-
-        # Trash Metadata table
-        # Stores original location and name for soft-deleted items
+        # Trash Metadata
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS trash_metadata (
             item_id INTEGER NOT NULL,
@@ -111,70 +123,96 @@ class DatabaseHandler:
         )
         ''')
         
-        # Ensure the root 'TDrive' folder exists
+        # Init Root
         cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
         if cursor.fetchone() is None:
-            logger.info("Root folder 'TDrive' not found, creating it.")
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date) VALUES (?, ?, ?)", 
                            (None, 'TDrive', time.time()))
 
-        # Ensure the 'Recycle Bin' folder exists
+        # Init Recycle Bin
         cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
         if cursor.fetchone() is None:
-            logger.info("Recycle Bin folder not found, creating it.")
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
                            (None, 'Recycle Bin', time.time(), 0))
         
-        # Ensure the database version is initialized
-        cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
-        if cursor.fetchone() is None:
-            logger.info("Database version not found, initializing to '0'.")
-            cursor.execute("INSERT INTO metadata (key, value) VALUES ('db_version', '0')")
-        
         conn.commit()
-        conn.close()
-        logger.debug("Database schema initialization complete.")
+        # Do not close connection for in-memory DB
 
     def get_expired_items(self) -> list:
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cutoff_date = time.time() - (self.TRASH_RETENTION_DAYS * 86400)
-            
-            cursor.execute("SELECT item_id, item_type FROM trash_metadata WHERE trashed_date < ?", (cutoff_date,))
-            rows = cursor.fetchall()
-            return [{'id': row['item_id'], 'type': row['item_type']} for row in rows]
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cutoff_date = time.time() - (self.TRASH_RETENTION_DAYS * 86400)
+        
+        cursor.execute("SELECT item_id, item_type FROM trash_metadata WHERE trashed_date < ?", (cutoff_date,))
+        rows = cursor.fetchall()
+        return [{'id': row['item_id'], 'type': row['item_type']} for row in rows]
 
-    def _format_timestamp(self, ts: float | None) -> str:
-        if ts is None:
-            return "-"
-        try:
-            dt_obj = datetime.datetime.fromtimestamp(ts)
-            return dt_obj.strftime("%Y/%m/%d %p %I:%M").replace("AM", "上午").replace("PM", "下午")
-        except (ValueError, TypeError):
-            return "-"
+    # --- Map File Helper Methods ---
+
+    def create_map_file_record(self, msg_id: int, folder_id: int | None = None) -> int:
+        """Creates a new record in map_files and returns its ID."""
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO map_files (msg_id, folder_id, ref_count) VALUES (?, ?, 0)", (msg_id, folder_id))
+            return cursor.lastrowid
+
+    def update_map_file_msg_id(self, map_id: int, new_msg_id: int | None):
+        """Updates the cloud message ID for a given map record (O(1) update)."""
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE map_files SET msg_id = ? WHERE id = ?", (new_msg_id, map_id))
+
+    def get_map_file_info(self, map_id: int) -> dict | None:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, msg_id, folder_id, ref_count FROM map_files WHERE id = ?", (map_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def increment_map_ref(self, map_id: int):
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,))
+
+    def decrement_map_ref(self, map_id: int):
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (map_id,))
+
+    def set_folder_active_map(self, folder_id: int, map_id: int | None):
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE folders SET active_map_id = ? WHERE id = ?", (map_id, folder_id))
+            
+    def get_folder_active_map(self, folder_id: int) -> int | None:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT active_map_id FROM folders WHERE id = ?", (folder_id,))
+        res = cursor.fetchone()
+        return res['active_map_id'] if res else None
+
+    # --- Standard Methods (Modified) ---
 
     def _format_size(self, bytes_num: float | int | None) -> str:
-        if not isinstance(bytes_num, (int, float)) or bytes_num is None:
-            return "0 B"
-        if bytes_num == 0:
-            return "0 B"
-        
+        if not isinstance(bytes_num, (int, float)) or bytes_num is None: return "0 B"
+        if bytes_num == 0: return "0 B"
         k = 1024
         sizes = ['B', 'KB', 'MB', 'GB', 'TB']
         i = int(math.floor(math.log(bytes_num, k))) if bytes_num > 0 else 0
-        
-        if i == 0:
-            return f"{bytes_num:.0f} {sizes[i]}"
+        if i == 0: return f"{bytes_num:.0f} {sizes[i]}"
         return f"{bytes_num / (k ** i):.1f} {sizes[i]}"
     
+    def _format_timestamp(self, ts: float | None) -> str:
+        if ts is None: return "-"
+        try:
+            dt_obj = datetime.datetime.fromtimestamp(ts)
+            return dt_obj.strftime("%Y/%m/%d %p %I:%M").replace("AM", "上午").replace("PM", "下午")
+        except: return "-"
+
     def _is_valid_item_name(self, name: str) -> bool:
-        if not name or name in (".", ".."):
-            return False
-        if any(c in name for c in r'\/<>:"|?*'):
-            return False
+        if not name or name in (".", ".."): return False
+        if any(c in name for c in r'\/<>:"|?*'): return False
         return True
 
     def _update_folder_size_recursively(self, cursor: sqlite3.Cursor, folder_id: int, size_delta: float):
@@ -185,64 +223,16 @@ class DatabaseHandler:
             result = cursor.fetchone()
             current_id = result['parent_id'] if result else None
 
-    def _increment_db_version(self, cursor: sqlite3.Cursor):
-        cursor.execute("UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'db_version'")
-
-    def _search_single_folder_items(self, search_term: str, folder_id: int) -> dict:
-        conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            search_pattern = f'%{search_term}%'
-            
-            folders = []
-            files = []
-
-            cursor.execute("SELECT id, name, total_size, modif_date, parent_id FROM folders WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE", 
-                           (folder_id, search_pattern))
-            for row in cursor.fetchall():
-                folders.append({
-                    "id": row['id'],
-                    "parent_id": row['parent_id'],
-                    "name": row['name'],
-                    "raw_size": row['total_size'],
-                    "size": self._format_size(row['total_size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
-                })
-
-            cursor.execute("""
-                SELECT m.id, m.folder_id, m.name, f.size, m.modif_date 
-                FROM file_folder_map m
-                JOIN files f ON m.file_id = f.id
-                WHERE m.folder_id = ? AND m.name LIKE ? COLLATE NOCASE
-            """, (folder_id, search_pattern))
-            
-            for row in cursor.fetchall():
-                files.append({
-                    "id": row['id'], "parent_id": row['folder_id'], "name": row['name'],
-                    "raw_size": row['size'], "size": self._format_size(row['size']),
-                    "modif_date": self._format_timestamp(row['modif_date'])
-                })
-            
-            return {"folders": folders, "files": files}
-        finally:
-            if conn:
-                conn.close()
-
     def _check_name_collision(self, cursor: sqlite3.Cursor, folder_id: int, name: str, item_type: str, exclude_id: int | None = None):
         if item_type == 'folder':
             query = "SELECT id FROM folders WHERE parent_id = ? AND name = ?"
-            params = [folder_id, name]
-            if exclude_id is not None:
-                query += " AND id != ?"
-                params.append(exclude_id)
-        elif item_type == 'file':
-            query = "SELECT id FROM file_folder_map WHERE folder_id = ? AND name = ?"
-            params = [folder_id, name]
-            if exclude_id is not None:
-                query += " AND id != ?"
-                params.append(exclude_id)
         else:
-            raise ValueError("item_type must be 'file' or 'folder'")
+            query = "SELECT id FROM file_folder_map WHERE folder_id = ? AND name = ?"
+        
+        params = [folder_id, name]
+        if exclude_id is not None:
+            query += " AND id != ?"
+            params.append(exclude_id)
 
         cursor.execute(query, params)
         if cursor.fetchone():
@@ -250,764 +240,614 @@ class DatabaseHandler:
     
     def _get_recycle_bin_id(self, cursor: sqlite3.Cursor) -> int:
         cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
-        res = cursor.fetchone()
-        if not res:
-            # Should not happen if init_db works, but safety fallback
-            cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
-                           (None, 'Recycle Bin', time.time(), 0))
-            return cursor.lastrowid
-        return res['id']
-
+        return cursor.fetchone()['id']
 
     # --- Public API ---
 
     def get_folder_contents(self, folder_id: int) -> dict:
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            folders = []
-            files = []
+        cursor = conn.cursor()
+        folders = []
+        files = []
 
-            cursor.execute("SELECT id, name, total_size, modif_date, thumbs_db_msg_id FROM folders WHERE parent_id = ?", (folder_id,))
-            for row in cursor.fetchall():
-                folders.append({
-                    "id": row['id'], "name": row['name'], "raw_size": row['total_size'],
-                    "size": self._format_size(row['total_size']),
-                    "modif_date": self._format_timestamp(row['modif_date']),
-                    "thumbs_db_msg_id": row['thumbs_db_msg_id']
-                })
+        cursor.execute("SELECT id, name, total_size, modif_date, thumbs_db_msg_id FROM folders WHERE parent_id = ?", (folder_id,))
+        for row in cursor.fetchall():
+            folders.append({
+                "id": row['id'], "name": row['name'], "raw_size": row['total_size'],
+                "size": self._format_size(row['total_size']),
+                "modif_date": self._format_timestamp(row['modif_date']),
+                "thumbs_db_msg_id": row['thumbs_db_msg_id']
+            })
 
-            cursor.execute("""
-                SELECT m.id, m.name, f.size, m.modif_date, f.preview_msg_id 
-                FROM file_folder_map m
-                JOIN files f ON m.file_id = f.id
-                WHERE m.folder_id = ?
-            """, (folder_id,))
-            
-            for row in cursor.fetchall():
-                files.append({
-                    "id": row['id'], "name": row['name'], "raw_size": row['size'],
-                    "size": self._format_size(row['size']),
-                    "modif_date": self._format_timestamp(row['modif_date']),
-                    "preview_msg_id": row['preview_msg_id']
-                })
-            
-            return {"folders": folders, "files": files}
-        finally:
-            if conn:
-                conn.close()
+        cursor.execute("""
+            SELECT m.id, m.name, f.size, m.modif_date, f.preview_msg_id 
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            WHERE m.folder_id = ?
+        """, (folder_id,))
+        
+        for row in cursor.fetchall():
+            files.append({
+                "id": row['id'], "name": row['name'], "raw_size": row['size'],
+                "size": self._format_size(row['size']),
+                "modif_date": self._format_timestamp(row['modif_date']),
+                "preview_msg_id": row['preview_msg_id']
+            })
+        
+        return {"folders": folders, "files": files}
 
     def get_folder_tree(self) -> list:
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, parent_id, name FROM folders WHERE name != 'Recycle Bin' ORDER BY name COLLATE NOCASE")
-            return [dict(row) for row in cursor.fetchall()]
-        finally:
-            if conn:
-                conn.close()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, parent_id, name FROM folders WHERE name != 'Recycle Bin' ORDER BY name COLLATE NOCASE")
+        return [dict(row) for row in cursor.fetchall()]
 
     def find_file_by_hash(self, file_hash: str) -> int | None:
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM files WHERE hash = ?", (file_hash,))
-            row = cursor.fetchone()
-            return row['id'] if row else None
-        finally:
-            if conn:
-                conn.close()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM files WHERE hash = ?", (file_hash,))
+        row = cursor.fetchone()
+        return row['id'] if row else None
     
     def add_folder(self, parent_id, name):
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"資料夾名稱 '{name}' 包含無效字元。")
         
         conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM folders WHERE id = ?", (parent_id,))
-                p_info = cursor.fetchone()
-                if p_info and p_info['name'] == 'Recycle Bin':
-                     raise errors.InvalidOperationError("無法在回收桶中手動建立資料夾。")
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM folders WHERE id = ?", (parent_id,))
+            p_info = cursor.fetchone()
+            if p_info and p_info['name'] == 'Recycle Bin':
+                    raise errors.InvalidOperationError("無法在回收桶中建立資料夾。")
 
-                self._check_name_collision(cursor, parent_id, name, 'folder')
+            self._check_name_collision(cursor, parent_id, name, 'folder')
 
-                cursor.execute(
-                    "INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)",
-                    (parent_id, name, time.time(), 0)
-                )
-                self._increment_db_version(cursor)
-                return cursor.lastrowid
-        finally:
-            if conn:
-                conn.close()
+            cursor.execute(
+                "INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)",
+                (parent_id, name, time.time(), 0)
+            )
+            return cursor.lastrowid
 
-    def add_file(self, folder_id: int, name: str, modif_date_ts: float, file_id: int | None = None, 
-                 file_hash: str | None = None, size: float | None = None, chunks_data: list | None = None,
-                 preview_msg_id: int | None = None, preview_hash: str | None = None):
+    def add_file(self, folder_id: int, name: str, modif_date_ts: float, 
+                 file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
+                 preview_msg_id: int | None = None, preview_hash: str | None = None,
+                 map_id: int | None = None):
+        """
+        Modified add_file to support new Schema.
+        If file_id is None (new content), map_id MUST be provided.
+        """
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
 
         conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
-                target_info = cursor.fetchone()
-                if target_info and target_info['name'] == 'Recycle Bin':
-                     raise errors.InvalidOperationError("無法在回收桶中手動新增檔案。")
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
+            target_info = cursor.fetchone()
+            if target_info and target_info['name'] == 'Recycle Bin':
+                    raise errors.InvalidOperationError("無法在回收桶中新增檔案。")
 
-                self._check_name_collision(cursor, folder_id, name, 'file')
+            self._check_name_collision(cursor, folder_id, name, 'file')
+            
+            target_file_id = file_id
+            target_size = size
+
+            if target_file_id is None:
+                if file_hash is None or size is None:
+                    raise ValueError("file_hash and size are required when creating new file content.")
                 
-                target_file_id = file_id
-                target_size = size
-
-                if target_file_id is None:
-                    if file_hash is None or size is None:
-                        raise ValueError("file_hash and size are required when creating new file content.")
-                    
-                    cursor.execute(
-                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash) VALUES (?, ?, ?, ?)",
-                        (file_hash, size, preview_msg_id, preview_hash)
-                    )
-                    target_file_id = cursor.lastrowid
-                    target_size = size
-                    
-                    if chunks_data:
-                        chunk_records = [(target_file_id, c[0], c[1], c[2]) for c in chunks_data]
-                        cursor.executemany("INSERT INTO chunks (file_id, part_num, message_id, part_hash) VALUES (?, ?, ?, ?)", chunk_records)
-                else:
-                    cursor.execute("SELECT size FROM files WHERE id = ?", (target_file_id,))
-                    row = cursor.fetchone()
-                    if not row:
-                        raise errors.PathNotFoundError(f"Referenced file content ID {target_file_id} not found.")
-                    target_size = row['size']
-
                 cursor.execute(
-                    "INSERT INTO file_folder_map (folder_id, file_id, name, modif_date) VALUES (?, ?, ?, ?)",
-                    (folder_id, target_file_id, name, modif_date_ts)
+                    "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_id) VALUES (?, ?, ?, ?, ?)",
+                    (file_hash, size, preview_msg_id, preview_hash, map_id)
                 )
-
-                self._update_folder_size_recursively(cursor, folder_id, target_size)
-                self._increment_db_version(cursor)
+                target_file_id = cursor.lastrowid
                 
-                return target_file_id
-        finally:
-            if conn:
-                conn.close()
+                # Increment ref count for the used map if map_id is provided
+                if map_id is not None:
+                    cursor.execute("UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,))
+            else:
+                cursor.execute("SELECT size FROM files WHERE id = ?", (target_file_id,))
+                row = cursor.fetchone()
+                target_size = row['size']
 
-    def remove_file(self, map_id: int) -> list:
+            cursor.execute(
+                "INSERT INTO file_folder_map (folder_id, file_id, name, modif_date) VALUES (?, ?, ?, ?)",
+                (folder_id, target_file_id, name, modif_date_ts)
+            )
+
+            self._update_folder_size_recursively(cursor, folder_id, target_size)
+            
+            return target_file_id
+
+    def remove_file(self, map_id: int) -> dict | None:
+        """
+        Removes file mapping. If content becomes orphaned, returns the affected map_id and file_id info.
+        Return structure: { "orphan": bool, "file_id": int, "map_id": int, "msg_ids_to_delete": list }
+        """
         conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT m.folder_id, m.file_id, f.size, f.preview_msg_id 
-                    FROM file_folder_map m
-                    JOIN files f ON m.file_id = f.id
-                    WHERE m.id = ?
-                """, (map_id,))
-                
-                map_info = cursor.fetchone()
-                if not map_info:
-                    return []
-                
-                folder_id = map_info['folder_id']
-                file_id = map_info['file_id']
-                size = map_info['size']
-
-                cursor.execute("DELETE FROM file_folder_map WHERE id = ?", (map_id,))
-                cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'file'", (map_id,))
-                
-                self._update_folder_size_recursively(cursor, folder_id, -size)
-                
-                cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (file_id,))
-                still_referenced = cursor.fetchone() is not None
-
-                message_ids = []
-                if not still_referenced:
-                    if map_info['preview_msg_id']:
-                        message_ids.append(map_info['preview_msg_id'])
-                        
-                    cursor.execute("SELECT message_id FROM chunks WHERE file_id = ?", (file_id,))
-                    message_ids.extend([row['message_id'] for row in cursor.fetchall()])
-                    cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
-
-                self._increment_db_version(cursor)
-                return message_ids
-        finally:
-            if conn:
-                conn.close()
-
-    def remove_folder(self, folder_id: int) -> list:
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("SELECT parent_id, total_size, thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
-                folder_info = cursor.fetchone()
-                if not folder_info:
-                    return []
-
-                all_message_ids = []
-                if folder_info['thumbs_db_msg_id']:
-                    all_message_ids.append(folder_info['thumbs_db_msg_id'])
-
-                get_descendants_query = """
-                WITH RECURSIVE folder_hierarchy(id) AS (
-                    SELECT ?
-                    UNION ALL
-                    SELECT f.id FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
-                )
-                SELECT id FROM folder_hierarchy;
-                """
-                cursor.execute(get_descendants_query, (folder_id,))
-                all_folder_ids = [row['id'] for row in cursor.fetchall()]
-                
-                if not all_folder_ids:
-                    return all_message_ids
-
-                folder_placeholders = ','.join(['?'] * len(all_folder_ids))
-
-                cursor.execute(f"SELECT file_id FROM file_folder_map WHERE folder_id IN ({folder_placeholders})", all_folder_ids)
-                affected_content_ids = list(set([row['file_id'] for row in cursor.fetchall()]))
-
-                cursor.execute(f"DELETE FROM file_folder_map WHERE folder_id IN ({folder_placeholders})", all_folder_ids)
-                cursor.execute(f"DELETE FROM folders WHERE id IN ({folder_placeholders})", all_folder_ids)
-                cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,))
-
-                if affected_content_ids:
-                    content_placeholders = ','.join(['?'] * len(affected_content_ids))
-                    cursor.execute(f"SELECT DISTINCT file_id FROM file_folder_map WHERE file_id IN ({content_placeholders})", affected_content_ids)
-                    referenced_content_ids = set([row['file_id'] for row in cursor.fetchall()])
-                    orphan_content_ids = [fid for fid in affected_content_ids if fid not in referenced_content_ids]
-
-                    if orphan_content_ids:
-                        orphan_placeholders = ','.join(['?'] * len(orphan_content_ids))
-                        
-                        # Chunks messages
-                        cursor.execute(f"SELECT message_id FROM chunks WHERE file_id IN ({orphan_placeholders})", orphan_content_ids)
-                        all_message_ids.extend([row['message_id'] for row in cursor.fetchall()])
-                        
-                        # Preview messages
-                        cursor.execute(f"SELECT preview_msg_id FROM files WHERE id IN ({orphan_placeholders}) AND preview_msg_id IS NOT NULL", orphan_content_ids)
-                        all_message_ids.extend([row['preview_msg_id'] for row in cursor.fetchall()])
-                        
-                        cursor.execute(f"DELETE FROM files WHERE id IN ({orphan_placeholders})", orphan_content_ids)
-
-                if folder_info['parent_id'] is not None:
-                    self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])
-                
-                self._increment_db_version(cursor)
-                return all_message_ids
-        finally:
-            if conn:
-                conn.close()
-
-    def soft_delete_item(self, item_id: int, item_type: str):
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                recycle_bin_id = self._get_recycle_bin_id(cursor)
-                
-                if item_type == 'folder':
-                    cursor.execute("SELECT parent_id, name, total_size FROM folders WHERE id = ?", (item_id,))
-                    info = cursor.fetchone()
-                elif item_type == 'file':
-                    cursor.execute("""
-                        SELECT m.folder_id as parent_id, m.name, f.size as total_size 
-                        FROM file_folder_map m 
-                        JOIN files f ON m.file_id = f.id 
-                        WHERE m.id = ?
-                    """, (item_id,))
-                    info = cursor.fetchone()
-                else:
-                    raise ValueError("Invalid item type")
-
-                if not info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 {item_id} 的 {item_type}。")
-
-                current_parent_id = info['parent_id']
-                original_name = info['name']
-                size = info['total_size']
-                
-                if current_parent_id == recycle_bin_id:
-                     raise errors.InvalidOperationError("項目已在回收桶中。")
-
-                timestamp_suffix = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-                new_name = f"{original_name}_deleted_{timestamp_suffix}"
-                
-                if item_type == 'folder':
-                    cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                                   (recycle_bin_id, new_name, time.time(), item_id))
-                else:
-                    cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                                   (recycle_bin_id, new_name, time.time(), item_id))
-
-                cursor.execute("""
-                    INSERT OR REPLACE INTO trash_metadata (item_id, item_type, original_parent_id, original_name, trashed_date)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (item_id, item_type, current_parent_id, original_name, time.time()))
-
-                self._update_folder_size_recursively(cursor, current_parent_id, -size)
-                self._update_folder_size_recursively(cursor, recycle_bin_id, size)
-                self._increment_db_version(cursor)
-        finally:
-            if conn:
-                conn.close()
-
-    def restore_item(self, item_id: int, item_type: str):
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT original_parent_id, original_name 
-                    FROM trash_metadata 
-                    WHERE item_id = ? AND item_type = ?
-                """, (item_id, item_type))
-                metadata = cursor.fetchone()
-                
-                if not metadata:
-                    raise errors.PathNotFoundError("找不到項目的回收桶中繼資料。")
-                
-                original_parent_id = metadata['original_parent_id']
-                target_name = metadata['original_name']
-                
-                cursor.execute("SELECT id FROM folders WHERE id = ?", (original_parent_id,))
-                if not cursor.fetchone():
-                    logger.warning(f"Original parent {original_parent_id} not found. Restoring to root.")
-                    cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
-                    root = cursor.fetchone()
-                    original_parent_id = root['id']
-
-                recycle_bin_id = self._get_recycle_bin_id(cursor)
-                if item_type == 'folder':
-                    cursor.execute("SELECT total_size FROM folders WHERE id = ?", (item_id,))
-                    info = cursor.fetchone()
-                    size = info['total_size']
-                else:
-                    cursor.execute("""
-                        SELECT f.size 
-                        FROM file_folder_map m 
-                        JOIN files f ON m.file_id = f.id 
-                        WHERE m.id = ?
-                    """, (item_id,))
-                    info = cursor.fetchone()
-                    size = info['size']
-
-                base_name = target_name
-                ext = ""
-                if item_type == 'file' and '.' in base_name:
-                    base_name, ext = os.path.splitext(target_name)
-                
-                counter = 0
-                while True:
-                    try:
-                        self._check_name_collision(cursor, original_parent_id, target_name, item_type, exclude_id=item_id)
-                        break
-                    except errors.ItemAlreadyExistsError:
-                        counter += 1
-                        target_name = f"{base_name} ({counter}){ext}"
-
-                if item_type == 'folder':
-                    cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                                   (original_parent_id, target_name, time.time(), item_id))
-                else:
-                    cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
-                                   (original_parent_id, target_name, time.time(), item_id))
-                
-                cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = ?", (item_id, item_type))
-                self._update_folder_size_recursively(cursor, recycle_bin_id, -size)
-                self._update_folder_size_recursively(cursor, original_parent_id, size)
-                self._increment_db_version(cursor)
-                return target_name
-        finally:
-            if conn:
-                conn.close()
-
-    def get_trashed_items(self) -> dict:
-        conn = self._get_conn()
-        try:
+        with conn:
             cursor = conn.cursor()
-            folders = []
-            files = []
-            recycle_bin_id = self._get_recycle_bin_id(cursor)
             
             cursor.execute("""
-                SELECT f.id, tm.original_name as name, f.total_size, tm.trashed_date, f.name as physical_name, tm.original_parent_id, tm.trashed_date as trashed_date_ts
-                FROM folders f
-                JOIN trash_metadata tm ON f.id = tm.item_id AND tm.item_type = 'folder'
-                WHERE f.parent_id = ?
-            """, (recycle_bin_id,))
-            for row in cursor.fetchall():
-                folders.append({
-                    "id": row['id'], 
-                    "name": row['name'], 
-                    "raw_size": row['total_size'],
-                    "size": self._format_size(row['total_size']),
-                    "trashed_date": self._format_timestamp(row['trashed_date']),
-                    "trashed_date_ts": row['trashed_date_ts'],
-                    "original_parent_id": row['original_parent_id'],
-                    "type": "folder"
-                })
-
-            cursor.execute("""
-                SELECT m.id, tm.original_name as name, f.size, tm.trashed_date, tm.original_parent_id, tm.trashed_date as trashed_date_ts
-                FROM file_folder_map m
-                JOIN files f ON m.file_id = f.id
-                JOIN trash_metadata tm ON m.id = tm.item_id AND tm.item_type = 'file'
-                WHERE m.folder_id = ?
-            """, (recycle_bin_id,))
-            for row in cursor.fetchall():
-                files.append({
-                    "id": row['id'], 
-                    "name": row['name'], 
-                    "raw_size": row['size'],
-                    "size": self._format_size(row['size']),
-                    "trashed_date": self._format_timestamp(row['trashed_date']),
-                    "trashed_date_ts": row['trashed_date_ts'],
-                    "original_parent_id": row['original_parent_id'],
-                    "type": "file"
-                })
-            return {"folders": folders, "files": files}
-        finally:
-            if conn:
-                conn.close()
-
-    def empty_trash(self) -> list:
-        conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            recycle_bin_id = self._get_recycle_bin_id(cursor)
-            cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (recycle_bin_id,))
-            folders_to_del = [row['id'] for row in cursor.fetchall()]
-            cursor.execute("SELECT id FROM file_folder_map WHERE folder_id = ?", (recycle_bin_id,))
-            files_to_del = [row['id'] for row in cursor.fetchall()]
-            conn.close()
-            
-            all_msg_ids = []
-            for fid in folders_to_del:
-                all_msg_ids.extend(self.remove_folder(fid))
-            for fid in files_to_del:
-                all_msg_ids.extend(self.remove_file(fid))
-            return all_msg_ids
-        except Exception as e:
-            logger.error(f"Error emptying trash: {e}", exc_info=True)
-            return []
-
-    def rename_folder(self, folder_id: int, new_name: str):
-        if not self._is_valid_item_name(new_name):
-            raise errors.InvalidNameError(f"資料夾名稱 '{new_name}' 包含無效字元。")
-
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
-                folder_info = cursor.fetchone()
-                if not folder_info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 '{folder_id}' 的資料夾。")
-                parent_id = folder_info['parent_id']
-                self._check_name_collision(cursor, parent_id, new_name, 'folder', exclude_id=folder_id)
-                cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?",
-                               (new_name, time.time(), folder_id))
-                self._increment_db_version(cursor)
-        finally:
-            if conn:
-                conn.close()
-
-    def rename_file(self, map_id: int, new_name: str):
-        if not self._is_valid_item_name(new_name):
-            raise errors.InvalidNameError(f"檔案名稱 '{new_name}' 包含無效字元。")
-
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (map_id,))
-                map_info = cursor.fetchone()
-                if not map_info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 '{map_id}' 的檔案。")
-                folder_id = map_info['folder_id']
-                self._check_name_collision(cursor, folder_id, new_name, 'file', exclude_id=map_id)
-                cursor.execute("UPDATE file_folder_map SET name = ?, modif_date = ? WHERE id = ?",
-                               (new_name, time.time(), map_id))
-                self._increment_db_version(cursor)
-        finally:
-            if conn:
-                conn.close()
-
-    def move_file(self, map_id: int, new_parent_id: int):
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT m.folder_id, m.name, m.file_id, f.size 
-                    FROM file_folder_map m
-                    JOIN files f ON m.file_id = f.id
-                    WHERE m.id = ?
-                """, (map_id,))
-                
-                map_info = cursor.fetchone()
-                if not map_info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 '{map_id}' 的檔案。")
-                
-                old_parent_id = map_info['folder_id']
-                file_name = map_info['name']
-                file_size = map_info['size']
-                
-                if old_parent_id == new_parent_id:
-                    return
-
-                if new_parent_id is not None:
-                    cursor.execute("SELECT id, name FROM folders WHERE id = ?", (new_parent_id,))
-                    dest_info = cursor.fetchone()
-                    if not dest_info:
-                        raise errors.PathNotFoundError(f"找不到 ID 為 '{new_parent_id}' 的目標資料夾。")
-                    if dest_info['name'] == 'Recycle Bin':
-                        raise errors.InvalidOperationError("無法手動移動項目至回收桶，請使用刪除功能。")
-
-                self._check_name_collision(cursor, new_parent_id, file_name, 'file')
-                cursor.execute("UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
-                               (new_parent_id, time.time(), map_id))
-                self._update_folder_size_recursively(cursor, old_parent_id, -file_size)
-                self._update_folder_size_recursively(cursor, new_parent_id, file_size)
-                self._increment_db_version(cursor)
-        finally:
-            if conn:
-                conn.close()
-
-    def move_folder(self, folder_id: int, new_parent_id: int):
-        conn = self._get_conn()
-        try:
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT parent_id, name, total_size FROM folders WHERE id = ?", (folder_id,))
-                folder_info = cursor.fetchone()
-                if not folder_info:
-                    raise errors.PathNotFoundError(f"找不到 ID 為 '{folder_id}' 的資料夾。")
-                
-                old_parent_id = folder_info['parent_id']
-                folder_name = folder_info['name']
-                folder_size = folder_info['total_size']
-
-                if old_parent_id == new_parent_id:
-                    return
-
-                if new_parent_id is not None:
-                    cursor.execute("SELECT id, name FROM folders WHERE id = ?", (new_parent_id,))
-                    dest_info = cursor.fetchone()
-                    if not dest_info:
-                        raise errors.PathNotFoundError(f"找不到 ID 為 '{new_parent_id}' 的目標資料夾。")
-                    if dest_info['name'] == 'Recycle Bin':
-                        raise errors.InvalidOperationError("無法手動移動項目至回收桶，請使用刪除功能。")
-
-                    current_check_id = new_parent_id
-                    while current_check_id is not None:
-                        if current_check_id == folder_id:
-                            raise errors.InvalidNameError("無法將資料夾移動至其自身或子資料夾中。")
-                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (current_check_id,))
-                        res = cursor.fetchone()
-                        current_check_id = res['parent_id'] if res else None
-
-                self._check_name_collision(cursor, new_parent_id, folder_name, 'folder')
-                cursor.execute("UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
-                               (new_parent_id, time.time(), folder_id))
-                self._update_folder_size_recursively(cursor, old_parent_id, -folder_size)
-                self._update_folder_size_recursively(cursor, new_parent_id, folder_size)
-                self._increment_db_version(cursor)
-        finally:
-            if conn:
-                conn.close()
-
-    def get_file_details(self, map_id: int) -> dict | None:
-        conn = None
-        try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash
+                SELECT m.folder_id, m.file_id, f.size, f.preview_msg_id, f.map_id 
                 FROM file_folder_map m
                 JOIN files f ON m.file_id = f.id
                 WHERE m.id = ?
             """, (map_id,))
-            file_row = cursor.fetchone()
-            if not file_row:
+            
+            map_info = cursor.fetchone()
+            if not map_info:
                 return None
             
-            file_id = file_row['file_id']
-            cursor.execute("SELECT part_num, message_id, part_hash FROM chunks WHERE file_id = ? ORDER BY part_num", (file_id,))
-            chunks_data = cursor.fetchall()
+            folder_id = map_info['folder_id']
+            file_id = map_info['file_id']
+            size = map_info['size']
+            used_map_id = map_info['map_id']
 
-            return {
-                "id": file_row['map_id'],
-                "file_id": file_id,
-                "name": file_row['name'],
-                "size": file_row['size'],
-                "hash": file_row['hash'],
-                "preview_msg_id": file_row['preview_msg_id'],
-                "preview_hash": file_row['preview_hash'],
-                "chunks": [{"part_num": r['part_num'], "message_id": r['message_id'], "part_hash": r['part_hash']} for r in chunks_data]
+            cursor.execute("DELETE FROM file_folder_map WHERE id = ?", (map_id,))
+            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'file'", (map_id,))
+            
+            self._update_folder_size_recursively(cursor, folder_id, -size)
+            
+            cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (file_id,))
+            still_referenced = cursor.fetchone() is not None
+
+            result = {
+                "orphan": False, 
+                "file_id": file_id, 
+                "map_id": used_map_id,
+                "msg_ids_to_delete": []
             }
-        except Exception as e:
-            logger.error(f"Error fetching details for file map {map_id}: {e}", exc_info=True)
-            return None
-        finally:
-            if conn:
-                conn.close()
 
-    def update_folder_thumbs_info(self, folder_id: int, msg_id: int, hash_val: str):
+            if not still_referenced:
+                result["orphan"] = True
+                if map_info['preview_msg_id']:
+                    result['msg_ids_to_delete'].append(map_info['preview_msg_id'])
+                
+                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                
+                # Decrement map ref count
+                cursor.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (used_map_id,))
+
+            return result
+
+    def remove_folder(self, folder_id: int) -> list:
+        """
+        Recursively removes folder. Returns list of result dicts similar to remove_file.
+        """
         conn = self._get_conn()
-        try:
-            with conn:
-                conn.execute(
-                    "UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?",
-                    (msg_id, hash_val, folder_id)
-                )
-        finally:
-            conn.close()
-
-    def update_file_preview_info(self, file_id: int, msg_id: int, hash_val: str):
-        conn = self._get_conn()
-        try:
-            with conn:
-                conn.execute(
-                    "UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?",
-                    (msg_id, hash_val, file_id)
-                )
-        finally:
-            conn.close()
-
-    def get_folder_contents_recursive(self, folder_id: int) -> dict | None:
-        conn = None
-        try:
-            conn = self._get_conn()
+        with conn:
             cursor = conn.cursor()
             
-            cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
-            root_folder_row = cursor.fetchone()
-            if not root_folder_row:
-                raise errors.PathNotFoundError(f"Root folder with ID {folder_id} not found.")
-            root_folder_name = root_folder_row['name']
+            cursor.execute("SELECT parent_id, total_size, thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
+            folder_info = cursor.fetchone()
+            if not folder_info: return []
 
-            query = """
-            WITH RECURSIVE
-              folder_hierarchy(id, parent_id, name, path) AS (
-                SELECT id, parent_id, name, name FROM folders WHERE id = :folder_id
+            msgs_to_delete = []
+            if folder_info['thumbs_db_msg_id']:
+                msgs_to_delete.append(folder_info['thumbs_db_msg_id'])
+
+            # Get all sub-folders
+            get_descendants = """
+            WITH RECURSIVE folder_hierarchy(id) AS (
+                SELECT ?
                 UNION ALL
-                SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
-              )
-            SELECT
-              fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
-              NULL as size, NULL as hash, NULL as file_id
-            FROM folder_hierarchy fh WHERE fh.id != :folder_id
-            UNION ALL
-            SELECT
-              m.id, 'file' as type, m.name,
-              CASE WHEN fh.id = :folder_id THEN m.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || m.name END as relative_path,
-              f.size, f.hash, f.id as file_id
+                SELECT f.id FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
+            )
+            SELECT id FROM folder_hierarchy;
+            """
+            cursor.execute(get_descendants, (folder_id,))
+            all_folder_ids = [row['id'] for row in cursor.fetchall()]
+            
+            if not all_folder_ids:
+                return [{"msg_ids_to_delete": msgs_to_delete}]
+
+            f_placeholders = ','.join(['?'] * len(all_folder_ids))
+            
+            # Find all files in these folders
+            cursor.execute(f"SELECT id FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids)
+            map_ids = [row['id'] for row in cursor.fetchall()]
+            
+            results = []
+            if msgs_to_delete:
+                results.append({"msg_ids_to_delete": msgs_to_delete})
+            
+            cursor.execute(f"SELECT m.file_id, f.size, f.preview_msg_id, f.map_id FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.folder_id IN ({f_placeholders})", all_folder_ids)
+            files_info = cursor.fetchall() # [(file_id, size, prev_id, map_id), ...]
+            
+            # Delete maps
+            cursor.execute(f"DELETE FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids)
+            
+            # Check orphans
+            orphans = []
+            for finfo in files_info:
+                fid = finfo['file_id']
+                cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (fid,))
+                if not cursor.fetchone():
+                    orphans.append(finfo)
+            
+            # Process orphans
+            for o in orphans:
+                cursor.execute("DELETE FROM files WHERE id = ?", (o['file_id'],))
+                cursor.execute("UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (o['map_id'],))
+                
+                res = {
+                    "orphan": True,
+                    "file_id": o['file_id'],
+                    "map_id": o['map_id'],
+                    "msg_ids_to_delete": []
+                }
+                if o['preview_msg_id']:
+                    res['msg_ids_to_delete'].append(o['preview_msg_id'])
+                results.append(res)
+
+            # Delete folders
+            cursor.execute(f"DELETE FROM folders WHERE id IN ({f_placeholders})", all_folder_ids)
+            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,))
+
+            if folder_info['parent_id']:
+                self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])
+            
+            return results
+
+    def soft_delete_item(self, item_id: int, item_type: str):
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            recycle_bin_id = self._get_recycle_bin_id(cursor)
+            
+            if item_type == 'folder':
+                cursor.execute("SELECT parent_id, name, total_size FROM folders WHERE id = ?", (item_id,))
+                info = cursor.fetchone()
+            else:
+                cursor.execute("""
+                    SELECT m.folder_id as parent_id, m.name, f.size as total_size 
+                    FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?
+                """, (item_id,))
+                info = cursor.fetchone()
+
+            if not info: raise errors.PathNotFoundError(f"Item {item_id} not found.")
+            
+            current_parent_id = info['parent_id']
+            if current_parent_id == recycle_bin_id:
+                raise errors.InvalidOperationError("項目已在回收桶中。")
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO trash_metadata (item_id, item_type, original_parent_id, original_name, trashed_date)
+                VALUES (?, ?, ?, ?, ?)
+            """, (item_id, item_type, info['parent_id'], info['name'], time.time()))
+            
+            timestamp_suffix = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            new_name = f"{info['name']}_deleted_{timestamp_suffix}"
+            
+            if item_type == 'folder':
+                cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (recycle_bin_id, new_name, time.time(), item_id))
+            else:
+                cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (recycle_bin_id, new_name, time.time(), item_id))
+                               
+            self._update_folder_size_recursively(cursor, info['parent_id'], -info['total_size'])
+            self._update_folder_size_recursively(cursor, recycle_bin_id, info['total_size'])
+
+    def restore_item(self, item_id: int, item_type: str):
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT original_parent_id, original_name FROM trash_metadata WHERE item_id = ? AND item_type = ?", (item_id, item_type))
+            meta = cursor.fetchone()
+            if not meta: raise errors.PathNotFoundError("Metadata not found")
+            
+            original_parent_id = meta['original_parent_id']
+            target_name = meta['original_name']
+            
+            cursor.execute("SELECT id FROM folders WHERE id = ?", (original_parent_id,))
+            if not cursor.fetchone():
+                cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
+                original_parent_id = cursor.fetchone()['id']
+            
+            base_name = target_name
+            ext = ""
+            if item_type == 'file' and '.' in base_name:
+                base_name, ext = os.path.splitext(target_name)
+            
+            counter = 0
+            while True:
+                try:
+                    self._check_name_collision(cursor, original_parent_id, target_name, item_type, exclude_id=item_id)
+                    break
+                except errors.ItemAlreadyExistsError:
+                    counter += 1
+                    target_name = f"{base_name} ({counter}){ext}"
+            
+            recycle_bin_id = self._get_recycle_bin_id(cursor)
+            
+            if item_type == 'folder':
+                cursor.execute("SELECT total_size FROM folders WHERE id = ?", (item_id,))
+                size = cursor.fetchone()['total_size']
+                cursor.execute("UPDATE folders SET parent_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (original_parent_id, target_name, time.time(), item_id))
+            else:
+                cursor.execute("""
+                    SELECT f.size FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?
+                """, (item_id,))
+                size = cursor.fetchone()['size']
+                cursor.execute("UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
+                               (original_parent_id, target_name, time.time(), item_id))
+            
+            cursor.execute("DELETE FROM trash_metadata WHERE item_id = ? AND item_type = ?", (item_id, item_type))
+            self._update_folder_size_recursively(cursor, recycle_bin_id, -size)
+            self._update_folder_size_recursively(cursor, original_parent_id, size)
+            return target_name
+
+    def get_trashed_items(self) -> dict:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        folders = []
+        files = []
+        recycle_bin_id = self._get_recycle_bin_id(cursor)
+        
+        # Get trashed folders
+        cursor.execute("""
+            SELECT f.id, tm.original_name as name, f.total_size, tm.trashed_date, f.name as physical_name, tm.original_parent_id, tm.trashed_date as trashed_date_ts
+            FROM folders f
+            JOIN trash_metadata tm ON f.id = tm.item_id AND tm.item_type = 'folder'
+            WHERE f.parent_id = ?
+        """, (recycle_bin_id,))
+        for row in cursor.fetchall():
+            folders.append({
+                "id": row['id'], 
+                "name": row['name'], 
+                "raw_size": row['total_size'],
+                "size": self._format_size(row['total_size']),
+                "trashed_date": self._format_timestamp(row['trashed_date']),
+                "trashed_date_ts": row['trashed_date_ts'],
+                "original_parent_id": row['original_parent_id'],
+                "type": "folder"
+            })
+
+        # Get trashed files
+        cursor.execute("""
+            SELECT m.id, tm.original_name as name, f.size, tm.trashed_date, tm.original_parent_id, tm.trashed_date as trashed_date_ts
             FROM file_folder_map m
             JOIN files f ON m.file_id = f.id
-            JOIN folder_hierarchy fh ON m.folder_id = fh.id;
-            """
-            cursor.execute(query, {"folder_id": folder_id, "root_name": root_folder_name})
-            items = [dict(row) for row in cursor.fetchall()]
+            JOIN trash_metadata tm ON m.id = tm.item_id AND tm.item_type = 'file'
+            WHERE m.folder_id = ?
+        """, (recycle_bin_id,))
+        for row in cursor.fetchall():
+            files.append({
+                "id": row['id'], 
+                "name": row['name'], 
+                "raw_size": row['size'],
+                "size": self._format_size(row['size']),
+                "trashed_date": self._format_timestamp(row['trashed_date']),
+                "trashed_date_ts": row['trashed_date_ts'],
+                "original_parent_id": row['original_parent_id'],
+                "type": "file"
+            })
+        return {"folders": folders, "files": files}
+
+    def empty_trash(self) -> list:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        recycle_id = self._get_recycle_bin_id(cursor)
+        
+        cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (recycle_id,))
+        f_ids = [r['id'] for r in cursor.fetchall()]
+        cursor.execute("SELECT id FROM file_folder_map WHERE folder_id = ?", (recycle_id,))
+        m_ids = [r['id'] for r in cursor.fetchall()]
+        
+        results = []
+        for fid in f_ids:
+            results.extend(self.remove_folder(fid))
+        for mid in m_ids:
+            res = self.remove_file(mid)
+            if res: results.append(res)
             
-            content_ids = list(set([item['file_id'] for item in items if item['type'] == 'file']))
+        return results
+
+    def get_file_details(self, map_id: int) -> dict | None:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash,
+                   mp.msg_id as map_msg_id, f.map_id as map_ref_id
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            JOIN map_files mp ON f.map_id = mp.id
+            WHERE m.id = ?
+        """, (map_id,))
+        row = cursor.fetchone()
+        if not row: return None
+        
+        return {
+            "id": row['map_id'],
+            "file_id": row['file_id'],
+            "name": row['name'],
+            "size": row['size'],
+            "hash": row['hash'],
+            "preview_msg_id": row['preview_msg_id'],
+            "preview_hash": row['preview_hash'],
+            "map_msg_id": row['map_msg_id'],
+            "map_ref_id": row['map_ref_id']
+        }
+    
+    def rename_folder(self, folder_id: int, new_name: str):
+        if not self._is_valid_item_name(new_name): raise errors.InvalidNameError(f"Invalid name '{new_name}'")
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (folder_id,))
+            info = cursor.fetchone()
+            if not info: raise errors.PathNotFoundError(f"Folder {folder_id} not found")
+            self._check_name_collision(cursor, info['parent_id'], new_name, 'folder', exclude_id=folder_id)
+            cursor.execute("UPDATE folders SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), folder_id))
+
+    def rename_file(self, map_id: int, new_name: str):
+        if not self._is_valid_item_name(new_name): raise errors.InvalidNameError(f"Invalid name '{new_name}'")
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (map_id,))
+            info = cursor.fetchone()
+            if not info: raise errors.PathNotFoundError(f"File {map_id} not found")
+            self._check_name_collision(cursor, info['folder_id'], new_name, 'file', exclude_id=map_id)
+            cursor.execute("UPDATE file_folder_map SET name = ?, modif_date = ? WHERE id = ?", (new_name, time.time(), map_id))
+
+    def move_file(self, map_id: int, new_parent_id: int):
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT m.folder_id, m.name, m.file_id, f.size 
+                FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?
+            """, (map_id,))
+            info = cursor.fetchone()
+            if not info: raise errors.PathNotFoundError(f"File {map_id} not found")
             
-            chunks_map = {}
-            if content_ids:
-                chunk_query = f"SELECT file_id, part_num, message_id, part_hash FROM chunks WHERE file_id IN ({','.join(['?'] * len(content_ids))}) ORDER BY file_id, part_num"
-                cursor.execute(chunk_query, content_ids)
-                for chunk_row in cursor.fetchall():
-                    f_id = chunk_row['file_id']
-                    if f_id not in chunks_map: chunks_map[f_id] = []
-                    chunks_map[f_id].append(dict(chunk_row))
+            old_parent_id = info['folder_id']
+            if old_parent_id == new_parent_id: return
 
-            for item in items:
-                if item['type'] == 'file':
-                    item['chunks'] = chunks_map.get(item['file_id'], [])
+            if new_parent_id:
+                cursor.execute("SELECT name FROM folders WHERE id = ?", (new_parent_id,))
+                dest = cursor.fetchone()
+                if not dest: raise errors.PathNotFoundError(f"Dest folder {new_parent_id} not found")
+                if dest['name'] == 'Recycle Bin': raise errors.InvalidOperationError("Use delete to move to Recycle Bin")
 
-            return {"folder_name": root_folder_name, "items": items}
+            self._check_name_collision(cursor, new_parent_id, info['name'], 'file')
+            cursor.execute("UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
+                           (new_parent_id, time.time(), map_id))
+            self._update_folder_size_recursively(cursor, old_parent_id, -info['size'])
+            self._update_folder_size_recursively(cursor, new_parent_id, info['size'])
 
-        except Exception as e:
-            logger.error(f"Failed to recursively fetch contents for folder {folder_id}: {e}", exc_info=True)
-            return None
-        finally:
-            if conn:
-                conn.close()
+    def move_folder(self, folder_id: int, new_parent_id: int):
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT parent_id, name, total_size FROM folders WHERE id = ?", (folder_id,))
+            info = cursor.fetchone()
+            if not info: raise errors.PathNotFoundError(f"Folder {folder_id} not found")
+            
+            old_parent_id = info['parent_id']
+            if old_parent_id == new_parent_id: return
+
+            if new_parent_id:
+                cursor.execute("SELECT name FROM folders WHERE id = ?", (new_parent_id,))
+                dest = cursor.fetchone()
+                if not dest: raise errors.PathNotFoundError(f"Dest {new_parent_id} not found")
+                if dest['name'] == 'Recycle Bin': raise errors.InvalidOperationError("Use delete to move to Recycle Bin")
+                
+                check_id = new_parent_id
+                while check_id:
+                    if check_id == folder_id: raise errors.InvalidOperationError("Cannot move folder into itself")
+                    cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (check_id,))
+                    res = cursor.fetchone()
+                    check_id = res['parent_id'] if res else None
+
+            self._check_name_collision(cursor, new_parent_id, info['name'], 'folder')
+            cursor.execute("UPDATE folders SET parent_id = ?, modif_date = ? WHERE id = ?", 
+                           (new_parent_id, time.time(), folder_id))
+            self._update_folder_size_recursively(cursor, old_parent_id, -info['total_size'])
+            self._update_folder_size_recursively(cursor, new_parent_id, info['total_size'])
+
+    def get_folder_contents_recursive(self, folder_id: int) -> dict | None:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
+        root = cursor.fetchone()
+        if not root: return None
+        
+        query = """
+        WITH RECURSIVE
+          folder_hierarchy(id, parent_id, name, path) AS (
+            SELECT id, parent_id, name, name FROM folders WHERE id = :folder_id
+            UNION ALL
+            SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
+          )
+        SELECT
+          fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
+          NULL as size, NULL as hash, NULL as file_id
+        FROM folder_hierarchy fh WHERE fh.id != :folder_id
+        UNION ALL
+        SELECT
+          m.id, 'file' as type, m.name,
+          CASE WHEN fh.id = :folder_id THEN m.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || m.name END as relative_path,
+          f.size, f.hash, f.id as file_id
+        FROM file_folder_map m
+        JOIN files f ON m.file_id = f.id
+        JOIN folder_hierarchy fh ON m.folder_id = fh.id;
+        """
+        cursor.execute(query, {"folder_id": folder_id, "root_name": root['name']})
+        items = [dict(row) for row in cursor.fetchall()]
+        
+        # NOTE: This no longer returns chunks. Caller needs to use metadata_manager to get chunks.
+        # But for recursive download (folder download), we usually iterate items and then get details one by one.
+        # Or we can attach map_id here.
+        # For compatibility with legacy recursive download, we might need to adjust download logic to fetch chunks later.
+        
+        return {"folder_name": root['name'], "items": items}
 
     def search_db_items(self, search_term: str, base_folder_id: int, progress_callback: callable):
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            folders_to_visit = [base_folder_id]
-            visited_folders = set()
-            
-            folders_batch, files_batch = [], []
-            BATCH_SIZE = 50 
-
-            def yield_batch():
-                nonlocal folders_batch, files_batch
-                if folders_batch or files_batch:
-                    progress_callback({"folders": folders_batch, "files": files_batch})
-                    folders_batch, files_batch = [], []
-
-            while folders_to_visit:
-                current_folder_id = folders_to_visit.pop(0)
-                if current_folder_id in visited_folders:
-                    continue
-                visited_folders.add(current_folder_id)
-
-                local_results = self._search_single_folder_items(search_term, current_folder_id)
-                
-                if local_results["folders"]:
-                    folders_batch.extend(local_results["folders"])
-                if local_results["files"]:
-                    files_batch.extend(local_results["files"])
-
-                if len(folders_batch) + len(files_batch) >= BATCH_SIZE:
-                    yield_batch()
-
-                cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (current_folder_id,))
-                for sub_folder_row in cursor.fetchall():
-                    folders_to_visit.append(sub_folder_row['id'])
-
-            yield_batch()  
-        finally:
-            if conn:
-                conn.close()
-    
-    def get_db_version(self, db_path=None) -> int:
-        target_db_path = db_path if db_path else self.db_path
+        cursor = conn.cursor()
+        folders_to_visit = [base_folder_id]
+        visited = set()
+        folders_batch, files_batch = [], []
         
-        if not os.path.exists(target_db_path):
-            return 0
+        def yield_batch():
+            nonlocal folders_batch, files_batch
+            if folders_batch or files_batch:
+                progress_callback({"folders": folders_batch, "files": files_batch})
+                folders_batch, files_batch = [], []
 
-        conn = self._get_conn(db_path=target_db_path)
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
-            result = cursor.fetchone()
-            return int(result['value']) if result else 0
-        except Exception as e:
-            logger.error(f"Failed to get DB version from '{target_db_path}': {e}", exc_info=True)
-            return 0
-        finally:
-            if conn:
-                conn.close()
+        while folders_to_visit:
+            curr = folders_to_visit.pop(0)
+            if curr in visited: continue
+            visited.add(curr)
+            
+            # Search here
+            pattern = f'%{search_term}%'
+            cursor.execute("SELECT id, name, total_size, modif_date, parent_id FROM folders WHERE parent_id = ? AND name LIKE ? COLLATE NOCASE", (curr, pattern))
+            for row in cursor.fetchall():
+                folders_batch.append({
+                    "id": row['id'], "parent_id": row['parent_id'], "name": row['name'],
+                    "raw_size": row['total_size'], "size": self._format_size(row['total_size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
+
+            cursor.execute("""
+                SELECT m.id, m.folder_id, m.name, f.size, m.modif_date 
+                FROM file_folder_map m JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id = ? AND m.name LIKE ? COLLATE NOCASE
+            """, (curr, pattern))
+            for row in cursor.fetchall():
+                files_batch.append({
+                    "id": row['id'], "parent_id": row['folder_id'], "name": row['name'],
+                    "raw_size": row['size'], "size": self._format_size(row['size']),
+                    "modif_date": self._format_timestamp(row['modif_date'])
+                })
+
+            if len(folders_batch) + len(files_batch) >= 50: yield_batch()
+
+            cursor.execute("SELECT id FROM folders WHERE parent_id = ?", (curr,))
+            for r in cursor.fetchall(): folders_to_visit.append(r['id'])
+        
+        yield_batch()
+
+    def update_folder_thumbs_info(self, folder_id: int, msg_id: int, hash_val: str):
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?", (msg_id, hash_val, folder_id))
+    
+    def update_file_preview_info(self, file_id: int, msg_id: int, hash_val: str):
+        conn = self._get_conn()
+        with conn:
+            conn.execute("UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?", (msg_id, hash_val, file_id))
 
     def check_folder_exists(self, folder_id: int) -> bool:
         conn = self._get_conn()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
+        return cursor.fetchone() is not None

@@ -139,20 +139,18 @@ class StreamingService:
         loop = asyncio.get_running_loop()
         def query():
             conn = self.db._get_conn()
-            try:
-                cur = conn.cursor()
-                query = """
-                    SELECT m.name, f.id as content_id, f.size, f.hash
-                    FROM file_folder_map m
-                    JOIN files f ON m.file_id = f.id
-                    WHERE m.id = ?
-                """
-                cur.execute(query, (map_id,))
-                row = cur.fetchone()
-                if row:
-                    return dict(row)
-                return None
-            finally:
-                conn.close()
+            
+            cur = conn.cursor()
+            query = """
+                SELECT m.name, f.id as content_id, f.size, f.hash
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.id = ?
+            """
+            cur.execute(query, (map_id,))
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+            return None
         
         return await loop.run_in_executor(None, query)

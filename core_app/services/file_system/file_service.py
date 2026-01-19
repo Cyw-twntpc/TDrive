@@ -28,17 +28,10 @@ class FileService:
                 # Try to load from cloud
                 def _get_db_info():
                     db = DatabaseHandler()
-                    # We can reuse get_folder_contents or make a specific query.
-                    # get_folder_contents returns a dict with 'folders' list, we need the parent folder's info.
-                    # Actually, get_folder_contents gets children. We need info of the folder_id itself.
-                    # We need a method to get single folder info or use a raw query here.
                     conn = db._get_conn()
-                    try:
-                        cur = conn.cursor()
-                        cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
-                        return cur.fetchone()
-                    finally:
-                        conn.close()
+                    cur = conn.cursor()
+                    cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+                    return cur.fetchone()
 
                 db_info = await asyncio.to_thread(_get_db_info)
                 
@@ -70,22 +63,20 @@ class FileService:
             def _get_file_preview_info():
                 db = DatabaseHandler()
                 conn = db._get_conn()
-                try:
-                    cur = conn.cursor()
-                    # Since file_id here refers to the 'files' table ID (content ID) or 'file_folder_map' ID?
-                    # The API likely receives the Map ID (item.id from frontend).
-                    # Let's verify: Frontend sends `item.id`. This is Map ID.
-                    # We need to join to get `files` table info.
-                    query = """
-                        SELECT f.preview_msg_id, f.preview_hash, f.id as content_id
-                        FROM file_folder_map m
-                        JOIN files f ON m.file_id = f.id
-                        WHERE m.id = ?
-                    """
-                    cur.execute(query, (file_id,))
-                    return cur.fetchone()
-                finally:
-                    conn.close()
+                
+                cur = conn.cursor()
+                # Since file_id here refers to the 'files' table ID (content ID) or 'file_folder_map' ID?
+                # The API likely receives the Map ID (item.id from frontend).
+                # Let's verify: Frontend sends `item.id`. This is Map ID.
+                # We need to join to get `files` table info.
+                query = """
+                    SELECT f.preview_msg_id, f.preview_hash, f.id as content_id
+                    FROM file_folder_map m
+                    JOIN files f ON m.file_id = f.id
+                    WHERE m.id = ?
+                """
+                cur.execute(query, (file_id,))
+                return cur.fetchone()
 
             info = await asyncio.to_thread(_get_file_preview_info)
             
@@ -278,31 +269,50 @@ class FileService:
         if not client:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
 
-        all_message_ids_to_delete = []
+        if not self.shared_state.metadata_manager:
+             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "MetadataManager 未初始化。"}
+
         try:
+            # 1. Perform DB Deletion and Collect Metadata
             def _sync_delete():
                 db = DatabaseHandler()
-                ids_to_del = []
+                deletion_results = []
                 for item in items:
                     item_id, item_type = item['id'], item['type']
-                    deleted_ids = db.remove_folder(item_id) if item_type == 'folder' else db.remove_file(item_id)
-                    ids_to_del.extend(deleted_ids)
+                    if item_type == 'folder':
+                        res_list = db.remove_folder(item_id)
+                        deletion_results.extend(res_list)
+                    else:
+                        res = db.remove_file(item_id)
+                        if res: deletion_results.append(res)
                     logger.info(f"Marked {item_type} id {item_id} for permanent deletion.")
-                return ids_to_del
+                return deletion_results
 
-            all_message_ids_to_delete = await asyncio.to_thread(_sync_delete)
+            deletion_results = await asyncio.to_thread(_sync_delete)
             
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # 2. Handle Cloud Map Cleanup via MetadataManager
+            # This handles re-uploading maps or deleting empty maps
+            await self.shared_state.metadata_manager.handle_deletion(
+                client, self.shared_state.group_id, self.shared_state.api_id, deletion_results
+            )
             
-            if all_message_ids_to_delete:
-                logger.info(f"Preparing to delete {len(all_message_ids_to_delete)} chunks from Telegram.")
+            # 3. Collect extra message IDs to delete (e.g. previews, thumbs.db)
+            extra_msg_ids = []
+            for res in deletion_results:
+                if res.get('msg_ids_to_delete'):
+                    extra_msg_ids.extend(res['msg_ids_to_delete'])
+
+            # 4. Delete Extra Messages
+            if extra_msg_ids:
+                unique_ids = list(set(extra_msg_ids))
+                logger.info(f"Preparing to delete {len(unique_ids)} extra chunks (previews/thumbs) from Telegram.")
                 
-                for i in range(0, len(all_message_ids_to_delete), 100):
-                    chunk = all_message_ids_to_delete[i:i + 100]
+                for i in range(0, len(unique_ids), 100):
+                    chunk = unique_ids[i:i + 100]
                     await client.delete_messages(self.shared_state.group_id, chunk)
-                logger.info("Successfully deleted chunks from Telegram.")
-            else:
-                logger.info("No remote chunks need to delete from Telegram.")
+            
+            # 5. Sync DB Snapshot
+            await utils.trigger_db_upload_in_background(self.shared_state)
 
             return {"success": True, "message": f"成功永久刪除 {len(items)} 個項目。"}
 
@@ -321,21 +331,35 @@ class FileService:
         if not client:
             return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
 
+        if not self.shared_state.metadata_manager:
+             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "MetadataManager 未初始化。"}
+
         try:
             def _sync_empty():
                 db = DatabaseHandler()
                 return db.empty_trash()
 
-            message_ids = await asyncio.to_thread(_sync_empty)
+            deletion_results = await asyncio.to_thread(_sync_empty)
             
-            await utils.trigger_db_upload_in_background(self.shared_state)
+            # Handle Cloud Map Cleanup
+            await self.shared_state.metadata_manager.handle_deletion(
+                client, self.shared_state.group_id, self.shared_state.api_id, deletion_results
+            )
             
-            if message_ids:
-                logger.info(f"Emptying trash: Deleting {len(message_ids)} chunks from Telegram.")
-                for i in range(0, len(message_ids), 100):
-                    chunk = message_ids[i:i + 100]
+            # Handle extra messages
+            extra_msg_ids = []
+            for res in deletion_results:
+                if res.get('msg_ids_to_delete'):
+                    extra_msg_ids.extend(res['msg_ids_to_delete'])
+            
+            if extra_msg_ids:
+                unique_ids = list(set(extra_msg_ids))
+                logger.info(f"Emptying trash: Deleting {len(unique_ids)} extra chunks from Telegram.")
+                for i in range(0, len(unique_ids), 100):
+                    chunk = unique_ids[i:i + 100]
                     await client.delete_messages(self.shared_state.group_id, chunk)
             
+            await utils.trigger_db_upload_in_background(self.shared_state)
             return {"success": True, "message": "回收桶已清空。"}
 
         except Exception as e:
@@ -364,7 +388,7 @@ class FileService:
                 db = DatabaseHandler()
                 return db.get_expired_items()
 
-            expired_items = await asyncio.to_thread(_get_expired)
+            expired_items = await self.shared_state.loop.run_in_executor(None, _get_expired)
             
             if expired_items:
                 logger.info(f"Found {len(expired_items)} expired items. Deleting permanently...")

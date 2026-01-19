@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Callable
 
 from .data.shared_state import SharedState
 from .data.db_handler import DatabaseHandler
+from .data.metadata_manager import MetadataManager
 
 from .services import (
     AuthService, 
@@ -35,11 +36,15 @@ class TDriveService:
                 self._shared_state.loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(self._shared_state.loop)
 
+        # Initialize Data Layer
+        self.db_handler = DatabaseHandler() # Singleton, In-Memory
+        self.metadata_manager = MetadataManager(self.db_handler)
+        self._shared_state.metadata_manager = self.metadata_manager
+        
         # Initialize Gallery Manager (Shared Instance)
         self.gallery_manager = GalleryManager()
         
         # Initialize Streaming Components
-        self.db_handler = DatabaseHandler()
         self.stream_buffer = StreamBuffer(self._shared_state)
         self.streaming_service = StreamingService(self.stream_buffer, self.db_handler)
         self.player_service = PlayerService()
@@ -48,7 +53,9 @@ class TDriveService:
         self._auth_service = AuthService(self._shared_state)
         self._file_service = FileService(self._shared_state, self.gallery_manager)
         self._folder_service = FolderService(self._shared_state)
-        self._transfer_service = TransferService(self._shared_state, self.gallery_manager)
+        
+        # Inject MetadataManager into TransferService
+        self._transfer_service = TransferService(self._shared_state, self.gallery_manager, self.metadata_manager)
 
     # --- Helper: Progress Adapter ---
     
@@ -137,7 +144,18 @@ class TDriveService:
     # --- Application Lifecycle ---
 
     async def check_startup_login(self) -> Dict[str, Any]:
-        return await self._auth_service.check_startup_login()
+        result = await self._auth_service.check_startup_login()
+        if result.get("logged_in"):
+            # Restore DB Snapshot on successful auto-login
+            logger.info("Auto-login successful. Initializing database from cloud...")
+            await self.metadata_manager.initialize_db(
+                self._shared_state.client, 
+                self._shared_state.group_id, 
+                self._shared_state.api_id
+            )
+            # Schedule maintenance tasks
+            self._schedule_background_task(self._file_service.cleanup_expired_trash())
+        return result
 
     async def close(self):
         # Stop the file status watcher
@@ -152,6 +170,18 @@ class TDriveService:
         
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
+        
+        # Force sync DB to cloud on exit to ensure persistence
+        if self._shared_state.client and self._shared_state.client.is_connected() and self._shared_state.is_logged_in:
+            try:
+                logger.info("Syncing database to cloud before shutdown...")
+                await self.metadata_manager.sync_db_to_cloud(
+                    self._shared_state.client, 
+                    self._shared_state.group_id, 
+                    self._shared_state.api_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to sync DB on exit: {e}")
         
         client = self._shared_state.client
         if client and client.is_connected():
@@ -196,10 +226,21 @@ class TDriveService:
         return await self._auth_service.submit_password(password)
         
     async def perform_post_login_initialization(self) -> Dict[str, Any]:
+        # Initialize Drive (Group, etc.)
         result = await self._auth_service.initialize_drive()
+        
         if result.get("success"):
+            # Init DB from Cloud
+            logger.info("Post-login: Initializing database from cloud...")
+            await self.metadata_manager.initialize_db(
+                self._shared_state.client, 
+                self._shared_state.group_id, 
+                self._shared_state.api_id
+            )
+            
             # Schedule maintenance tasks
             self._schedule_background_task(self._file_service.cleanup_expired_trash())
+            
         return result
 
     async def get_user_info(self) -> Dict[str, Any]:
@@ -209,6 +250,10 @@ class TDriveService:
         return await self._auth_service.get_user_avatar()
 
     async def logout(self) -> Dict[str, Any]:
+        # Clear Memory DB on logout?
+        # self.db_handler = DatabaseHandler() # Re-init? 
+        # Since it's Singleton, we might need a reset method if we want to clear data.
+        # But restarting app is standard for logout.
         return await self._auth_service.perform_logout()
 
     async def reset_client_for_new_login_method(self) -> Dict[str, bool]:
@@ -302,4 +347,4 @@ class TDriveService:
         return self._transfer_service.controller.get_incomplete_transfers()
 
     def remove_transfer_history(self, task_id: str) -> Dict[str, Any]:
-        return self._transfer_service.remove_history_item(task_id)
+        return self._transfer_service.remove_transfer_history(task_id)

@@ -36,6 +36,19 @@ def _get_encryption_key(api_id: str) -> bytes:
     )
     return kdf.derive(machine_specific_pepper)
 
+def generate_key_from_api_id(api_id: str) -> bytes:
+    """Generates a 32-byte AES key using ONLY the api_id and a fixed salt."""
+    # Fixed salt for consistency across devices
+    salt = b'TDRIVE_FIXED_SALT_V1'
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend()
+    )
+    return kdf.derive(str(api_id).encode('utf-8'))
+
 def encrypt_secure_data(data_dict: dict, api_id: str) -> str:
     """Encrypts data using AES-GCM; returns base64(iv + ciphertext + tag)."""
     key = _get_encryption_key(str(api_id))
