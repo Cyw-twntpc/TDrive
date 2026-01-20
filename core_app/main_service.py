@@ -325,9 +325,9 @@ class TDriveService:
     def pause_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
         self._transfer_service.pause_transfer(task_id)
         
-        # Use adapter to send immediate status update
+        # Use adapter to send immediate status update with -1 to preserve UI progress
         adapter = self._create_progress_adapter(progress_callback)
-        adapter(task_id, '', 0, 0, 'paused', 0)
+        adapter(task_id, '', -1, -1, 'paused', 0)
         
         return {"success": True, "message": "已請求暫停任務。"}
 

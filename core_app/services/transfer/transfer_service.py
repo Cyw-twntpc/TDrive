@@ -287,7 +287,7 @@ class TransferService:
 
                 self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
-                progress_callback(main_task_id, base_folder_name, 0, total_size, 'transferring', 0)
+                progress_callback(main_task_id, base_folder_name, -1, total_size, 'transferring', 0)
                 
                 # Execute uploads in parallel with deferred map processing
                 results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
@@ -362,6 +362,25 @@ class TransferService:
             self.controller.update_progress(main_task_id, sub_task_id, part_num, [msg_id, part_hash])
 
         last_uploaded = 0
+        try:
+            task_info = self.controller.get_task(main_task_id)
+            sub_status = None
+            if task_info:
+                if task_info.get('is_folder'):
+                    child = task_info.get('child_tasks', {}).get(sub_task_id)
+                    if child: sub_status = child.get('status')
+                elif main_task_id == sub_task_id:
+                    sub_status = task_info.get('status')
+
+            if sub_status == 'completed':
+                last_uploaded = total_size
+            elif resume_context:
+                last_uploaded = len(resume_context) * fp.CHUNK_SIZE
+                if last_uploaded > total_size:
+                    last_uploaded = total_size
+        except Exception as e:
+            logger.warning(f"Error initializing upload progress for {sub_task_id}: {e}")
+
         last_update_time = time.time()
 
         def ui_cb(current, total):
@@ -427,9 +446,7 @@ class TransferService:
                         self.controller.mark_sub_task_failed(main_task_id, sub_task_id, "檔案已存在")
                         return
 
-                report_total = total_size if main_task_id == sub_task_id else 0
-                initial_transferred = 0 if main_task_id == sub_task_id else -1
-                progress_callback(main_task_id, file_name, initial_transferred, report_total, 'transferring', 0, is_folder=False)
+                progress_callback(main_task_id, file_name, -1, -1, 'transferring', 0, is_folder=False)
 
                 # --- Image Preview ---
                 thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
@@ -574,10 +591,6 @@ class TransferService:
             total_size = 0
             file_items = []
             
-            # Note: get_folder_contents_recursive no longer returns chunks. 
-            # We need to fetch them individually or implement batch fetch in metadata manager.
-            # For now, fetch individually in loop (concurrency limited by semaphore anyway).
-            
             for item in contents['items']:
                 relative_path = item['relative_path']
                 full_local_path = os.path.join(local_root_path, relative_path)
@@ -606,22 +619,12 @@ class TransferService:
             for f in file_items:
                 sub_task_id = str(uuid.uuid4())
                 
-                # Fetch chunks (Lazy fetch inside coroutine would be better, but we need details for DB recording)
-                # But fetch_map_file is async. We can't do it easily in sync loop.
-                # Let's defer chunk fetching to the worker coroutine? 
-                # But add_download_task expects file_details_json.
-                # We can store basic details and fetch chunks just-in-time.
-                
-                # However, for robustness, let's fetch here concurrently?
-                # This might delay start.
-                # Let's use Just-In-Time fetching in _download_single_item if chunks are missing.
-                
                 file_details = {
                     "name": f['name'],
                     "size": f['size'],
                     "hash": f['hash'],
-                    "chunks": [], # Empty initially
-                    "file_id": f['file_id'] # Store ID to fetch later
+                    "chunks": [], 
+                    "file_id": f['file_id'] 
                 }
                 
                 child_tasks_map[sub_task_id] = {
@@ -642,7 +645,7 @@ class TransferService:
 
             self.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
 
-            progress_callback(main_task_id, root_folder_name, 0, total_size, 'transferring', 0)
+            progress_callback(main_task_id, root_folder_name, -1, total_size, 'transferring', 0)
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
             self.controller.mark_sub_task_completed(main_task_id, main_task_id)
@@ -664,6 +667,25 @@ class TransferService:
             self.controller.update_progress(main_task_id, sub_task_id, part_num)
         
         last_downloaded = 0
+        try:
+            task_info = self.controller.get_task(main_task_id)
+            sub_status = None
+            if task_info:
+                if task_info.get('is_folder'):
+                    child = task_info.get('child_tasks', {}).get(sub_task_id)
+                    if child: sub_status = child.get('status')
+                elif main_task_id == sub_task_id:
+                    sub_status = task_info.get('status')
+
+            if sub_status == 'completed':
+                last_downloaded = file_details['size']
+            elif resume_parts:
+                last_downloaded = len(resume_parts) * fp.CHUNK_SIZE
+                if last_downloaded > file_details['size']:
+                    last_downloaded = file_details['size']
+        except Exception as e:
+            logger.warning(f"Error initializing download progress for {sub_task_id}: {e}")
+
         last_update_time = time.time()
 
         def ui_cb(current, total):
@@ -698,8 +720,8 @@ class TransferService:
                 if not file_details.get('chunks'):
                     raise Exception("Unable to retrieve file chunks from cloud.")
 
-                report_total = file_details['size'] if main_task_id == sub_task_id else 0
-                initial_transferred = 0 if main_task_id == sub_task_id else -1
+                report_total = -1
+                initial_transferred = -1
                 progress_callback(main_task_id, file_details['name'], initial_transferred, report_total, 'transferring', 0)
 
                 await telegram_comms.download_file(
@@ -745,7 +767,27 @@ class TransferService:
             client = await utils.ensure_client_connected(self.shared_state)
             if not client: return
             
-            progress_callback(task_id, 0, 0, status='transferring') 
+            # Calculate initial progress for accurate resume UI
+            initial_progress = 0
+            if not task_info.get("is_folder"):
+                if task_info.get('status') == 'completed':
+                    initial_progress = task_info.get('total_size', 0)
+                else:
+                    parts = task_info.get('transferred_parts', [])
+                    initial_progress = len(parts) * fp.CHUNK_SIZE
+            else:
+                for sub_data in task_info.get("child_tasks", {}).values():
+                    if sub_data.get('status') == 'completed':
+                        initial_progress += sub_data.get('total_size', 0)
+                    else:
+                        parts = sub_data.get('transferred_parts', [])
+                        initial_progress += len(parts) * fp.CHUNK_SIZE
+            
+            if initial_progress > task_info.get('total_size', 0):
+                initial_progress = task_info.get('total_size', 0)
+
+            # Send one-time global correction packet
+            progress_callback(task_id, task_info.get('name', ''), initial_progress, task_info.get('total_size', 0), 'transferring', 0) 
 
             tasks_to_run = []
             
@@ -803,7 +845,7 @@ class TransferService:
                  await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
 
             self.controller.mark_sub_task_completed(task_id, task_id)
-            progress_callback(task_id, 0, 0, status='completed')
+            progress_callback(task_id, task_info.get('name', ''), task_info.get('total_size', 0), task_info.get('total_size', 0), 'completed', 0)
 
         except asyncio.CancelledError:
             logger.info(f"Resume task {task_id} cancelled/paused.")
