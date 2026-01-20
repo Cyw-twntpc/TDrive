@@ -348,6 +348,9 @@ class TransferService:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
             
+            # Clean up active sub-tasks tracking container
+            self._active_sub_tasks.pop(main_task_id, None)
+            
             # Ensure busy mode is disabled
             self.db.sync_manager.set_busy(False)
 
@@ -448,8 +451,13 @@ class TransferService:
 
                 progress_callback(main_task_id, file_name, -1, -1, 'transferring', 0, is_folder=False)
 
+
                 # --- Image Preview ---
-                thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
+                thumb_bytes, preview_bytes = None, None
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.tiff'}:
+                    thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
+                
                 preview_msg_id = None
                 preview_hash = None
 
@@ -517,6 +525,9 @@ class TransferService:
                 if sub_task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[sub_task_id]
                 self._active_sub_tasks[main_task_id].discard(sub_task_id)
+                # If standalone task, remove the empty set to prevent leak
+                if main_task_id == sub_task_id:
+                    self._active_sub_tasks.pop(main_task_id, None)
 
     # --- DOWNLOAD OPERATIONS ---
 
@@ -658,6 +669,7 @@ class TransferService:
         finally:
             if main_task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[main_task_id]
+            self._active_sub_tasks.pop(main_task_id, None)
 
     async def _download_single_item(self, client, main_task_id: str, sub_task_id: str, 
                                     save_path: str, file_details: Dict,
@@ -747,6 +759,9 @@ class TransferService:
                 if sub_task_id in self.shared_state.active_tasks:
                     del self.shared_state.active_tasks[sub_task_id]
                 self._active_sub_tasks[main_task_id].discard(sub_task_id)
+                # Clean up tracking set for standalone tasks
+                if main_task_id == sub_task_id:
+                    self._active_sub_tasks.pop(main_task_id, None)
 
     # --- CONTROL METHODS ---
 
@@ -842,6 +857,7 @@ class TransferService:
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
             if task_info['type'] == 'upload':
+                 await self._finalize_thumbnails(client, task_id)
                  await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
 
             self.controller.mark_sub_task_completed(task_id, task_id)
@@ -853,6 +869,7 @@ class TransferService:
         finally:
             if task_id in self.shared_state.active_tasks:
                 del self.shared_state.active_tasks[task_id]
+            self._active_sub_tasks.pop(task_id, None)
 
     def pause_transfer(self, task_id: str):
         task = self.shared_state.active_tasks.get(task_id)

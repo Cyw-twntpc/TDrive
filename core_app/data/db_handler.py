@@ -69,6 +69,11 @@ class DatabaseHandler:
 
     def _init_db(self):
         logger.debug(f"Initializing database schema in {self.db_path}...")
+        self._create_tables()
+        self._seed_default_data()
+        self._create_triggers()
+
+    def _create_tables(self):
         conn = self._get_conn()
         cursor = conn.cursor()
 
@@ -138,19 +143,6 @@ class DatabaseHandler:
         )
         ''')
         
-        # Init Root
-        cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
-        if cursor.fetchone() is None:
-            # Init data doesn't trigger sync/log
-            cursor.execute("INSERT INTO folders (parent_id, name, modif_date) VALUES (?, ?, ?)", 
-                           (None, 'TDrive', time.time()))
-
-        # Init Recycle Bin
-        cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
-        if cursor.fetchone() is None:
-            cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
-                           (None, 'Recycle Bin', time.time(), 0))
-        
         # --- FTS5 Search Index ---
         # Create virtual table for full-text search
         cursor.execute('''
@@ -162,7 +154,30 @@ class DatabaseHandler:
             tokenize='porter unicode61'
         )
         ''')
+        conn.commit()
 
+    def _seed_default_data(self):
+        """Inserts mandatory root objects if they don't exist."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Init Root
+        cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'TDrive'")
+        if cursor.fetchone() is None:
+            cursor.execute("INSERT INTO folders (parent_id, name, modif_date) VALUES (?, ?, ?)", 
+                           (None, 'TDrive', time.time()))
+
+        # Init Recycle Bin
+        cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
+        if cursor.fetchone() is None:
+            cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
+                           (None, 'Recycle Bin', time.time(), 0))
+        conn.commit()
+
+    def _create_triggers(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
         # Triggers for Folders
         cursor.execute('''
         CREATE TRIGGER IF NOT EXISTS folders_ai AFTER INSERT ON folders BEGIN
@@ -200,8 +215,14 @@ class DatabaseHandler:
             WHERE item_type='file' AND item_id=new.id;
         END;
         ''')
-        
         conn.commit()
+
+    def rebuild_search_index(self):
+        """Manually rebuilds the FTS5 search index."""
+        conn = self._get_conn()
+        with conn:
+            conn.execute("INSERT INTO search_index(search_index) VALUES('rebuild')")
+            logger.info("Search index rebuilt.")
 
     def get_expired_items(self) -> list:
         conn = self._get_conn()

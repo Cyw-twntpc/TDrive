@@ -3,6 +3,7 @@ import gzip
 import logging
 import asyncio
 import io
+import os
 import time
 from typing import Dict, List, OrderedDict, Any, Optional
 from collections import OrderedDict as SysOrderedDict
@@ -94,39 +95,77 @@ class MetadataManager:
                         # 1. Disable Foreign Keys for restoration
                         conn.execute("PRAGMA foreign_keys = OFF")
                         
-                        # 2. Clear existing schema to avoid conflicts with CREATE TABLE in dump
+                        # 2. Clear existing schema completely
                         cursor = conn.cursor()
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+                        for trigger in cursor.fetchall(): cursor.execute(f"DROP TRIGGER IF EXISTS {trigger[0]}")
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='view'")
+                        for view in cursor.fetchall(): cursor.execute(f"DROP VIEW IF EXISTS {view[0]}")
                         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-                        tables = [row[0] for row in cursor.fetchall()]
-                        for table in tables:
-                            cursor.execute(f"DROP TABLE IF EXISTS {table}")
+                        for table in cursor.fetchall(): cursor.execute(f"DROP TABLE IF EXISTS {table[0]}")
                         
-                        # 3. Execute restoration script
-                        conn.executescript(sql_dump)
+                        # 3. Create Tables ONLY (No Triggers or seed data yet)
+                        self.db._create_tables()
                         
-                        # 4. Re-enable Foreign Keys
+                        # 4. Smart Import: Execute INSERTs only for allowed core tables
+                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'map_files', 'trash_metadata'}
+                        sql_dump = sql_dump.replace('\r\n', '\n')
+                        statements = sql_dump.split(';\n')
+                        
+                        for statement in statements:
+                            stmt = statement.strip()
+                            if stmt.upper().startswith("INSERT INTO"):
+                                try:
+                                    parts = stmt.split()
+                                    if len(parts) > 2:
+                                        raw_name = parts[2]
+                                        table_name = raw_name.split('(')[0].strip('"').strip("'").lower()
+                                        
+                                        if table_name in ALLOWED_TABLES:
+                                            conn.execute(stmt)
+                                except Exception as e:
+                                    logger.warning(f"Skipping problematic INSERT: {e}")
+
+                        # 5. Create Triggers
+                        self.db._create_triggers()
+                        
+                        # 6. Rebuild Search Index (since we skipped triggers during insert)
+                        self.db.rebuild_search_index()
+
+                        # 7. Re-enable Foreign Keys
                         conn.execute("PRAGMA foreign_keys = ON")
                         
                         logger.info("Database successfully restored from snapshot.")
+                        
                     except Exception as restore_err:
                         logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
-                        # Attempt to re-enable FKs even on failure
-                        try: conn.execute("PRAGMA foreign_keys = ON")
-                        except: pass
-                        # Continue to Replay even if snapshot failed? No, maybe dangerous.
-                        # But we should try to recover what we can.
-                        
+                        # Fallback: Initialize fresh DB structure
+                        self.db._init_db()
+                        conn.execute("PRAGMA foreign_keys = ON")
                 except Exception as e:
                     logger.error(f"Failed to decrypt/restore snapshot: {e}")
-                    # If snapshot is corrupt, we still want to replay local logs if possible?
-                    # Yes.
+                    # If snapshot decryption fails, start fresh to stay functional
+                    self.db._init_db()
             else:
                 logger.info("No remote DB snapshot found. Starting with fresh in-memory DB.")
 
             # --- CRITICAL: Replay Transaction Log ---
             # Replays any pending operations that were not synced before crash/shutdown
             if hasattr(self.db, 'transaction_logger'):
-                self.db.transaction_logger.replay(conn)
+                try:
+                    self.db.transaction_logger.replay(conn)
+                except Exception as log_err:
+                    logger.error(f"Transaction log replay failed: {log_err}")
+                    # If log is malformed, clear it to prevent permanent crash loop
+                    if "malformed" in str(log_err) or "corrupt" in str(log_err):
+                        logger.warning("Deleting corrupt transaction log files.")
+                        self.db.transaction_logger.clear() # Clears .bak
+                        # Also clear primary log if needed (TransactionLogger doesn't have delete_primary, but clear handles bak)
+                        # We might need to manually remove the main file if replay failed on it.
+                        try:
+                            if os.path.exists(self.db.transaction_logger.log_path):
+                                os.remove(self.db.transaction_logger.log_path)
+                        except: pass
 
             return True
 

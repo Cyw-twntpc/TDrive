@@ -78,13 +78,41 @@ const GalleryHandler = {
         if (!this.modal) this.init(); // Lazy init if needed
         
         // Filter images from current folder
-        this.currentImages = AppState.currentFolderContents.files.filter(f => {
+        let images = AppState.currentFolderContents.files.filter(f => {
             const ext = f.name.split('.').pop().toLowerCase();
             return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
         });
 
-        if (this.currentImages.length === 0) return;
+        if (images.length === 0) return;
 
+        // Apply same sorting as file list
+        const { key, order } = AppState.currentSort;
+        images.sort((a, b) => {
+            let valA, valB;
+            switch (key) {
+                case 'name':
+                    return a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin', { numeric: true, sensitivity: 'base' }) * (order === 'asc' ? 1 : -1);
+                case 'type':
+                    // For gallery, we know they are all images, but extension might differ
+                    valA = a.name.split('.').pop().toLowerCase();
+                    valB = b.name.split('.').pop().toLowerCase();
+                    return valA.localeCompare(valB) * (order === 'asc' ? 1 : -1);
+                case 'date':
+                    valA = new Date(a.modif_date);
+                    valB = new Date(b.modif_date);
+                    break;
+                case 'size':
+                    valA = a.raw_size;
+                    valB = b.raw_size;
+                    break;
+                default: return 0;
+            }
+            if (valA < valB) return order === 'asc' ? -1 : 1;
+            if (valA > valB) return order === 'asc' ? 1 : -1;
+            return a.name.localeCompare(b.name);
+        });
+
+        this.currentImages = images;
         this.currentIndex = this.currentImages.findIndex(f => f.id === startFileId);
         if (this.currentIndex === -1) this.currentIndex = 0;
 
