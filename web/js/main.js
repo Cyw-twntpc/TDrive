@@ -55,6 +55,21 @@ document.addEventListener('DOMContentLoaded', () => {
             AppState.currentFolderContents = data;
             renderListAndSyncManager();
         } else {
+            if (data && data.error_code === 'PATH_NOT_FOUND') {
+                console.warn("Current folder not found, navigating up.");
+                // Try to find parent from folderMap, otherwise go to Root
+                const currentInfo = AppState.folderMap.get(AppState.currentFolderId);
+                const parentId = currentInfo ? currentInfo.parent_id : null;
+                
+                if (parentId) {
+                    navigateTo(parentId);
+                } else {
+                    // Fallback to root if we can't find parent (or we are at root and it's gone? Unlikely)
+                    const root = AppState.folderTreeData.find(f => f.parent_id === null);
+                    if (root) navigateTo(root.id);
+                }
+                return;
+            }
             UIManager.handleBackendError(data || { message: "無法載入資料夾內容。" });
         }
     }
@@ -292,6 +307,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (window.tdrive_bridge.searchResultsReady) {
             window.tdrive_bridge.searchResultsReady.connect(onSearchResultsReady);
+        }
+        if (window.tdrive_bridge.folder_content_refresh_required) {
+            window.tdrive_bridge.folder_content_refresh_required.connect((changedFolderIds) => {
+                // 1. Refresh Tree if -1 is present (Structural change)
+                if (changedFolderIds.includes(-1)) {
+                    ApiService.getFolderTreeData().then(rawFolderTree => {
+                        if (Array.isArray(rawFolderTree)) {
+                            AppState.folderTreeData = rawFolderTree;
+                            AppState.folderMap.clear();
+                            AppState.folderTreeData.forEach(f => AppState.folderMap.set(f.id, f));
+                            FileTreeHandler.render(AppState, navigateTo);
+                        }
+                    });
+                }
+
+                // 2. Refresh File List if current folder is affected
+                // Use loose equality to match IDs regardless of being Number or String
+                const isCurrentAffected = changedFolderIds.some(fid => fid == AppState.currentFolderId);
+                
+                if (isCurrentAffected) {
+                    const requestId = Date.now().toString();
+                    AppState.currentViewRequestId = requestId;
+                    ApiService.getFolderContents(AppState.currentFolderId, requestId);
+                }
+            });
         }
         console.log("Successfully connected to backend signals.");
 

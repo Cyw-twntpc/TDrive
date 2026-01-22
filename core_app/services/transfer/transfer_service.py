@@ -35,9 +35,53 @@ class TransferService:
         self.gallery_manager = gallery_manager
         self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
         self._active_sub_tasks: Dict[str, set] = defaultdict(set)
+        
+        self._refresh_callback: Optional[Callable] = None
+        self._last_refresh_time = 0
+        self._pending_refresh_folders = set()
+        self._refresh_timer_task: Optional[asyncio.TimerHandle] = None
+
         self.controller.reset_zombie_tasks()
         all_tasks = self.controller.get_incomplete_transfers()
         self.watcher.load_initial_watches(all_tasks['uploads'], all_tasks['downloads'])
+
+    def set_refresh_callback(self, callback: Callable):
+        self._refresh_callback = callback
+
+    def _trigger_folder_refresh(self, folder_ids: List[int]):
+        """
+        Throttled trigger for folder list refresh. 
+        Ensures signal is sent at most once per second.
+        """
+        if not self._refresh_callback or not folder_ids:
+            return
+
+        # Filter out None/0 if any
+        valid_ids = [fid for fid in folder_ids if fid]
+        if not valid_ids: return
+        
+        self._pending_refresh_folders.update(valid_ids)
+        
+        loop = self.shared_state.loop
+        now = time.time()
+        
+        def _emit():
+            if self._refresh_callback and self._pending_refresh_folders:
+                ids = list(self._pending_refresh_folders)
+                self._pending_refresh_folders.clear()
+                self._refresh_callback(ids)
+                self._last_refresh_time = time.time()
+            self._refresh_timer_task = None
+
+        if self._refresh_timer_task:
+            return
+
+        elapsed = now - self._last_refresh_time
+        if elapsed >= 1.0:
+            _emit()
+        else:
+            delay = 1.0 - elapsed
+            self._refresh_timer_task = loop.call_later(delay, _emit)
 
     def set_file_status_callback(self, callback: Callable):
         self.watcher._callback = callback
@@ -163,6 +207,8 @@ class TransferService:
         
         finally:
             self.db.sync_manager.set_busy(False)
+            # Trigger final refresh after batch upload and sync
+            self._trigger_folder_refresh([parent_id])
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
         base_folder_name = os.path.basename(local_folder_path)
@@ -249,6 +295,10 @@ class TransferService:
                             if found:
                                 path_to_remote_id[local_dir_key] = found['id']
 
+                # Trigger refresh so the newly created folders appear immediately
+                # Include -1 to update the folder tree in the sidebar
+                self._trigger_folder_refresh([parent_id, -1])
+
                 child_tasks_map = {}
                 tasks_to_run = []
                 real_total_size = 0
@@ -297,28 +347,8 @@ class TransferService:
                 
                 transfers_by_folder = defaultdict(dict) # { folder_id: { fid: chunks } }
                 
-                for res in results:
-                    if isinstance(res, Exception):
-                        logger.error(f"Sub-task failed: {res}")
-                        continue
-                    if res is None:
-                        continue # Skipped or Deduplicated
-                    
-                    fid, chunks = res
-                    if not chunks: continue
-                    
-                    # Resolve folder_id
-                    def _get_fid_parent():
-                        conn = self.db._get_conn()
-                        cur = conn.cursor()
-                        cur.execute("SELECT folder_id FROM file_folder_map WHERE file_id = ?", (fid,))
-                        row = cur.fetchone()
-                        return row['folder_id'] if row else None
-                    
-                    folder_id = await loop.run_in_executor(None, _get_fid_parent)
-                    if folder_id:
-                        transfers_by_folder[folder_id][fid] = chunks
-
+                # ...
+                
                 # Execute Batch Updates
                 for folder_id, file_map in transfers_by_folder.items():
                     if file_map:
@@ -326,6 +356,9 @@ class TransferService:
                             client, self.shared_state.group_id, self.shared_state.api_id,
                             folder_id, file_map
                         )
+                
+                # Trigger refresh for all folders involved in batch update
+                self._trigger_folder_refresh(list(transfers_by_folder.keys()) + [parent_id])
 
                 # Sync handled by finally block
                 
@@ -412,6 +445,13 @@ class TransferService:
                 if not os.path.exists(file_path):
                     raise FileNotFoundError(f"找不到檔案：{file_path}")
 
+                # Manually set status to transferring so DB query can find it
+                self.controller.db.update_sub_task_status(sub_task_id, "transferring")
+
+                # Trigger refresh to show this file in the list as "Uploading"
+                # Since it has acquired the semaphore, it's about to start.
+                self._trigger_folder_refresh([parent_id])
+
                 loop = asyncio.get_running_loop()
                 total_size = os.path.getsize(file_path)
 
@@ -472,6 +512,8 @@ class TransferService:
                     )
                     if preview_upload_info:
                         preview_msg_id = preview_upload_info[0][1]
+                        # Track for cleanup in case of cancellation
+                        self.controller.set_preview_msg_id(sub_task_id, preview_msg_id)
 
                 # --- Phase 1: Upload Chunks ---
                 split_files_info = await telegram_comms.upload_file_to_cloud(
@@ -732,9 +774,7 @@ class TransferService:
                 if not file_details.get('chunks'):
                     raise Exception("Unable to retrieve file chunks from cloud.")
 
-                report_total = -1
-                initial_transferred = -1
-                progress_callback(main_task_id, file_details['name'], initial_transferred, report_total, 'transferring', 0)
+                progress_callback(main_task_id, file_details['name'], -1, -1, 'transferring', 0)
 
                 await telegram_comms.download_file(
                     client, self.shared_state.group_id, file_details, os.path.dirname(save_path),
@@ -899,6 +939,10 @@ class TransferService:
         self.controller.remove_task(task_id)
         
         if task_info:
+            # Trigger refresh for the parent folder to remove the uploading entry
+            if task_info.get('remote_id'):
+                 self._trigger_folder_refresh([task_info['remote_id']])
+            
             asyncio.run_coroutine_threadsafe(self._cleanup_task_data(task_info), self.shared_state.loop)
 
         return {"success": True, "message": "任務已取消並開始背景清理。"}
@@ -939,65 +983,86 @@ class TransferService:
                 client = await utils.ensure_client_connected(self.shared_state)
                 if not client: return
 
+                # Suppress DB sync during batch cleanup - Start early
+                self.db.sync_manager.set_busy(True)
+                
                 message_ids_to_delete = []
+                affected_parents = set()
 
-                # Clean up created DB artifacts via Metadata Manager (handles map cleanup)
-                task_id = task_info.get('task_id')
-                logger.info(f"Cleanup: Starting artifact cleanup for task {task_id}")
-                if task_id:
-                    artifacts = await self.shared_state.loop.run_in_executor(None, self.controller.get_created_artifacts, task_id)
-                    
-                    # We need to use metadata_manager.handle_deletion for proper cleanup
-                    # But handle_deletion expects deletion results from db.remove_file
-                    
-                    def _cleanup_db_items():
-                        results = []
-                        for artifact in artifacts:
+                try:
+                    # Clean up created DB artifacts via Metadata Manager (handles map cleanup)
+                    task_id = task_info.get('task_id')
+                    logger.info(f"Cleanup: Starting artifact cleanup for task {task_id}")
+                    if task_id:
+                        artifacts = await self.shared_state.loop.run_in_executor(None, self.controller.get_created_artifacts, task_id)
+                        
+                        def _cleanup_db_items():
+                            results = []
+                            for artifact in artifacts:
+                                try:
+                                    if artifact['artifact_type'] == 'file':
+                                        res = self.db.remove_file(artifact['db_id'])
+                                        if res: results.append(res)
+                                    elif artifact['artifact_type'] == 'folder':
+                                        res_list = self.db.remove_folder(artifact['db_id'])
+                                        results.extend(res_list)
+                                except Exception: pass
+                            return results
+
+                        deletion_results = await self.shared_state.loop.run_in_executor(None, _cleanup_db_items)
+                        
+                        # Collect affected parents for list refresh
+                        for res in deletion_results:
+                            if res.get('parent_id'):
+                                affected_parents.add(res['parent_id'])
+                        
+                        # Process cloud map cleanup
+                        await self.metadata_manager.handle_deletion(client, self.shared_state.group_id, self.shared_state.api_id, deletion_results)
+                        
+                        # Collect extra msg ids (thumbs, previews etc)
+                        for res in deletion_results:
+                            if res.get('msg_ids_to_delete'):
+                                message_ids_to_delete.extend(res['msg_ids_to_delete'])
+
+                    def collect_cleanup_info(info):
+                        # Collect Chunk Message IDs
+                        if info.get('split_files_info'):
+                            for item in info['split_files_info']:
+                                if len(item) >= 2:
+                                    message_ids_to_delete.append(item[1])
+                        # Collect Preview Message ID (Recently added tracking)
+                        if info.get('preview_msg_id'):
+                            message_ids_to_delete.append(info['preview_msg_id'])
+
+                    if is_folder:
+                        child_tasks = task_info.get('child_tasks', {})
+                        for child in child_tasks.values():
+                            collect_cleanup_info(child)
+                    else:
+                        collect_cleanup_info(task_info)
+
+                    if message_ids_to_delete:
+                        unique_ids = list(set(message_ids_to_delete))
+                        batch_size = 100
+                        for i in range(0, len(unique_ids), batch_size):
+                            batch = unique_ids[i:i + batch_size]
                             try:
-                                if artifact['artifact_type'] == 'file':
-                                    res = self.db.remove_file(artifact['db_id'])
-                                    if res: results.append(res)
-                                elif artifact['artifact_type'] == 'folder':
-                                    # remove_folder returns a list of results
-                                    res_list = self.db.remove_folder(artifact['db_id'])
-                                    results.extend(res_list)
-                            except Exception: pass
-                        return results
-
-                    deletion_results = await self.shared_state.loop.run_in_executor(None, _cleanup_db_items)
-                    
-                    # Process cloud cleanup
-                    await self.metadata_manager.handle_deletion(client, self.shared_state.group_id, self.shared_state.api_id, deletion_results)
-                    
-                    # Collect extra msg ids if any returned directly
-                    for res in deletion_results:
-                        if res.get('msg_ids_to_delete'):
-                            message_ids_to_delete.extend(res['msg_ids_to_delete'])
-
-                def collect_msg_ids(info_list):
-                    if info_list:
-                        for item in info_list:
-                            if len(item) >= 2:
-                                message_ids_to_delete.append(item[1])
-
-                if is_folder:
-                    child_tasks = task_info.get('child_tasks', {})
-                    for child in child_tasks.values():
-                        collect_msg_ids(child.get('split_files_info'))
-                else:
-                    collect_msg_ids(task_info.get('split_files_info'))
-
-                if message_ids_to_delete:
-                    unique_ids = list(set(message_ids_to_delete))
-                    batch_size = 100
-                    for i in range(0, len(unique_ids), batch_size):
-                        batch = unique_ids[i:i + batch_size]
-                        try:
-                            await client.delete_messages(self.shared_state.group_id, batch)
-                        except Exception:
-                            pass
+                                await client.delete_messages(self.shared_state.group_id, batch)
+                            except Exception as del_err:
+                                logger.error(f"Failed to delete messages in cleanup: {del_err}")
+                finally:
+                    self.db.sync_manager.set_busy(False) # Release and trigger ONE sync
                             
             logger.info("Cleanup completed successfully.")
+            # Trigger refresh for all affected folders + dummy ID for tree update
+            refresh_ids = list(affected_parents) + [-1]
+            
+            # Fix: Check parent_id (upload) or db_id (download) as remote_id key doesn't exist in get_task result
+            main_remote_id = task_info.get('parent_id') or task_info.get('db_id')
+            if main_remote_id:
+                refresh_ids.append(main_remote_id)
+            
+            self._trigger_folder_refresh(refresh_ids)
 
         except Exception as e:
             logger.error(f"Error during task cleanup: {e}", exc_info=True)

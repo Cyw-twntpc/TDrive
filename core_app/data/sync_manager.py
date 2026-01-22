@@ -20,7 +20,7 @@ class SyncManager:
         self._timer: Optional[threading.Timer] = None
         self._sync_callback: Optional[Callable] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._busy = False
+        self._busy_count = 0 # Changed from boolean to counter
 
     def set_callback(self, callback: Callable, loop: asyncio.AbstractEventLoop):
         """
@@ -32,19 +32,20 @@ class SyncManager:
 
     def set_busy(self, busy: bool):
         """
-        Sets the busy state. When busy, syncs are suppressed until:
-        1. Busy state ends (set_busy(False))
-        2. Score exceeds FORCE_SYNC_SCORE
+        Sets the busy state using a reference counter.
+        Syncs are suppressed as long as _busy_count > 0.
         """
         with self._lock:
-            if self._busy == busy:
-                return
+            if busy:
+                self._busy_count += 1
+            else:
+                if self._busy_count > 0:
+                    self._busy_count -= 1
             
-            self._busy = busy
-            logger.info(f"SyncManager busy state set to: {busy}")
+            logger.debug(f"SyncManager busy count: {self._busy_count}")
             
-            if not self._busy and self._score > 0:
-                # If we just finished being busy and have pending changes, sync immediately
+            # If we just finished being busy (count dropped to 0) and have pending changes
+            if self._busy_count == 0 and self._score > 0:
                 self._trigger_sync_now()
 
     def add_change(self, score_delta: int = 1):
@@ -53,9 +54,9 @@ class SyncManager:
         """
         with self._lock:
             self._score += score_delta
-            logger.debug(f"Sync score updated: {self._score} (Busy: {self._busy})")
+            is_busy = self._busy_count > 0
 
-            if self._busy:
+            if is_busy:
                 # In busy mode, only sync if we hit the safety ceiling
                 if self._score >= self.FORCE_SYNC_SCORE:
                     logger.info("Force sync triggered during busy mode (score limit reached).")

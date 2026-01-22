@@ -201,6 +201,9 @@ class TransferController:
     def set_file_hash(self, sub_task_id: str, file_hash: str):
         self.db.update_sub_task_hash(sub_task_id, file_hash)
 
+    def set_preview_msg_id(self, sub_task_id: str, msg_id: int):
+        self.db.set_preview_msg_id(sub_task_id, msg_id)
+
     def reset_zombie_tasks(self):
         self.db.reset_zombie_tasks()
         logger.info("Reset zombie tasks in SQL database to 'paused' state.")

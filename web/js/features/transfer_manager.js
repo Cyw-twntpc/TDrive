@@ -748,6 +748,9 @@ const TransferManager = {
     updateMainFileListUI() {
         document.querySelectorAll('.file-item:not(.is-uploading)').forEach(el => {
             const name = el.dataset.name;
+            // Skip folders to avoid locking them (greyed out)
+            if (el.dataset.type === 'folder') return;
+            
             const task = [...this.uploads.values(), ...this.downloads.values()].find(t => t.name === name && t.parentFolderId === this.AppState.currentFolderId);
             el.classList.toggle('in-transfer', !!(task && ['transferring', 'paused', 'queued'].includes(task.status)));
         });

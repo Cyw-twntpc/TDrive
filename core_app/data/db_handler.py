@@ -336,6 +336,12 @@ class DatabaseHandler:
     def get_folder_contents(self, folder_id: int) -> dict:
         conn = self._get_conn()
         cursor = conn.cursor()
+        
+        # Verify folder exists first
+        cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
+        if not cursor.fetchone():
+             raise errors.PathNotFoundError(f"Folder {folder_id} not found.")
+
         folders = []
         files = []
 
@@ -477,8 +483,9 @@ class DatabaseHandler:
                 "orphan": False, 
                 "file_id": file_id, 
                 "map_id": used_map_id,
+                "parent_id": folder_id,
                 "msg_ids_to_delete": [],
-                "map_msg_id_to_delete": None # New field
+                "map_msg_id_to_delete": None
             }
 
             if not still_referenced:
@@ -527,7 +534,7 @@ class DatabaseHandler:
             all_folder_ids = [row['id'] for row in cursor.fetchall()]
             
             if not all_folder_ids:
-                return [{"msg_ids_to_delete": msgs_to_delete}]
+                return [{"msg_ids_to_delete": msgs_to_delete, "parent_id": folder_info['parent_id']}]
 
             f_placeholders = ','.join(['?'] * len(all_folder_ids))
             
@@ -537,7 +544,7 @@ class DatabaseHandler:
             
             results = []
             if msgs_to_delete:
-                results.append({"msg_ids_to_delete": msgs_to_delete})
+                results.append({"msg_ids_to_delete": msgs_to_delete, "parent_id": folder_info['parent_id']})
             
             cursor.execute(f"SELECT m.file_id, f.size, f.preview_msg_id, f.map_id FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.folder_id IN ({f_placeholders})", all_folder_ids)
             files_info = cursor.fetchall()
@@ -585,6 +592,9 @@ class DatabaseHandler:
             # Delete folders
             self._execute_write(cursor, f"DELETE FROM folders WHERE id IN ({f_placeholders})", all_folder_ids, score=20) # Force sync
             self._execute_write(cursor, "DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'folder'", (folder_id,), score=0)
+            
+            # Force commit to ensure deletion persists in memory DB
+            conn.commit()
 
             if folder_info['parent_id']:
                 self._update_folder_size_recursively(cursor, folder_info['parent_id'], -folder_info['total_size'])

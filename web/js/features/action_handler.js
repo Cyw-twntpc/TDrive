@@ -367,17 +367,9 @@ const ActionHandler = {
                 };
                 this._transferManager.addUpload(fileToUploadData);
                 filesToUpload.push(fileToUploadData);
-
-                const placeholderItem = {
-                    id: fileToUploadData.task_id, name: fileName,
-                    modif_date: new Date().toISOString().slice(0, 10),
-                    size: '---', raw_size: 0, isUploading: true, type: 'file'
-                };
-                this._appState.currentFolderContents.files.push(placeholderItem);
             });
 
             if (filesToUpload.length > 0) {
-                FileListHandler.sortAndRender(this._appState);
                 this._apiService.uploadFiles(parentId, filesToUpload.map(f => ({ local_path: f.localPath, task_id: f.task_id })));
             }
         } finally {
@@ -411,14 +403,6 @@ const ActionHandler = {
                 parentFolderId: parentId,
                 size: 0
             });
-
-            const placeholderItem = {
-                id: taskId, name: folderName,
-                modif_date: new Date().toISOString().slice(0, 10),
-                size: '---', raw_size: 0, isUploading: true, type: 'folder'
-            };
-            this._appState.currentFolderContents.folders.push(placeholderItem);
-            FileListHandler.sortAndRender(this._appState);
 
             this._apiService.uploadFolder(parentId, folderPath, taskId);
 

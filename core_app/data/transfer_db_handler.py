@@ -49,6 +49,7 @@ class TransferDBHandler:
                 remote_id INTEGER,
                 total_size INTEGER DEFAULT 0,
                 file_hash TEXT,
+                preview_msg_id INTEGER, -- Added for cleanup tracking
                 file_details_json TEXT,
                 FOREIGN KEY (main_task_id) REFERENCES main_tasks (task_id) ON DELETE CASCADE
             )
@@ -287,6 +288,14 @@ class TransferDBHandler:
         finally:
             conn.close()
 
+    def set_preview_msg_id(self, sub_task_id: str, msg_id: int):
+        conn = self._get_conn()
+        try:
+            with conn:
+                conn.execute("UPDATE sub_tasks SET preview_msg_id = ? WHERE sub_task_id = ?", (msg_id, sub_task_id))
+        finally:
+            conn.close()
+
     def add_progress_part(self, sub_task_id: str, part_num: int, message_id: int = None, part_hash: str = None):
         conn = self._get_conn()
         try:
@@ -365,6 +374,7 @@ class TransferDBHandler:
                     "parent_id": st['remote_id'],
                     "db_id": st['remote_id'],
                     "total_size": st['total_size'],
+                    "preview_msg_id": st.get('preview_msg_id'), # Added
                     "transferred_parts": [],
                 }
                 if main_task['type'] == 'upload':
@@ -433,6 +443,7 @@ class TransferDBHandler:
                 sub_data = {
                     "status": st['status'], "file_path": st['local_path'], "save_path": st['local_path'],
                     "parent_id": st['remote_id'], "db_id": st['remote_id'], "total_size": st['total_size'],
+                    "preview_msg_id": st.get('preview_msg_id'), # Added
                     "transferred_parts": [],
                 }
                 if task_type == 'upload':
@@ -474,6 +485,24 @@ class TransferDBHandler:
         try:
             with conn:
                 conn.execute("UPDATE main_tasks SET status = 'paused' WHERE status = 'transferring'")
+        finally:
+            conn.close()
+
+    def get_active_uploads(self, parent_id: int) -> List[Dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            # We query sub_tasks because they represent individual files, 
+            # and their remote_id field points to the target folder_id.
+            cursor.execute("""
+                SELECT sub_task_id as task_id, local_path, total_size 
+                FROM sub_tasks 
+                WHERE remote_id = ? AND status = 'transferring'
+            """, (parent_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting active uploads for folder {parent_id}: {e}")
+            return []
         finally:
             conn.close()
 

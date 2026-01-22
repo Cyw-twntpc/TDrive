@@ -16,6 +16,7 @@ class Bridge(QObject):
     # --- Authentication and State Signals ---
     login_event = Signal(dict)
     transfer_progress_updated = Signal(dict)
+    folder_content_refresh_required = Signal(list)
     file_status_changed = Signal(list)
     connection_status_changed = Signal(str)
     login_and_initialization_complete = Signal()
@@ -36,6 +37,8 @@ class Bridge(QObject):
         
         # Connect Watcher Signal
         self._service._transfer_service.set_file_status_callback(self.file_status_changed.emit)
+        # Connect Folder Refresh Signal
+        self._service._transfer_service.set_refresh_callback(self.folder_content_refresh_required.emit)
         
         logger.debug("Bridge initialized.")
 

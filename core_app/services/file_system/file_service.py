@@ -117,9 +117,37 @@ class FileService:
         try:
             def _sync_db_op():
                 db = DatabaseHandler()
-                return db.get_folder_contents(folder_id)
+                contents = db.get_folder_contents(folder_id)
+                
+                # Integrate active uploads from TransferDB
+                from core_app.data.transfer_db_handler import TransferDBHandler
+                tdb = TransferDBHandler()
+                active_uploads = tdb.get_active_uploads(folder_id)
+                
+                if active_uploads:
+                    import time
+                    import os
+                    for task in active_uploads:
+                        file_name = os.path.basename(task['local_path'])
+                        # Ensure we don't add duplicates if DB already has the file 
+                        # (though during 'transferring' stage, DB usually doesn't have it yet)
+                        if any(f['name'] == file_name for f in contents['files']):
+                            continue
+                            
+                        contents['files'].append({
+                            "id": task['task_id'], # Use task_id as temporary id
+                            "name": file_name,
+                            "raw_size": task['total_size'],
+                            "size": db._format_size(task['total_size']),
+                            "modif_date": db._format_timestamp(time.time()),
+                            "isUploading": True,
+                            "type": "file"
+                        })
+                return contents
             
             return await asyncio.to_thread(_sync_db_op)
+        except errors.PathNotFoundError:
+            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": "資料夾不存在。"}
         except Exception as e:
             logger.error(f"Error getting folder contents for id {folder_id}: {e}", exc_info=True)
             return {"success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取資料夾內容。"}
