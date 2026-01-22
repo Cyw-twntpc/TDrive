@@ -147,10 +147,10 @@ class FileService:
             
             return await asyncio.to_thread(_sync_db_op)
         except errors.PathNotFoundError:
-            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": "資料夾不存在。"}
+            return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND, "message": "資料夾不存在。"}
         except Exception as e:
             logger.error(f"Error getting folder contents for id {folder_id}: {e}", exc_info=True)
-            return {"success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取資料夾內容。"}
+            return {"success": False, "error_code": errors.ErrorCode.DB_READ_FAILED, "message": "無法讀取資料夾內容。"}
 
     async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
         logger.info(f"Recursively fetching contents for folder_id: {folder_id}.")
@@ -162,7 +162,7 @@ class FileService:
             return await asyncio.to_thread(_sync_db_op)
         except Exception as e:
             logger.error(f"Error recursively fetching folder contents for id {folder_id}: {e}", exc_info=True)
-            return {"folder_name": "Error", "items": [], "success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取資料夾內容。"}
+            return {"folder_name": "Error", "items": [], "success": False, "error_code": errors.ErrorCode.DB_READ_FAILED, "message": "無法讀取資料夾內容。"}
 
     async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter: Callable, request_id: str):
         logger.info(f"Starting streaming search from base_id: {base_folder_id} for term: '{search_term}'")
@@ -184,20 +184,20 @@ class FileService:
                 logger.info(f"Streaming search completed for request_id: {request_id}.")
             except Exception as e:
                 logger.error(f"Critical error in background search thread: {e}", exc_info=True)
-                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '搜尋過程中發生嚴重錯誤。'}}
+                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '搜尋過程中發生嚴重錯誤。', 'error_code': errors.ErrorCode.INTERNAL_ERROR}}
                 result_signal_emitter(error_payload)
 
         try:
             await asyncio.to_thread(db_search_sync)
         except Exception as e:
             logger.error(f"Failed to start background search thread: {e}", exc_info=True)
-            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '無法啟動背景搜尋任務。'}}
+            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '無法啟動背景搜尋任務。', 'error_code': errors.ErrorCode.ASYNC_CALL_FAILED}}
             result_signal_emitter(error_payload)
 
     async def create_folder(self, parent_id: int, folder_name: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
         
         try:
             def _sync_create():
@@ -211,15 +211,15 @@ class FileService:
             return {"success": True}
         except errors.ItemAlreadyExistsError as e:
             logger.warning(f"Failed to create folder '{folder_name}': {e}")
-            return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.ITEM_ALREADY_EXISTS, "message": str(e)}
         except Exception as e:
             logger.error(f"Unknown error creating folder '{folder_name}'.", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "建立資料夾時發生未知的內部錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "建立資料夾時發生未知的內部錯誤。"}
 
     async def rename_item(self, item_id: int, new_name: str, item_type: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
             
         try:
             def _sync_rename():
@@ -236,15 +236,15 @@ class FileService:
             return {"success": True}
         except errors.ItemAlreadyExistsError as e:
             logger.warning(f"Failed to rename item {item_id}: {e}")
-            return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.ITEM_ALREADY_EXISTS, "message": str(e)}
         except Exception as e:
             logger.error(f"Unknown error renaming item {item_id}.", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "重新命名時發生未知的內部錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "重新命名時發生未知的內部錯誤。"}
 
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
 
         try:
             def _sync_soft_delete():
@@ -259,17 +259,17 @@ class FileService:
             return {"success": True, "message": f"成功將 {len(items)} 個項目移至回收桶。"}
         
         except errors.PathNotFoundError as e:
-            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND, "message": str(e)}
         except errors.InvalidOperationError as e:
-            return {"success": False, "error_code": "INVALID_OPERATION", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.INVALID_OPERATION, "message": str(e)}
         except Exception as e:
             logger.error(f"Error soft deleting items: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "刪除過程中發生未知的錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "刪除過程中發生未知的錯誤。"}
 
     async def restore_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
 
         try:
             def _sync_restore():
@@ -287,18 +287,18 @@ class FileService:
             return {"success": True, "message": f"成功還原 {len(items)} 個項目。"}
 
         except errors.PathNotFoundError as e:
-            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND, "message": str(e)}
         except Exception as e:
             logger.error(f"Error restoring items: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "還原過程中發生未知的錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "還原過程中發生未知的錯誤。"}
 
     async def delete_items_permanently(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
 
         if not self.shared_state.metadata_manager:
-             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "MetadataManager 未初始化。"}
+             return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "MetadataManager 未初始化。"}
 
         try:
             # 1. Perform DB Deletion and Collect Metadata
@@ -344,21 +344,21 @@ class FileService:
 
         except errors.PathNotFoundError as e:
             logger.warning(f"Failed to delete item: {e}")
-            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND, "message": str(e)}
         except telethon_errors.FloodWaitError as e:
             logger.warning(f"Delete operation hit a flood wait for {e.seconds} seconds.")
-            return {"success": False, "error_code": "FLOOD_WAIT_ERROR", "message": f"請求過多，請等待 {e.seconds} 秒。"}
+            return {"success": False, "error_code": errors.ErrorCode.FLOOD_WAIT_ERROR, "message": f"請求過多，請等待 {e.seconds} 秒。"}
         except Exception as e:
             logger.error(f"An unknown error occurred while deleting items: {items}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "刪除過程中發生未知的錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "刪除過程中發生未知的錯誤。"}
 
     async def empty_trash(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
 
         if not self.shared_state.metadata_manager:
-             return {"success": False, "error_code": "INTERNAL_ERROR", "message": "MetadataManager 未初始化。"}
+             return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "MetadataManager 未初始化。"}
 
         try:
             def _sync_empty():
@@ -390,7 +390,7 @@ class FileService:
 
         except Exception as e:
             logger.error(f"Error emptying trash: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "清空回收桶時發生錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "清空回收桶時發生錯誤。"}
 
     async def get_trash_items(self) -> Dict[str, Any]:
         try:
@@ -401,7 +401,7 @@ class FileService:
             return await asyncio.to_thread(_sync_get)
         except Exception as e:
             logger.error(f"Error fetching trash items: {e}", exc_info=True)
-            return {"success": False, "error_code": "DB_READ_FAILED", "message": "無法讀取回收桶內容。"}
+            return {"success": False, "error_code": errors.ErrorCode.DB_READ_FAILED, "message": "無法讀取回收桶內容。"}
 
     async def cleanup_expired_trash(self):
         logger.info("Starting expired trash cleanup...")
@@ -429,7 +429,7 @@ class FileService:
     async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            return {"success": False, "error_code": "CONNECTION_FAILED", "message": "連線失敗，請檢查網路或重新登入。"}
+            return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED, "message": "連線失敗，請檢查網路或重新登入。"}
 
         try:
             def _sync_move():
@@ -450,11 +450,11 @@ class FileService:
             return {"success": True, "message": f"成功移動 {moved_count} 個項目。"}
 
         except errors.PathNotFoundError as e:
-            return {"success": False, "error_code": "PATH_NOT_FOUND", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND, "message": str(e)}
         except errors.ItemAlreadyExistsError as e:
-            return {"success": False, "error_code": "ITEM_ALREADY_EXISTS", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.ITEM_ALREADY_EXISTS, "message": str(e)}
         except errors.InvalidNameError as e: # Catch circular dependency error
-            return {"success": False, "error_code": "INVALID_OPERATION", "message": str(e)}
+            return {"success": False, "error_code": errors.ErrorCode.INVALID_OPERATION, "message": str(e)}
         except Exception as e:
             logger.error(f"Unknown error moving items: {e}", exc_info=True)
-            return {"success": False, "error_code": "INTERNAL_ERROR", "message": "移動過程中發生未知的錯誤。"}
+            return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR, "message": "移動過程中發生未知的錯誤。"}

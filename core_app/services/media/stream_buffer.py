@@ -90,13 +90,7 @@ class StreamBuffer:
             # 2. Download and Decrypt
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
             if not msg_id:
-                # If chunk not found in DB (e.g. single part file without chunks entry?), fallback?
-                # Actually, our DB structure guarantees chunks table populated.
-                # Special case: Small file < 8MB might not be in chunks table if logic differs?
-                # But transfer_service always writes to chunks table or we rely on 'files' table preview?
-                # Wait, 'files' table is for deduplication. 'chunks' table links file_id to message_ids.
-                # We need to query 'chunks' table using file_id (content ID).
-                logger.warning(f"Chunk {chunk_idx+1} not found for file {file_id}")
+                logger.warning(f"Chunk {chunk_idx+1} not found in map for file {file_id}. Map keys: {list(chunk_map.keys())}")
                 return b""
 
             client = self.shared_state.client
@@ -166,6 +160,9 @@ class StreamBuffer:
             chunks = await self.shared_state.metadata_manager.get_file_chunks(
                 client, self.shared_state.group_id, self.shared_state.api_id, file_id
             )
+            if not chunks:
+                logger.warning(f"_get_chunk_map: No chunks returned for file_id {file_id} from MetadataManager.")
+
             # chunks is list of [part_num, message_id, part_hash]
             return {c[0]: c[1] for c in chunks}
         except Exception as e:

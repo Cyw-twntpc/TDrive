@@ -80,14 +80,23 @@ class StreamingService:
             
             if range_header:
                 try:
-                    # Example: bytes=0- or bytes=100-200
+                    # Example: bytes=0- or bytes=100-200 or bytes=-500
                     unit, ranges = range_header.split('=')
                     if unit == 'bytes':
                         r_start, r_end = ranges.split('-')
-                        if r_start:
+                        if r_start and r_end:
+                            # Specific range: 100-200
                             start_byte = int(r_start)
-                        if r_end:
-                            end_byte = int(r_end)
+                            end_byte = min(int(r_end), file_size - 1)
+                        elif r_start:
+                            # From offset to end: 100-
+                            start_byte = int(r_start)
+                            end_byte = file_size - 1
+                        elif r_end:
+                            # Suffix range: last N bytes (bytes=-500)
+                            suffix_length = int(r_end)
+                            start_byte = max(0, file_size - suffix_length)
+                            end_byte = file_size - 1
                 except ValueError:
                     pass # Invalid range, ignore
 
@@ -130,7 +139,7 @@ class StreamingService:
 
         except (ConnectionResetError, BrokenPipeError):
             # Client (VLC) closed connection, this is normal behavior during seeking or stop.
-            pass
+            return web.Response()
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             return web.Response(status=500)
