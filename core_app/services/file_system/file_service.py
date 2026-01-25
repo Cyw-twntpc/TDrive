@@ -46,7 +46,36 @@ class FileService:
                             self.gallery_manager.load_thumbs_db_from_bytes(folder_id, db_bytes)
             
             thumbs = self.gallery_manager.get_folder_thumbnails(folder_id)
-            logger.info(f"FileService returning thumbnails for {folder_id}: Type={type(thumbs)}")
+            
+            # [Fix] Convert Content IDs to Map IDs for frontend consistency.
+            # The frontend uses Map ID (file_folder_map.id) for data-id attributes,
+            # but thumbs.db stores Content ID (files.id). We must map them.
+            if thumbs:
+                def _get_id_mapping():
+                    db = DatabaseHandler()
+                    conn = db._get_conn()
+                    cur = conn.cursor()
+                    # Get map_id (id) and content_id (file_id) for items in this folder
+                    cur.execute("SELECT id, file_id FROM file_folder_map WHERE folder_id = ?", (folder_id,))
+                    return {row['file_id']: row['id'] for row in cur.fetchall()}
+
+                # Run DB query in thread pool
+                id_map = await asyncio.to_thread(_get_id_mapping)
+                
+                # Re-key the thumbnails dictionary
+                mapped_thumbs = {}
+                for content_id_str, b64_data in thumbs.items():
+                    try:
+                        content_id = int(content_id_str)
+                        if content_id in id_map:
+                            map_id = id_map[content_id]
+                            mapped_thumbs[str(map_id)] = b64_data
+                    except ValueError:
+                        pass
+                
+                thumbs = mapped_thumbs
+
+            logger.info(f"FileService returning {len(thumbs)} thumbnails for {folder_id} (Mapped IDs)")
             return {"success": True, "thumbnails": thumbs}
         except Exception as e:
             logger.error(f"Error fetching thumbnails: {e}", exc_info=True)
@@ -65,12 +94,8 @@ class FileService:
                 conn = db._get_conn()
                 
                 cur = conn.cursor()
-                # Since file_id here refers to the 'files' table ID (content ID) or 'file_folder_map' ID?
-                # The API likely receives the Map ID (item.id from frontend).
-                # Let's verify: Frontend sends `item.id`. This is Map ID.
-                # We need to join to get `files` table info.
                 query = """
-                    SELECT f.preview_msg_id, f.preview_hash, f.id as content_id
+                    SELECT f.preview_msg_id, f.preview_hash, f.id as content_id, f.hash as file_hash, f.size
                     FROM file_folder_map m
                     JOIN files f ON m.file_id = f.id
                     WHERE m.id = ?
@@ -80,18 +105,36 @@ class FileService:
 
             info = await asyncio.to_thread(_get_file_preview_info)
             
-            if not info or not info['preview_msg_id']:
-                return {"success": False, "message": "No preview available"}
+            if not info:
+                return {"success": False, "message": "File not found"}
 
             # 3. Download
             client = await utils.ensure_client_connected(self.shared_state)
             if not client:
                 return {"success": False, "message": "Client not connected"}
 
-            logger.info(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
-            preview_bytes = await telegram_comms.download_data_as_bytes(
-                client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
-            )
+            preview_bytes = None
+            
+            if info['preview_msg_id']:
+                logger.info(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
+                preview_bytes = await telegram_comms.download_data_as_bytes(
+                    client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
+                )
+            else:
+                # Fallback: Download first chunk of original file if no preview exists
+                logger.info(f"No preview found for {file_id}, attempting fallback to original file...")
+                try:
+                    chunks = await self.shared_state.metadata_manager.get_file_chunks(
+                        client, self.shared_state.group_id, self.shared_state.api_id, info['content_id']
+                    )
+                    if chunks and len(chunks) > 0:
+                        first_chunk = chunks[0]
+                        chunk_msg_id = first_chunk[1]
+                        preview_bytes = await telegram_comms.download_data_as_bytes(
+                            client, self.shared_state.group_id, [chunk_msg_id], info['file_hash']
+                        )
+                except Exception as fb_e:
+                    logger.warning(f"Fallback preview download failed: {fb_e}")
 
             if preview_bytes:
                 # 4. Cache and Return

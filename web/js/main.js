@@ -127,10 +127,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
-        if (rootFolder && targetPathIds.length === 0) {
-             if (folderId !== rootFolder.id) targetPathIds.unshift(rootFolder.id);
-        } else if (rootFolder && targetPathIds[0] !== rootFolder.id) {
-             targetPathIds.unshift(rootFolder.id);
+        if (rootFolder) {
+            if (targetPathIds.length === 0) {
+                targetPathIds.unshift(rootFolder.id);
+            } else if (targetPathIds[0] !== rootFolder.id) {
+                targetPathIds.unshift(rootFolder.id);
+            }
         }
 
         FileTreeHandler.compareAndSwitch(targetPathIds, AppState);

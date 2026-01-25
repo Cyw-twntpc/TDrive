@@ -169,13 +169,15 @@ const GalleryHandler = {
     renderFilmstrip() {
         this.filmstripEl.innerHTML = '';
         this.currentImages.forEach((file, index) => {
+            if (!file) return; // Safeguard
+
             const div = document.createElement('div');
             div.className = 'filmstrip-item';
             
             const img = document.createElement('img');
             img.dataset.id = file.id;
             // Placeholder icon
-            img.src = 'web/img/transfer.png'; 
+            img.src = 'img/transfer.png'; 
             
             // 1. Try Cache
             if (AppState.currentThumbnails && AppState.currentThumbnails[file.id]) {
@@ -206,7 +208,9 @@ const GalleryHandler = {
             
             const file = this.currentImages[nextIndex];
             // Fire and forget - this populates the backend LRU cache
-            ApiService.getPreview(file.id);
+            if (file && file.id) {
+                ApiService.getPreview(file.id).catch(e => console.warn("Preload failed", e));
+            }
         }
     }
 };
