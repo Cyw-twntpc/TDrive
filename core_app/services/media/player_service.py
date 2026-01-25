@@ -22,9 +22,6 @@ class PlayerService:
 
         try:
             # Launch VLC
-            # --fullscreen: Start in fullscreen (Removed as requested)
-            # --play-and-exit: Close VLC when playback finishes (optional, maybe user wants to replay?)
-            # Let's keep it simple first.
             cmd = [
                 self.vlc_path,
                 stream_url

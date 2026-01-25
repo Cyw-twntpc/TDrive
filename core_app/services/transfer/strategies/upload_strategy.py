@@ -3,6 +3,7 @@ import time
 import uuid
 import asyncio
 import logging
+import sqlite3
 from collections import defaultdict
 from typing import List, Dict, Any, Callable
 
@@ -278,6 +279,11 @@ class UploadStrategy(TransferStrategy):
 
         def ui_cb(current, total):
             nonlocal last_uploaded, last_update_time
+            
+            # Detect retry/rollback
+            if current < last_uploaded:
+                last_uploaded = 0
+                
             delta = current - last_uploaded
             now = time.time()
             time_diff = now - last_update_time
@@ -372,12 +378,21 @@ class UploadStrategy(TransferStrategy):
                 )
 
                 def _pre_insert_file():
-                    return self.context.db.add_file(
-                        parent_id, file_name, time.time(), 
-                        file_hash=original_file_hash, size=total_size, 
-                        preview_msg_id=preview_msg_id, preview_hash=preview_hash,
-                        map_id=None 
-                    )
+                    try:
+                        return self.context.db.add_file(
+                            parent_id, file_name, time.time(), 
+                            file_hash=original_file_hash, size=total_size, 
+                            preview_msg_id=preview_msg_id, preview_hash=preview_hash,
+                            map_id=None 
+                        )
+                    except (sqlite3.IntegrityError, errors.ItemAlreadyExistsError):
+                        # Race condition detected: File was added by another task concurrently.
+                        # We treat this as a successful "sec-upload" (deduplication).
+                        existing_id = self.context.db.find_file_by_hash(original_file_hash)
+                        if existing_id:
+                            # Link to the existing file record
+                            return self.context.db.add_file(parent_id, file_name, time.time(), file_id=existing_id)
+                        raise
                 
                 fid = await loop.run_in_executor(None, _pre_insert_file)
                 self.context.controller.record_created_artifact(main_task_id, 'file', fid)

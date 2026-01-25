@@ -892,10 +892,7 @@ class DatabaseHandler:
         cursor.execute(query, {"folder_id": folder_id, "root_name": root['name']})
         items = [dict(row) for row in cursor.fetchall()]
         
-        # NOTE: This no longer returns chunks. Caller needs to use metadata_manager to get chunks.
-        # But for recursive download (folder download), we usually iterate items and then get details one by one.
-        # Or we can attach map_id here.
-        # For compatibility with legacy recursive download, we might need to adjust download logic to fetch chunks later.
+        # NOTE: Caller needs to use metadata_manager to get chunks.
         
         return {"folder_name": root['name'], "items": items}
 

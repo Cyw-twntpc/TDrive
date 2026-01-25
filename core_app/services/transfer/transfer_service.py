@@ -50,6 +50,18 @@ class TransferService:
         all_tasks = self.controller.get_incomplete_transfers()
         self.watcher.load_initial_watches(all_tasks['uploads'], all_tasks['downloads'])
 
+    def shutdown(self):
+        """Stops the watcher and cancels all active tasks during shutdown."""
+        logger.info("Shutting down TransferService...")
+        self.watcher.stop()
+        
+        # Cancel all active tasks tracked in SharedState
+        active_ids = list(self._active_sub_tasks.keys())
+        for task_id in active_ids:
+            self.cancel_transfer(task_id)
+            
+        logger.info("TransferService shutdown complete.")
+
     # --- Common Helper Methods for Strategies ->
     
     def set_refresh_callback(self, callback: Callable):

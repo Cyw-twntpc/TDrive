@@ -99,10 +99,6 @@ class StreamBuffer:
 
             logger.debug(f"Downloading chunk {chunk_idx+1} for file {file_id} (Msg: {msg_id})")
             
-            # Reuse download_data_as_bytes but here we need Raw Encrypted Bytes first?
-            # No, download_data_as_bytes does download + decrypt in memory.
-            # We can use it, but we need to handle the specific Chunk Key generation.
-            
             # Key Generation Logic:
             # The key is derived from the *original file hash*.
             # cr.generate_key uses file_hash[:32] and file_hash[-32:].

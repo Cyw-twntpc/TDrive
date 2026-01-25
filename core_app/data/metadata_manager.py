@@ -6,7 +6,7 @@ import io
 import os
 import time
 from typing import Dict, List, OrderedDict, Any, Optional
-from collections import OrderedDict as SysOrderedDict
+from collections import OrderedDict as SysOrderedDict, defaultdict
 
 from ..api import crypto_handler as cr
 from .db_handler import DatabaseHandler
@@ -30,6 +30,9 @@ class MetadataManager:
         self._map_cache: OrderedDict[int, Dict] = SysOrderedDict()
         self._cache_size = 20
         self._lock = asyncio.Lock()
+        
+        # Folder-level locks for map file updates
+        self._folder_locks = defaultdict(asyncio.Lock)
         
         # Setup SyncManager callback
         # SyncManager is initialized in DatabaseHandler
@@ -302,86 +305,70 @@ class MetadataManager:
         """
         Batch processes multiple files for a single folder to minimize IO.
         """
-        active_map_id = self.db.get_folder_active_map(folder_id)
-        
-        current_map_data = {}
-        current_cloud_msg_id = None
-        current_db_map_id = active_map_id
-        
-        # Load active map
-        if active_map_id:
-            map_info = self.db.get_map_file_info(active_map_id)
-            if map_info and map_info['msg_id']:
-                current_map_data = await self.fetch_map_file(client, group_id, api_id, map_info['msg_id'])
-                current_cloud_msg_id = map_info['msg_id']
-            else:
-                current_db_map_id = None
-        
-        total_chunks = sum(len(v) for v in current_map_data.values())
-        files_in_current_batch = []
-
-        async def _flush():
-            nonlocal current_map_data, current_cloud_msg_id, current_db_map_id, files_in_current_batch
+        async with self._folder_locks[folder_id]:
+            active_map_id = self.db.get_folder_active_map(folder_id)
             
-            if not files_in_current_batch and not current_map_data: return
-
-            new_msg_id = await self.save_map_file(client, group_id, api_id, current_map_data)
+            current_map_data = {}
+            current_cloud_msg_id = None
+            current_db_map_id = active_map_id
             
-            saved_db_map_id = current_db_map_id
-            if saved_db_map_id:
-                self.db.update_map_file_msg_id(saved_db_map_id, new_msg_id)
-                if current_cloud_msg_id and current_cloud_msg_id != new_msg_id:
-                    try: await client.delete_messages(group_id, [current_cloud_msg_id])
-                    except: pass
-                    self._map_cache.pop(current_cloud_msg_id, None)
-            else:
-                saved_db_map_id = self.db.create_map_file_record(new_msg_id, folder_id)
-                self.db.set_folder_active_map(folder_id, saved_db_map_id)
+            # Load active map
+            if active_map_id:
+                map_info = self.db.get_map_file_info(active_map_id)
+                if map_info and map_info['msg_id']:
+                    current_map_data = await self.fetch_map_file(client, group_id, api_id, map_info['msg_id'])
+                    current_cloud_msg_id = map_info['msg_id']
+                else:
+                    current_db_map_id = None
             
-            # Update DB for files in this batch
-            conn = self.db._get_conn()
-            for fid in files_in_current_batch:
-                # Direct SQL execution as this is an internal batch op, or use helper?
-                # These updates need to be synced!
-                # Using _execute_write via db methods is best.
-                # But here we have direct SQL.
-                # Since db_handler encapsulates _execute_write, we should call a method on db.
-                # But we don't have a specific method for "update file map_id".
-                # We can call cursor.execute but that bypasses log.
-                # We should add a method in DB handler or expose _execute_write.
-                # I'll update the logic here to use a new helper or raw execute via a public method if possible.
-                # Actually, I can just use `conn.execute` here if I don't care about logging this specific technical update?
-                # No, if we crash, we lose the link between File and Map. We need to log it.
-                
-                # I will assume I can't easily change db_handler API right now without another file write.
-                # But wait, I just rewrote db_handler.
-                # I can modify `DatabaseHandler` to add `update_file_map_link`?
-                # Or, I can access `db._execute_write` if I'm naughty (Python allows it).
-                # `MetadataManager` is "core" enough to access protected members.
-                
-                self.db._execute_write(conn.cursor(), 
-                                       "UPDATE files SET map_id = ? WHERE id = ?", 
-                                       (saved_db_map_id, fid), score=1)
-                
-                self.db.increment_map_ref(saved_db_map_id)
-            
+            total_chunks = sum(len(v) for v in current_map_data.values())
             files_in_current_batch = []
-            return saved_db_map_id
 
-        for fid, chunks in file_chunks_map.items():
-            if total_chunks + len(chunks) > 1000:
-                await _flush()
-                # Rotate
-                current_map_data = {}
-                current_cloud_msg_id = None
-                current_db_map_id = None
-                total_chunks = 0
+            async def _flush():
+                nonlocal current_map_data, current_cloud_msg_id, current_db_map_id, files_in_current_batch
+                
+                if not files_in_current_batch and not current_map_data: return
+
+                new_msg_id = await self.save_map_file(client, group_id, api_id, current_map_data)
+                
+                saved_db_map_id = current_db_map_id
+                if saved_db_map_id:
+                    self.db.update_map_file_msg_id(saved_db_map_id, new_msg_id)
+                    if current_cloud_msg_id and current_cloud_msg_id != new_msg_id:
+                        try: await client.delete_messages(group_id, [current_cloud_msg_id])
+                        except: pass
+                        self._map_cache.pop(current_cloud_msg_id, None)
+                else:
+                    saved_db_map_id = self.db.create_map_file_record(new_msg_id, folder_id)
+                    self.db.set_folder_active_map(folder_id, saved_db_map_id)
+                
+                # Update DB for files in this batch
+                conn = self.db._get_conn()
+                for fid in files_in_current_batch:
+                    # Update map_id linkage for the file
+                    self.db._execute_write(conn.cursor(), 
+                                           "UPDATE files SET map_id = ? WHERE id = ?", 
+                                           (saved_db_map_id, fid), score=1)
+                    
+                    self.db.increment_map_ref(saved_db_map_id)
+                
+                files_in_current_batch = []
+                return saved_db_map_id
+
+            for fid, chunks in file_chunks_map.items():
+                if total_chunks + len(chunks) > 1000:
+                    await _flush()
+                    # Rotate
+                    current_map_data = {}
+                    current_cloud_msg_id = None
+                    current_db_map_id = None
+                    total_chunks = 0
+                
+                current_map_data[str(fid)] = chunks
+                files_in_current_batch.append(fid)
+                total_chunks += len(chunks)
             
-            current_map_data[str(fid)] = chunks
-            files_in_current_batch.append(fid)
-            total_chunks += len(chunks)
-        
-        await _flush()
+            await _flush()
 
     async def process_file_transfer(self, client, group_id: int, api_id: int, 
                                     folder_id: int, file_id: int, chunks: List[List]):

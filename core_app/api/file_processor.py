@@ -17,6 +17,7 @@ def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Option
     
     with open(file_path, 'rb') as f_in:
         i = 1
+        produced_any_chunk = False
         while True:
             if i in completed_parts:
                 f_in.seek(CHUNK_SIZE, 1)
@@ -26,9 +27,15 @@ def stream_split_and_encrypt(file_path: str, key: bytes, completed_parts: Option
             chunk = f_in.read(CHUNK_SIZE)
             if not chunk:
                 break
-
+            
+            produced_any_chunk = True
             yield i, cr.encrypt(chunk, key)
             i += 1
+
+        if not produced_any_chunk and i not in completed_parts:
+            # Handle empty file: yield one empty encrypted block
+            logger.debug(f"File '{file_path}' is empty. Generating empty encrypted block.")
+            yield 1, cr.encrypt(b'', key)
 
     logger.debug(f"Finished stream splitting for '{file_path}'.")
 
