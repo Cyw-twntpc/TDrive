@@ -9,6 +9,7 @@ from typing import Dict, List, OrderedDict, Any, Optional
 from collections import OrderedDict as SysOrderedDict, defaultdict
 
 from ..api import crypto_handler as cr
+from ..api import telegram_comms
 from .db_handler import DatabaseHandler
 # Avoid circular import if SharedState is only for typing
 from typing import TYPE_CHECKING
@@ -449,3 +450,68 @@ class MetadataManager:
                 
                 await client.delete_messages(group_id, [msg_id])
                 self._map_cache.pop(msg_id, None)
+
+    async def update_folder_thumbnails(self, client, group_id: int, folder_id: int, new_thumbs_map: Dict[int, bytes], gallery_manager: Any):
+        """
+        Thread-safe method to update thumbs.db for a specific folder.
+        Handles download, merge, re-upload, and cleanup of old versions.
+        """
+        async with self._folder_locks[folder_id]:
+            try:
+                # 1. Check if DB is loaded; if not, try to download
+                if not gallery_manager.has_db(folder_id):
+                    # Helper to get DB info (Sync DB access inside Async Lock is safe here as it's a read)
+                    # Ideally we use run_in_executor but the lock is already held.
+                    # We can direct query since we are in MetadataManager
+                    conn = self.db._get_conn()
+                    cur = conn.cursor()
+                    cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+                    db_info = cur.fetchone()
+                    
+                    if db_info and db_info['thumbs_db_msg_id']:
+                        logger.info(f"Downloading existing thumbs.db for folder {folder_id} before update...")
+                        old_db_bytes = await telegram_comms.download_data_as_bytes(
+                            client, group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
+                        )
+                        if old_db_bytes:
+                            gallery_manager.load_thumbs_db_from_bytes(folder_id, old_db_bytes)
+
+                logger.info(f"Updating thumbs.db for folder {folder_id} with {len(new_thumbs_map)} new items.")
+                
+                # 2. Update In-Memory DB
+                # This returns the serialized bytes of the FULL new DB
+                db_bytes = gallery_manager.update_thumbs_db(folder_id, new_thumbs_map)
+                
+                if db_bytes:
+                    # 3. Hash and Upload
+                    loop = asyncio.get_running_loop()
+                    db_hash = await loop.run_in_executor(None, cr.hash_bytes, db_bytes)
+                    
+                    # We don't have easy access to controller here for hidden progress, 
+                    # but thumbs.db is usually small enough. If needed, we can pass a callback.
+                    upload_info = await telegram_comms.upload_data_as_file(
+                        client, group_id, db_bytes, db_hash
+                    )
+                    
+                    if upload_info:
+                        new_msg_id = upload_info[0][1]
+                        
+                        # 4. Get Old Msg ID to delete
+                        conn = self.db._get_conn()
+                        cur = conn.cursor()
+                        cur.execute("SELECT thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
+                        row = cur.fetchone()
+                        old_msg_id = row['thumbs_db_msg_id'] if row else None
+                        
+                        # 5. Update Metadata
+                        self.db.update_folder_thumbs_info(folder_id, new_msg_id, db_hash)
+                        
+                        # 6. Delete Old Cloud Message
+                        if old_msg_id and old_msg_id != new_msg_id:
+                            try:
+                                await client.delete_messages(group_id, [old_msg_id])
+                            except Exception as e:
+                                logger.warning(f"Failed to delete old thumbs.db message {old_msg_id}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error updating thumbs.db for folder {folder_id}: {e}", exc_info=True)

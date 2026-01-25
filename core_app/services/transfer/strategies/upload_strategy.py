@@ -440,34 +440,14 @@ class UploadStrategy(TransferStrategy):
                     thumbs_by_folder[item['target_folder_id']][item['file_id']] = item['thumbnail_blob']
                 
                 for f_id, new_thumbs_map in thumbs_by_folder.items():
-                    if not self.context.gallery_manager.has_db(f_id):
-                        db_info = await loop.run_in_executor(None, self.context._get_folder_db_info, f_id)
-                        if db_info and db_info['thumbs_db_msg_id']:
-                            logger.info(f"Downloading existing thumbs.db for folder {f_id} before update...")
-                            old_db_bytes = await telegram_comms.download_data_as_bytes(
-                                client, self.context.shared_state.group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
-                            )
-                            if old_db_bytes:
-                                self.context.gallery_manager.load_thumbs_db_from_bytes(f_id, old_db_bytes)
-
-                    logger.info(f"Updating thumbs.db for folder {f_id} with {len(new_thumbs_map)} new items.")
-                    
-                    db_bytes = self.context.gallery_manager.update_thumbs_db(f_id, new_thumbs_map)
-                    
-                    if db_bytes:
-                        db_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, db_bytes)
-                        
-                        def hidden_progress(current, total):
-                            asyncio.create_task(self.context.controller.update_transferred_bytes(current))
-
-                        upload_info = await telegram_comms.upload_data_as_file(
-                            client, self.context.shared_state.group_id, db_bytes, db_hash,
-                            progress_callback=hidden_progress
-                        )
-                        
-                        if upload_info:
-                            msg_id = upload_info[0][1]
-                            await loop.run_in_executor(None, self.context.db.update_folder_thumbs_info, f_id, msg_id, db_hash)
+                    # Delegate thread-safe update to MetadataManager
+                    await self.context.metadata_manager.update_folder_thumbnails(
+                        client, 
+                        self.context.shared_state.group_id, 
+                        f_id, 
+                        new_thumbs_map,
+                        self.context.gallery_manager
+                    )
                 
                 await loop.run_in_executor(None, self.context.controller.db.delete_task_thumbnails, main_task_id)
                 
