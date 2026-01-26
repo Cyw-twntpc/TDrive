@@ -17,6 +17,7 @@ from .services import (
     StreamingService, 
     PlayerService
 )
+from .services.common.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,9 @@ class TDriveService:
         # Force sync DB to cloud on exit to ensure persistence
         if self._shared_state.client and self._shared_state.client.is_connected() and self._shared_state.is_logged_in:
             try:
+                # Save Telegram Session (Encrypted)
+                SessionManager.save_session(self._shared_state.client.session, self._shared_state.api_id)
+                
                 logger.info("Syncing database to cloud before shutdown...")
                 await self.metadata_manager.sync_db_to_cloud(
                     self._shared_state.client, 

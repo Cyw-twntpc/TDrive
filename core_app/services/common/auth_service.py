@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from . import utils
 from core_app.api import crypto_handler
 from core_app.api import telegram_comms
+from .session_manager import SessionManager
 
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,11 @@ class AuthService:
             with open('./file/info.json', 'w') as f:
                 json.dump(final_info, f)
             logger.info("API credentials have been successfully encrypted and saved.")
+            
+            # Trigger session save on credential update
+            if self.shared_state.client and self.shared_state.client.session:
+                SessionManager.save_session(self.shared_state.client.session, self.shared_state.api_id)
+                
         except Exception as e:
             logger.error(f"Failed to save credentials: {e}", exc_info=True)
 
@@ -87,8 +93,9 @@ class AuthService:
             logger.info("No saved API credentials found. Login required.")
             return {"logged_in": False}
             
-        session_file = f'./file/user_{api_id}.session'
-        client = TelegramClient(session_file, api_id, api_hash)
+        session = SessionManager.load_session(api_id)
+        client = TelegramClient(session, api_id, api_hash)
+        
         try:
             await client.connect()
             if await client.is_user_authorized():
@@ -121,13 +128,12 @@ class AuthService:
         client = None
         try:
             os.makedirs('./file', exist_ok=True)
-            session_file = f'./file/user_{api_id}.session'
+            
+            # Start with a fresh session for new login attempt
+            from telethon.sessions import StringSession
+            session = StringSession() 
 
-            if os.path.exists(session_file):
-                logger.info(f"Removing old session file to ensure a clean login: {session_file}")
-                os.remove(session_file)
-
-            client = TelegramClient(session_file, api_id, api_hash)
+            client = TelegramClient(session, api_id, api_hash)
             await client.connect()
             
             self.shared_state.client = client
@@ -176,7 +182,7 @@ class AuthService:
         try:
             await qr_login.wait()
             self.shared_state.is_logged_in = True
-            self._save_api_credentials()
+            self._save_api_credentials() # This now triggers session save too
             event_callback({"status": "completed"})
         except SessionPasswordNeededError:
             event_callback({"status": "password_needed"})
@@ -205,7 +211,7 @@ class AuthService:
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
             self.shared_state.is_logged_in = True
-            self._save_api_credentials()
+            self._save_api_credentials() # Saves session
             return {"success": True}
         except PhoneCodeInvalidError:
             logger.warning("An invalid verification code was submitted.")
@@ -222,7 +228,7 @@ class AuthService:
         try:
             await client.sign_in(password=password)
             self.shared_state.is_logged_in = True
-            self._save_api_credentials()
+            self._save_api_credentials() # Saves session
             return {"success": True}
         except PasswordHashInvalidError:
             logger.warning("An invalid 2FA password was submitted.")
@@ -242,11 +248,11 @@ class AuthService:
                  logger.warning("Cannot reset client: api_id or api_hash is missing.")
                  return {"success": False}
 
-            session_file = f'./file/user_{api_id}.session'
-            if os.path.exists(session_file):
-                os.remove(session_file)
+            # Use fresh StringSession
+            from telethon.sessions import StringSession
+            session = StringSession()
 
-            new_client = TelegramClient(session_file, api_id, api_hash)
+            new_client = TelegramClient(session, api_id, api_hash)
             await new_client.connect()
             self.shared_state.client = new_client
             logger.info("Client has been reset for a new login method.")
