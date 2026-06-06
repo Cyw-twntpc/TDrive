@@ -30,10 +30,10 @@ const ApiService = {
                 const handler = (result) => {
                     if (result && result.request_id === requestId) {
                         window.tdrive_bridge[signalName].disconnect(handler);
-                        if (result.success === false) {
-                            console.warn(`Bridge call '${functionName}' reported a failure:`, result.message);
+                        if (result.data && result.data.success === false) {
+                            console.warn(`Bridge call '${functionName}' reported a failure:`, result.data.message);
                         }
-                        resolve(result);
+                        resolve(result.data);
                     }
                 };
                 window.tdrive_bridge[signalName].connect(handler);

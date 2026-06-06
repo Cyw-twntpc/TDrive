@@ -341,9 +341,28 @@ class DatabaseHandler:
         cursor = conn.cursor()
         
         # Verify folder exists first
-        cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
-        if not cursor.fetchone():
+        cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (folder_id,))
+        current_folder_row = cursor.fetchone()
+        if not current_folder_row:
              raise errors.PathNotFoundError(f"Folder {folder_id} not found.")
+             
+        path_info = []
+        curr_id = folder_id
+        while curr_id:
+            cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (curr_id,))
+            r = cursor.fetchone()
+            if r:
+                path_info.insert(0, {"id": r['id'], "name": r['name']})
+                curr_id = r['parent_id']
+            else:
+                break
+                
+        current_folder = {
+            "id": current_folder_row['id'],
+            "name": current_folder_row['name'],
+            "parent_id": current_folder_row['parent_id'],
+            "path": path_info
+        }
 
         folders = []
         files = []
@@ -372,7 +391,12 @@ class DatabaseHandler:
                 "preview_msg_id": row['preview_msg_id']
             })
         
-        return {"folders": folders, "files": files}
+        return {
+            "success": True,
+            "folders": folders, 
+            "files": files,
+            "current_folder": current_folder
+        }
 
     def get_folder_tree(self) -> list:
         conn = self._get_conn()

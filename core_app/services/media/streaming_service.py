@@ -137,7 +137,7 @@ class StreamingService:
 
             return response
 
-        except (ConnectionResetError, BrokenPipeError):
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, ConnectionError, asyncio.CancelledError):
             # Client (VLC) closed connection, this is normal behavior during seeking or stop.
             return web.Response()
         except Exception as e:

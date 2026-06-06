@@ -145,10 +145,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const data = response.data;
-            if (AppState.currentFolderId !== data.current_folder.id) return;
+            if (AppState.currentFolderId !== response.current_folder.id) return;
             
-            AppState.currentFolderContents = data;
+            AppState.currentFolderContents = response;
             FileListHandler.sortAndRender(AppState);
             UIManager.stopProgress();
             
@@ -343,8 +342,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const requestId = Date.now().toString();
                     AppState.currentViewRequestId = requestId;
                     ApiService.getFolderContents(AppState.currentFolderId).then(response => {
-                        if (response && response.success && AppState.currentFolderId === response.data.current_folder.id) {
-                            AppState.currentFolderContents = response.data;
+                        if (response && response.success && AppState.currentFolderId === response.current_folder.id) {
+                            AppState.currentFolderContents = response;
                             FileListHandler.sortAndRender(AppState);
                             if (AppState.viewMode === 'grid') {
                                 FileListHandler.loadThumbnails(AppState.currentFolderId);
