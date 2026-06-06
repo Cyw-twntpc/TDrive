@@ -189,16 +189,18 @@ class DownloadStrategy(TransferStrategy):
 
         def ui_cb(current, total):
             nonlocal last_downloaded, last_update_time
+            if current <= last_downloaded:
+                return
+
             delta = current - last_downloaded
             now = time.time()
             time_diff = now - last_update_time
 
-            if delta > 0:
-                last_downloaded = current
-                last_update_time = now
-                speed = delta / time_diff if time_diff > 0 else 0
-                asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
-                progress_callback(main_task_id, delta, speed)
+            last_downloaded = current
+            last_update_time = now
+            speed = delta / time_diff if time_diff > 0 else 0
+            asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
+            progress_callback(main_task_id, delta, speed)
 
         async with self.context._semaphore:
             main_status = self.context.controller.db.get_main_task_status(main_task_id)
@@ -221,9 +223,13 @@ class DownloadStrategy(TransferStrategy):
 
                 progress_callback(main_task_id, file_details['name'], -1, -1, 'transferring', 0)
 
-                await telegram_comms.download_file(
-                    client, self.context.shared_state.group_id, file_details, os.path.dirname(save_path),
-                    task_id=sub_task_id,
+                from core_app.services.transfer.dispatcher import TransferDispatcher
+                clients_pool = getattr(self.context.shared_state, 'clients_pool', [])
+                if not clients_pool:
+                    clients_pool = [client]
+
+                await TransferDispatcher.dispatch_download(
+                    clients_pool, self.context.shared_state.group_id, file_details, os.path.dirname(save_path),
                     progress_callback=ui_cb,
                     completed_parts=resume_parts,
                     chunk_callback=chunk_cb

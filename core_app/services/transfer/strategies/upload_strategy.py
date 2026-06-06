@@ -281,19 +281,18 @@ class UploadStrategy(TransferStrategy):
             nonlocal last_uploaded, last_update_time
             
             # Detect retry/rollback
-            if current < last_uploaded:
-                last_uploaded = 0
+            if current <= last_uploaded:
+                return
                 
             delta = current - last_uploaded
             now = time.time()
             time_diff = now - last_update_time
 
-            if delta > 0:
-                last_uploaded = current
-                last_update_time = now
-                speed = delta / time_diff if time_diff > 0 else 0
-                asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
-                progress_callback(main_task_id, delta, speed)
+            last_uploaded = current
+            last_update_time = now
+            speed = delta / time_diff if time_diff > 0 else 0
+            asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
+            progress_callback(main_task_id, delta, speed)
 
         async with self.context._semaphore:
             main_status = self.context.controller.db.get_main_task_status(main_task_id)
@@ -370,9 +369,13 @@ class UploadStrategy(TransferStrategy):
                         preview_msg_id = preview_upload_info[0][1]
                         self.context.controller.set_preview_msg_id(sub_task_id, preview_msg_id)
 
-                split_files_info = await telegram_comms.upload_file_to_cloud(
-                    client, self.context.shared_state.group_id, file_path, original_file_hash, 
-                    main_task_id,
+                from core_app.services.transfer.dispatcher import TransferDispatcher
+                clients_pool = getattr(self.context.shared_state, 'clients_pool', [])
+                if not clients_pool:
+                    clients_pool = [client]
+
+                split_files_info = await TransferDispatcher.dispatch_upload(
+                    clients_pool, self.context.shared_state.group_id, file_path, original_file_hash, 
                     progress_callback=ui_cb, 
                     resume_context=split_files_info,
                     chunk_callback=chunk_cb

@@ -272,6 +272,7 @@ class AuthService:
             logger.info("Initializing TDrive...")
             async with asyncio.timeout(30):
                 self.shared_state.group_id = await telegram_comms.get_group_id(client)
+                await utils.ensure_clients_pool_connected(self.shared_state, pool_size=4)
 
             logger.info("TDrive initialization successful.")
             return {"success": True}

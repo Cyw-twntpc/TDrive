@@ -15,6 +15,7 @@ class SharedState:
     def __init__(self):
         # --- Authentication & Client ---
         self.client: Optional[TelegramClient] = None
+        self.clients_pool: list[TelegramClient] = []
         self.api_id: Optional[int] = None
         self.api_hash: Optional[str] = None
         self.group_id: Optional[int] = None
