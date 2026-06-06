@@ -10,8 +10,7 @@ logger = logging.getLogger(__name__)
 
 class Bridge(QObject):
     # --- UI Update Signals ---
-    folderContentsReady = Signal(dict)
-    searchResultsReady = Signal(dict)
+    queryResultReady = Signal(dict)
     
     # --- Authentication and State Signals ---
     login_event = Signal(dict)
@@ -182,27 +181,30 @@ class Bridge(QObject):
         logger.info("Frontend has confirmed login completion. Emitting signal to switch window.")
         self.login_and_initialization_complete.emit()
 
-    @Slot(int, result=dict)
-    def get_thumbnails(self, folder_id):
-        return self._async_call(self._service._file_service.get_thumbnails(folder_id))
+    @Slot(int, str)
+    def get_thumbnails(self, folder_id, request_id):
+        coro = self._service._file_service.get_thumbnails(folder_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
 
-    @Slot(int, result=dict)
-    def get_preview(self, file_id):
-        return self._async_call(self._service._file_service.get_preview(file_id))
+    @Slot(int, str)
+    def get_preview(self, file_id, request_id):
+        coro = self._service._file_service.get_preview(file_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
 
-    @Slot(int, result=dict)
-    def play_video(self, file_id):
-        return self._async_call(self._service.play_video(file_id))
+    @Slot(int, str)
+    def play_video(self, file_id, request_id):
+        coro = self._service.play_video(file_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
 
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
     def get_folder_contents(self, folder_id, request_id):
         coro = self._service.get_folder_contents(folder_id)
-        self._run_background_task(coro, self.folderContentsReady, request_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
 
     @Slot(int, str, str)
     def search_db_items(self, base_folder_id, search_term, request_id):
-        emitter = self.searchResultsReady.emit
+        emitter = self.queryResultReady.emit
         coro = self._service.search_db_items(base_folder_id, search_term, emitter, request_id)
         asyncio.create_task(coro)
 

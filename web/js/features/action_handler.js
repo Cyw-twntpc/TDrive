@@ -430,7 +430,23 @@ const ActionHandler = {
 
         const rootFolder = this._appState.folderTreeData.find(f => f.parent_id === null);
         const baseFolderId = (this._appState.searchScope === 'all' && rootFolder) ? rootFolder.id : this._appState.currentFolderId;
-        this._apiService.searchDbItems(baseFolderId, this._appState.searchTerm, requestId);
+        
+        const onBatch = (data) => {
+            if (this._appState.currentViewRequestId !== requestId) return;
+            if (data.folders) this._appState.currentFolderContents.folders.push(...data.folders);
+            if (data.files) this._appState.currentFolderContents.files.push(...data.files);
+            FileListHandler.sortAndRender(this._appState);
+        };
+
+        this._apiService.searchDbItems(baseFolderId, this._appState.searchTerm, onBatch).then(response => {
+            if (this._appState.currentViewRequestId !== requestId) return;
+            this._uiManager.stopProgress();
+            if (!response.success) {
+                this._uiManager.handleBackendError({ message: response.message || "搜尋過程中發生未知錯誤。" });
+            } else {
+                console.log(`Search complete for request_id: ${requestId}`);
+            }
+        });
     },
 
     exitSearchMode() {

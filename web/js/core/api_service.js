@@ -23,13 +23,58 @@ const ApiService = {
         }
     },
 
+    _callBridgeSignal(functionName, signalName, ...args) {
+        return new Promise((resolve, reject) => {
+            if (window.tdrive_bridge && window.tdrive_bridge[functionName] && window.tdrive_bridge[signalName]) {
+                const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                const handler = (result) => {
+                    if (result && result.request_id === requestId) {
+                        window.tdrive_bridge[signalName].disconnect(handler);
+                        if (result.success === false) {
+                            console.warn(`Bridge call '${functionName}' reported a failure:`, result.message);
+                        }
+                        resolve(result);
+                    }
+                };
+                window.tdrive_bridge[signalName].connect(handler);
+                window.tdrive_bridge[functionName](...args, requestId);
+            } else {
+                console.error(`Bridge function '${functionName}' or signal '${signalName}' is not available.`);
+                reject(new Error("Bridge or Signal is not available."));
+            }
+        });
+    },
+
     getUserInfo: () => ApiService._callBridge('get_user_info'),
     getUserAvatar: () => ApiService._callBridge('get_user_avatar'),
     logout: () => ApiService._callBridge('logout'),
 
     getFolderTreeData: () => ApiService._callBridge('get_folder_tree_data'),
-    getFolderContents: (folderId, requestId) => ApiService._fireAndForget('get_folder_contents', folderId, requestId),
-    searchDbItems: (baseFolderId, term, requestId) => ApiService._fireAndForget('search_db_items', baseFolderId, term, requestId),
+    getFolderContents: (folderId) => ApiService._callBridgeSignal('get_folder_contents', 'queryResultReady', folderId),
+    searchDbItems: (baseFolderId, term, onBatch) => {
+        return new Promise((resolve, reject) => {
+            if (window.tdrive_bridge && window.tdrive_bridge.search_db_items && window.tdrive_bridge.queryResultReady) {
+                const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                const handler = (result) => {
+                    if (result && result.request_id === requestId) {
+                        if (result.type === 'batch') {
+                            if (onBatch) onBatch(result.data);
+                        } else if (result.type === 'done') {
+                            window.tdrive_bridge.queryResultReady.disconnect(handler);
+                            resolve({ success: true, request_id: requestId });
+                        } else if (result.type === 'error') {
+                            window.tdrive_bridge.queryResultReady.disconnect(handler);
+                            resolve({ success: false, message: result.data?.message || '搜尋錯誤' });
+                        }
+                    }
+                };
+                window.tdrive_bridge.queryResultReady.connect(handler);
+                window.tdrive_bridge.search_db_items(baseFolderId, term, requestId);
+            } else {
+                reject(new Error("Bridge or Signal is not available."));
+            }
+        });
+    },
 
     renameItem: (id, newName, type) => ApiService._callBridge('rename_item', id, newName, type),
     deleteItems: (items) => ApiService._callBridge('delete_items', items),
@@ -59,7 +104,7 @@ const ApiService = {
     getInitialStats: () => ApiService._callBridge('get_initial_stats'),
 
     // --- Gallery API ---
-    getThumbnails: (folderId) => ApiService._callBridge('get_thumbnails', folderId),
-    getPreview: (fileId) => ApiService._callBridge('get_preview', fileId),
-    playVideo: (fileId) => ApiService._callBridge('play_video', fileId),
+    getThumbnails: (folderId) => ApiService._callBridgeSignal('get_thumbnails', 'queryResultReady', folderId),
+    getPreview: (fileId) => ApiService._callBridgeSignal('get_preview', 'queryResultReady', fileId),
+    playVideo: (fileId) => ApiService._callBridgeSignal('play_video', 'queryResultReady', fileId),
 };

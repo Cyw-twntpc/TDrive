@@ -139,7 +139,23 @@ document.addEventListener('DOMContentLoaded', () => {
         FileTreeHandler.updateSelection(AppState);
         FileListHandler.updateBreadcrumb(AppState, navigateTo);
 
-        ApiService.getFolderContents(folderId, requestId);
+        ApiService.getFolderContents(folderId).then(response => {
+            if (!response || !response.success) {
+                UIModals.showAlert('載入失敗', response?.message || '無法載入資料夾內容。', 'btn-primary');
+                return;
+            }
+
+            const data = response.data;
+            if (AppState.currentFolderId !== data.current_folder.id) return;
+            
+            AppState.currentFolderContents = data;
+            FileListHandler.sortAndRender(AppState);
+            UIManager.stopProgress();
+            
+            if (AppState.viewMode === 'grid') {
+                FileListHandler.loadThumbnails(AppState.currentFolderId);
+            }
+        });
     }
     window.navigateTo = navigateTo;
 
@@ -304,12 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.tdrive_bridge.connection_status_changed) {
             window.tdrive_bridge.connection_status_changed.connect(UIManager.handleConnectionStatus);
         }
-        if (window.tdrive_bridge.folderContentsReady) {
-            window.tdrive_bridge.folderContentsReady.connect(onFolderContentsReady);
-        }
-        if (window.tdrive_bridge.searchResultsReady) {
-            window.tdrive_bridge.searchResultsReady.connect(onSearchResultsReady);
-        }
+        // Removed folderContentsReady and searchResultsReady listeners
         if (window.tdrive_bridge.folder_content_refresh_required) {
             window.tdrive_bridge.folder_content_refresh_required.connect((changedFolderIds) => {
                 // 1. Refresh Tree if -1 is present (Structural change)
@@ -331,7 +342,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isCurrentAffected) {
                     const requestId = Date.now().toString();
                     AppState.currentViewRequestId = requestId;
-                    ApiService.getFolderContents(AppState.currentFolderId, requestId);
+                    ApiService.getFolderContents(AppState.currentFolderId).then(response => {
+                        if (response && response.success && AppState.currentFolderId === response.data.current_folder.id) {
+                            AppState.currentFolderContents = response.data;
+                            FileListHandler.sortAndRender(AppState);
+                            if (AppState.viewMode === 'grid') {
+                                FileListHandler.loadThumbnails(AppState.currentFolderId);
+                            }
+                        }
+                    });
                 }
             });
         }
