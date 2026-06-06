@@ -99,7 +99,7 @@ class TDriveService:
                         "id": args[0],
                         "name": args[1],
                         "status": args[4],
-                        "speed": args[5],
+                        "speed": args[5] if len(args) > 5 else 0,
                         "is_folder": kwargs.get("is_folder", False),
                         "error_message": kwargs.get("message", ""),
                         "todayTraffic": self._transfer_service.controller.get_today_traffic()

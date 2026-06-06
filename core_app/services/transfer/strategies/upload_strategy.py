@@ -338,6 +338,7 @@ class UploadStrategy(TransferStrategy):
                         if remaining > 0: progress_callback(main_task_id, remaining, 0)
                         
                         if main_task_id == sub_task_id:
+                            await self.context.metadata_manager.sync_db_to_cloud(client, self.context.shared_state.group_id, self.context.shared_state.api_id)
                             progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
                             self.context.watcher.add_watch(main_task_id, parent_id, 'remote')
                             

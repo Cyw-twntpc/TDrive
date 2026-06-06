@@ -225,6 +225,10 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
         if not messages:
             return None
             
+        if len(messages) != len(msg_ids):
+            logger.error(f"Requested {len(msg_ids)} chunks but only got {len(messages)}. Aborting to prevent data corruption.")
+            return None
+            
         key = cr.generate_key(original_hash[:32], original_hash[-32:])
         final_buffer = io.BytesIO()
         
@@ -272,6 +276,7 @@ async def download_file(client, group_id: int, file_details: dict, download_dir:
             
             if len(messages_to_download) != len(message_ids):
                  logger.warning(f"Requested {len(message_ids)} chunks but got {len(messages_to_download)}. Some cloud messages might be missing.")
+                 raise ValueError(f"Requested {len(message_ids)} chunks but only got {len(messages_to_download)}. Cloud messages are missing or corrupted.")
 
         total_size = int(file_details['size'])
         
