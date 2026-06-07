@@ -2,7 +2,7 @@ import asyncio
 import logging
 import io
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Tuple
 
 from core_app.api import telegram_comms
 from core_app.api import file_processor as fp
@@ -27,6 +27,20 @@ class StreamBuffer:
         
         # Locks for concurrent access to same chunk
         self._locks: Dict[str, asyncio.Lock] = {}
+        
+        # Tracking for dynamic readahead
+        self._active_readaheads: Dict[Tuple[int, int], asyncio.Task] = {}
+        self._last_chunk_requested: Dict[int, int] = {}
+
+    def _cancel_readaheads(self, file_id: int):
+        """Cancels all pending readahead tasks for a specific file to free up bandwidth."""
+        keys_to_cancel = [k for k in self._active_readaheads.keys() if k[0] == file_id]
+        for k in keys_to_cancel:
+            task = self._active_readaheads[k]
+            if not task.done():
+                task.cancel()
+                logger.debug(f"Seek detected: Cancelled readahead task for chunk {k[1]}")
+            del self._active_readaheads[k]
 
     async def read(self, file_id: int, offset: int, length: int, file_size: int, file_hash: str) -> bytes:
         """
@@ -48,6 +62,13 @@ class StreamBuffer:
         # Optimization: We could cache this info map, but for now query is fast enough
         chunk_map = await self._get_chunk_map(file_id)
 
+        # Seek Detection: Cancel old readaheads if we jumped more than 1 chunk
+        last_requested = self._last_chunk_requested.get(file_id, -1)
+        if last_requested != -1 and abs(start_chunk_idx - last_requested) > 1:
+            self._cancel_readaheads(file_id)
+        
+        self._last_chunk_requested[file_id] = end_chunk_idx
+
         for chunk_idx in range(start_chunk_idx, end_chunk_idx + 1):
             chunk_data = await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
             
@@ -63,8 +84,15 @@ class StreamBuffer:
                 buffer.write(chunk_data[slice_start:slice_end])
                 current_read_pos += (slice_end - slice_start)
 
-            # Trigger readahead for next chunk
-            asyncio.create_task(self._readahead(file_id, chunk_idx + 1, file_hash, chunk_map))
+            # Trigger dynamic readahead (depth = 2)
+            for offset in range(1, 3):
+                target_chunk = chunk_idx + offset
+                cache_key = (file_id, target_chunk)
+                
+                # Only schedule if it's not already cached and not currently downloading
+                if cache_key not in self._cache and cache_key not in self._active_readaheads:
+                    task = asyncio.create_task(self._readahead(file_id, target_chunk, file_hash, chunk_map))
+                    self._active_readaheads[cache_key] = task
 
         return buffer.getvalue()
 
@@ -129,6 +157,7 @@ class StreamBuffer:
         """Preloads the next chunk in background."""
         cache_key = (file_id, chunk_idx)
         if cache_key in self._cache:
+            self._active_readaheads.pop(cache_key, None)
             return # Already cached
 
         try:
@@ -137,8 +166,12 @@ class StreamBuffer:
                 return
 
             await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
+        except asyncio.CancelledError:
+            pass # Task intentionally cancelled by seek detection
         except Exception as e:
             logger.debug(f"Readahead failed for chunk {chunk_idx}: {e}")
+        finally:
+            self._active_readaheads.pop(cache_key, None)
 
     async def _get_chunk_map(self, file_id: int) -> Dict[int, int]:
         """
