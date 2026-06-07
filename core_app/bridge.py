@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 class Bridge(QObject):
     # --- UI Update Signals ---
     queryResultReady = Signal(dict)
+    play_video_requested = Signal(str, str)
     
     # --- Authentication and State Signals ---
     login_event = Signal(dict)
@@ -193,8 +194,24 @@ class Bridge(QObject):
 
     @Slot(int, str)
     def play_video(self, file_id, request_id):
-        coro = self._service.play_video(file_id)
-        self._run_background_task(coro, self.queryResultReady, request_id)
+        async def task_wrapper():
+            try:
+                payload = await self._service.play_video(file_id)
+                if payload.get("success") and "stream_url" in payload:
+                    file_name = payload.get("file_name", "Unknown Video")
+                    self.play_video_requested.emit(payload["stream_url"], file_name)
+                
+                payload_with_req = {'data': payload, 'request_id': request_id}
+                self.queryResultReady.emit(payload_with_req)
+            except Exception as e:
+                logger.error(f"Play video failed (request_id: {request_id}): {e}", exc_info=True)
+                error_payload = {
+                    'data': {"success": False, "error_code": "TASK_FAILED", "message": str(e)},
+                    'request_id': request_id
+                }
+                self.queryResultReady.emit(error_payload)
+        
+        asyncio.create_task(task_wrapper())
 
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)

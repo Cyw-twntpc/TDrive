@@ -14,8 +14,7 @@ from .services import (
     TransferService, 
     GalleryManager, 
     StreamBuffer, 
-    StreamingService, 
-    PlayerService
+    StreamingService
 )
 from .services.common.session_manager import SessionManager
 
@@ -48,7 +47,6 @@ class TDriveService:
         # Initialize Streaming Components
         self.stream_buffer = StreamBuffer(self._shared_state)
         self.streaming_service = StreamingService(self.stream_buffer, self.db_handler)
-        self.player_service = PlayerService()
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
@@ -166,9 +164,6 @@ class TDriveService:
         if self.streaming_service:
             await self.streaming_service.stop()
         
-        if self.player_service:
-            self.player_service.terminate_all()
-        
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
         
@@ -200,7 +195,7 @@ class TDriveService:
     # --- Streaming Logic ---
     async def play_video(self, file_id: int) -> Dict[str, Any]:
         """
-        Starts the streaming proxy (if needed) and launches VLC.
+        Starts the streaming proxy (if needed) and returns the stream URL.
         """
         # Ensure proxy is running
         if not self.streaming_service.runner:
@@ -210,8 +205,18 @@ class TDriveService:
         if not url:
             return {"success": False, "message": "Failed to generate stream URL"}
             
-        success, msg = self.player_service.play_video(url)
-        return {"success": success, "message": msg}
+        # Fetch file name
+        loop = asyncio.get_running_loop()
+        def get_name():
+            conn = self.db_handler._get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM file_folder_map WHERE id = ?", (file_id,))
+            row = cur.fetchone()
+            return row['name'] if row else "Unknown Video"
+            
+        file_name = await loop.run_in_executor(None, get_name)
+            
+        return {"success": True, "stream_url": url, "file_name": file_name, "message": "影片已就緒"}
 
     # --- Authentication Service ---
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:

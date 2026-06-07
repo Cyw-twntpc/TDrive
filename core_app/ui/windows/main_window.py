@@ -31,13 +31,46 @@ class MainWindow(QMainWindow):
         self.channel = QWebChannel()
         self.channel.registerObject("tdrive_bridge", self.bridge)
 
+        from PySide6.QtWidgets import QStackedWidget
+        from core_app.ui.widgets.video_player_widget import VideoPlayerWidget
+        
+        self.stacked_widget = QStackedWidget()
+        self.setCentralWidget(self.stacked_widget)
+        
         self.web_view = QWebEngineView()
         self.web_view.page().setWebChannel(self.channel)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
         
         self.web_view.setUrl(QUrl.fromLocalFile(str(Path("web/index.html").resolve())))
-        self.setCentralWidget(self.web_view)
+        
+        self.stacked_widget.addWidget(self.web_view)
+        
+        # Connect bridge signals
+        self.bridge.play_video_requested.connect(self.handle_play_video)
+        
+        self.player_widget = None
+
+    def handle_play_video(self, stream_url: str, file_name: str):
+        from core_app.ui.widgets.video_player_widget import VideoPlayerWidget
+        logger.info(f"Embedding video player for URL: {stream_url}")
+        
+        if self.player_widget:
+            self.player_widget.close_player()
+            
+        self.player_widget = VideoPlayerWidget(stream_url, file_name)
+        self.player_widget.closed.connect(self.close_player)
+        
+        self.stacked_widget.addWidget(self.player_widget)
+        self.stacked_widget.setCurrentWidget(self.player_widget)
+
+    def close_player(self):
+        logger.info("Closing embedded video player")
+        self.stacked_widget.setCurrentWidget(self.web_view)
+        if self.player_widget:
+            self.stacked_widget.removeWidget(self.player_widget)
+            self.player_widget.deleteLater()
+            self.player_widget = None
 
     async def _graceful_shutdown(self):
         logger.info("Performing graceful shutdown (Window hidden)...")
@@ -54,5 +87,9 @@ class MainWindow(QMainWindow):
         self.hide()
         event.ignore() # Prevent Qt from killing the app immediately
         
+        # Stop video playback immediately so it releases connections to the streaming proxy
+        if self.player_widget:
+            self.player_widget.close_player()
+            
         # Start background shutdown task
         asyncio.create_task(self._graceful_shutdown())

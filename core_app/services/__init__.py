@@ -7,6 +7,5 @@ from .transfer.transfer_service import TransferService
 from .transfer.transfer_controller import TransferController
 from .media.gallery_manager import GalleryManager
 from .media.image_processor import ImageProcessor
-from .media.player_service import PlayerService
 from .media.streaming_service import StreamingService
 from .media.stream_buffer import StreamBuffer
