@@ -18,6 +18,16 @@ const FileListHandler = {
     ftDetailsBtn: document.getElementById('ft-details-btn'),
     ftTrashBtn: document.getElementById('ft-trash-btn'),
 
+    // Pagination state for lazy rendering
+    _renderState: {
+        list: [],
+        index: 0,
+        chunkSize: 50,
+        observer: null,
+        appState: null,
+        isGrid: false
+    },
+
     /**
      * Initializes the FileListHandler by setting up event listeners for sorting and selection.
      * @param {Function} onSort - Callback function to execute when a sort header is clicked.
@@ -137,16 +147,63 @@ const FileListHandler = {
             this.fileListBodyEl.classList.remove('grid-view');
         }
 
-        const fragment = document.createDocumentFragment();
-        const createFn = isGrid ? this._createGridItemElement.bind(this) : this._createItemElement.bind(this);
+        // Clean up previous observer
+        if (this._renderState.observer) {
+            this._renderState.observer.disconnect();
+            this._renderState.observer = null;
+        }
 
-        contents.folders.forEach(folder => fragment.appendChild(createFn(folder, true, AppState)));
-        contents.files.forEach(file => fragment.appendChild(createFn(file, false, AppState)));
-        
-        this.fileListBodyEl.appendChild(fragment);
+        // Prepare render list
+        const renderList = [];
+        contents.folders.forEach(f => renderList.push({ item: f, isFolder: true }));
+        contents.files.forEach(f => renderList.push({ item: f, isFolder: false }));
+
+        this._renderState.list = renderList;
+        this._renderState.index = 0;
+        this._renderState.appState = AppState;
+        this._renderState.isGrid = isGrid;
+
+        this._renderNextChunk();
 
         if (contents.files.length > 0) {
             this.loadThumbnails(AppState.currentFolderId);
+        }
+    },
+
+    _renderNextChunk() {
+        const state = this._renderState;
+        if (state.index >= state.list.length) return;
+
+        const fragment = document.createDocumentFragment();
+        const createFn = state.isGrid ? this._createGridItemElement.bind(this) : this._createItemElement.bind(this);
+
+        // Remove old sentinel if exists
+        const oldSentinel = this.fileListBodyEl.querySelector('.scroll-sentinel');
+        if (oldSentinel) oldSentinel.remove();
+
+        const endIndex = Math.min(state.index + state.chunkSize, state.list.length);
+        for (let i = state.index; i < endIndex; i++) {
+            const data = state.list[i];
+            fragment.appendChild(createFn(data.item, data.isFolder, state.appState));
+        }
+        state.index = endIndex;
+        this.fileListBodyEl.appendChild(fragment);
+
+        // Add sentinel for IntersectionObserver if there are more items
+        if (state.index < state.list.length) {
+            const sentinel = document.createElement('div');
+            sentinel.className = 'scroll-sentinel';
+            sentinel.style.height = '10px'; // invisible trigger area
+            this.fileListBodyEl.appendChild(sentinel);
+
+            if (!state.observer) {
+                state.observer = new IntersectionObserver((entries) => {
+                    if (entries[0].isIntersecting) {
+                        this._renderNextChunk();
+                    }
+                }, { root: document.getElementById('file-list-container'), rootMargin: '100px' });
+            }
+            state.observer.observe(sentinel);
         }
     },
 
@@ -154,41 +211,50 @@ const FileListHandler = {
         if (!folderId) return;
         try {
             const result = await ApiService.getThumbnails(folderId);
-            // console.log("[FileListHandler] loadThumbnails result:", result);
             
             if (result && result.success && result.thumbnails) {
                 AppState.currentThumbnails = result.thumbnails; // Cache for Gallery
+                const entries = Object.entries(result.thumbnails);
                 
-                const thumbIds = Object.keys(result.thumbnails);
-                console.log(`[ThumbDebug] Loaded ${thumbIds.length} thumbnails. IDs:`, thumbIds);
+                // Batch process DOM updates using requestAnimationFrame to avoid freezing UI
+                const BATCH_SIZE = 20;
+                let currentIndex = 0;
 
-                Object.entries(result.thumbnails).forEach(([fileId, b64]) => {
-                    const src = `data:image/jpeg;base64,${b64}`;
-                    
-                    // Update Grid View
-                    const gridItem = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"]`);
-                    const gridImg = gridItem ? gridItem.querySelector('.grid-thumb-img') : null;
-                    
-                    if (gridImg) {
-                        gridImg.src = src;
-                        gridImg.classList.remove('hidden');
-                        const gridIcon = gridItem.querySelector('.grid-thumb-icon');
-                        if (gridIcon) gridIcon.classList.add('hidden');
-                    } else {
-                        // console.warn(`[ThumbDebug] Grid element not found for ID: ${fileId}`);
+                const processBatch = () => {
+                    const endIndex = Math.min(currentIndex + BATCH_SIZE, entries.length);
+                    for (let i = currentIndex; i < endIndex; i++) {
+                        const [fileId, b64] = entries[i];
+                        const src = `data:image/jpeg;base64,${b64}`;
+                        
+                        // Update Grid View
+                        const gridItem = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"]`);
+                        const gridImg = gridItem ? gridItem.querySelector('.grid-thumb-img') : null;
+                        
+                        if (gridImg) {
+                            gridImg.src = src;
+                            gridImg.classList.remove('hidden');
+                            const gridIcon = gridItem.querySelector('.grid-thumb-icon');
+                            if (gridIcon) gridIcon.classList.add('hidden');
+                        }
+
+                        // Update List View
+                        const listItem = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"]`);
+                        const listImg = listItem ? listItem.querySelector('.list-thumb-img') : null;
+
+                        if (listImg) {
+                            listImg.src = src;
+                            listImg.classList.remove('hidden');
+                            const listIcon = listItem.querySelector('.list-thumb-icon');
+                            if (listIcon) listIcon.classList.add('hidden');
+                        }
                     }
-
-                    // Update List View
-                    const listItem = this.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"]`);
-                    const listImg = listItem ? listItem.querySelector('.list-thumb-img') : null;
-
-                    if (listImg) {
-                        listImg.src = src;
-                        listImg.classList.remove('hidden');
-                        const listIcon = listItem.querySelector('.list-thumb-icon');
-                        if (listIcon) listIcon.classList.add('hidden');
+                    currentIndex = endIndex;
+                    if (currentIndex < entries.length) {
+                        requestAnimationFrame(processBatch);
                     }
-                });
+                };
+                
+                requestAnimationFrame(processBatch);
             }
         } catch (e) {
             console.error("Failed to load thumbnails:", e);

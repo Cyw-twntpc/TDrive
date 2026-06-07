@@ -22,7 +22,7 @@ from .strategies.download_strategy import DownloadStrategy
 
 logger = logging.getLogger(__name__)
 
-CONCURRENCY_LIMIT = 3
+DEFAULT_CONCURRENCY = 3
 
 class TransferService:
     def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager', metadata_manager: 'MetadataManager'):
@@ -33,7 +33,9 @@ class TransferService:
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.db, status_change_callback=lambda x: None)
         self.gallery_manager = gallery_manager
         
-        self._semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+        # In the future, this can be loaded from user settings
+        self.concurrency_limit = DEFAULT_CONCURRENCY
+        self._semaphore = asyncio.Semaphore(self.concurrency_limit)
         # Tracking active sub-tasks for cancellation
         self._active_sub_tasks: Dict[str, set] = defaultdict(set)
         
@@ -290,5 +292,14 @@ class TransferService:
     def get_transfer_config(self) -> Dict[str, Any]:
         return {
             "todayTraffic": self.controller.get_today_traffic(),
-            "chunkSize": fp.CHUNK_SIZE
+            "chunkSize": fp.CHUNK_SIZE,
+            "concurrencyLimit": self.concurrency_limit
         }
+
+    def set_concurrency_limit(self, limit: int):
+        """Dynamically update concurrency limit (Note: Only applies to new tasks grabbed by semaphore)"""
+        if limit < 1: limit = 1
+        self.concurrency_limit = limit
+        # Re-create semaphore (this will take effect for new transfers waiting for the semaphore)
+        self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+        logger.info(f"Concurrency limit updated to {self.concurrency_limit}")

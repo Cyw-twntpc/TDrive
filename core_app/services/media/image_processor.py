@@ -30,11 +30,15 @@ class ImageProcessor:
             
             if not reader.canRead():
                 logger.warning(f"Cannot read image: {file_path}")
+                del reader
                 return None, None
 
             original_image = reader.read()
+            del reader # Release reader immediately after read
+            
             if original_image.isNull():
                 logger.warning(f"Failed to load image: {file_path}")
+                del original_image
                 return None, None
 
             # 1. Generate Thumbnail (Max 200px)
@@ -42,6 +46,9 @@ class ImageProcessor:
 
             # 2. Generate Preview (Max 1080p)
             preview_bytes = ImageProcessor._generate_preview(original_image)
+
+            # Explicitly free memory for the large original QImage
+            del original_image
 
             return thumb_bytes, preview_bytes
 
