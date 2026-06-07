@@ -14,7 +14,8 @@ if hasattr(os, 'add_dll_directory'):
 
 import vlc
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-                               QPushButton, QSlider, QFrame, QLabel, QToolTip, QApplication)
+                               QPushButton, QSlider, QFrame, QLabel, QToolTip, QApplication,
+                               QStyle, QStyleOptionSlider)
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QRectF, QPropertyAnimation, QVariantAnimation, QParallelAnimationGroup, QPauseAnimation, QSequentialAnimationGroup
 from PySide6.QtGui import QCursor, QPainter, QColor, QPen, QPainterPath, QRegion, QPalette
 
@@ -222,10 +223,14 @@ class VideoPlayerWidget(QWidget):
             }
         """)
         self.close_button.clicked.connect(self.close_player)
-        
         self.top_layout.addWidget(self.title_label)
         self.top_layout.addStretch(1)
         self.top_layout.addWidget(self.close_button)
+        
+        # --- Time Preview Label ---
+        self.time_preview_label = QLabel(self)
+        self.time_preview_label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px 6px; border-radius: 4px; font-size: 12px;")
+        self.time_preview_label.hide()
         
         # --- Bottom Bar ---
         self.bottom_bar = QWidget()
@@ -256,6 +261,8 @@ class VideoPlayerWidget(QWidget):
         self.bottom_layout.addWidget(self.play_button)
         
         self.position_slider = QSlider(Qt.Orientation.Horizontal)
+        self.position_slider.setMouseTracking(True)
+        self.position_slider.installEventFilter(self)
         self.position_slider.setMaximum(1000)
         self.position_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.position_slider.setStyleSheet("""
@@ -422,15 +429,44 @@ class VideoPlayerWidget(QWidget):
             time_str = self.format_time(target_time_ms)
             QToolTip.showText(QCursor.pos(), time_str, self.position_slider)
 
+    def get_slider_value_from_pos(self, x):
+        opt = QStyleOptionSlider()
+        self.position_slider.initStyleOption(opt)
+        style = self.position_slider.style()
+        grc = style.subControlRect(QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderGroove, self.position_slider)
+        hrc = style.subControlRect(QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self.position_slider)
+        
+        length = grc.width() - hrc.width()
+        pos = x - grc.x() - hrc.width() // 2
+        
+        if length > 0:
+            val = (pos / length) * self.position_slider.maximum()
+            return max(0, min(self.position_slider.maximum(), int(val)))
+        return 0
+
     def eventFilter(self, obj, event):
         if not hasattr(self, 'position_slider') or not hasattr(self, 'volume_slider'):
             return super().eventFilter(obj, event)
             
-        if obj == self.position_slider and event.type() == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton:
-                val = int((event.position().x() / self.position_slider.width()) * self.position_slider.maximum())
-                self.position_slider.setValue(val)
-                self.handle_time_drag(val)
+        if obj == self.position_slider:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    val = self.get_slider_value_from_pos(event.position().x())
+                    self.position_slider.setValue(val)
+                    self.handle_time_drag(val)
+            elif event.type() == QEvent.Type.MouseMove:
+                if self.player and self.player.get_length() > 0:
+                    val = self.get_slider_value_from_pos(event.position().x())
+                    hover_time = int((val / self.position_slider.maximum()) * self.player.get_length())
+                    self.time_preview_label.setText(self.format_time(hover_time))
+                    self.time_preview_label.adjustSize()
+                    global_pos = self.position_slider.mapToGlobal(event.position().toPoint())
+                    local_pos = self.mapFromGlobal(global_pos)
+                    self.time_preview_label.move(local_pos.x() - self.time_preview_label.width() // 2, local_pos.y() - 35)
+                    self.time_preview_label.raise_()
+                    self.time_preview_label.show()
+            elif event.type() == QEvent.Type.Leave:
+                self.time_preview_label.hide()
                 
         if obj == self.volume_slider and event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
@@ -451,8 +487,30 @@ class VideoPlayerWidget(QWidget):
                 self.loading_overlay.hide()
             if not self.state_overlay.isHidden():
                 self.state_overlay.hide()
+                
+        if event.type() == QEvent.Type.KeyPress and self.window().isActiveWindow() and self.isVisible():
+            if event.key() == Qt.Key.Key_Space:
+                self.toggle_play()
+                return True
+            elif event.key() == Qt.Key.Key_Right:
+                self.seek_relative(5000)
+                return True
+            elif event.key() == Qt.Key.Key_Left:
+                self.seek_relative(-5000)
+                return True
             
         return super().eventFilter(obj, event)
+
+    def seek_relative(self, ms_offset):
+        if not self.player:
+            return
+        current_time = self.player.get_time()
+        length = self.player.get_length()
+        if current_time >= 0 and length > 0:
+            new_time = max(0, min(current_time + ms_offset, length))
+            self.set_position(new_time)
+            self.position_slider.setValue(int((new_time / length) * self.position_slider.maximum()))
+            self.time_label.setText(f"{self.format_time(new_time)} / {self.format_time(length)}")
 
     def show_controls(self):
         self.top_bar.show()
