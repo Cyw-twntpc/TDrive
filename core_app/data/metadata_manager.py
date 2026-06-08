@@ -183,6 +183,11 @@ class MetadataManager:
         """
         async with self._lock:
             try:
+                # 0. Pre-Sync Integrity Check
+                if hasattr(self.db, 'run_integrity_check') and not self.db.run_integrity_check():
+                    logger.error("CRITICAL: Database integrity check failed! Aborting cloud sync to protect remote backup.")
+                    return
+
                 # 1. Rotate Log: Mark current pending ops as "about to be synced"
                 if hasattr(self.db, 'transaction_logger'):
                     self.db.transaction_logger.rotate()

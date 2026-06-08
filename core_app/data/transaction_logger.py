@@ -2,6 +2,8 @@ import pickle
 import os
 import logging
 import sqlite3
+import struct
+import zlib
 from typing import Tuple, Any
 
 logger = logging.getLogger(__name__)
@@ -12,43 +14,52 @@ class TransactionLogger:
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
 
     def append(self, sql: str, params: Tuple[Any, ...]):
-        """將 SQL 指令以二進位追加寫入日誌"""
+        """Writes SQL command securely with length header and CRC32."""
         try:
+            data = pickle.dumps((sql, params))
+            data_len = len(data)
+            crc = zlib.crc32(data) & 0xFFFFFFFF
+            
+            # Format: <I (length 4 bytes) + data + <I (crc 4 bytes)
+            header = struct.pack('<I', data_len)
+            footer = struct.pack('<I', crc)
+            
             with open(self.log_path, 'ab') as f:
-                pickle.dump((sql, params), f)
+                f.write(header)
+                f.write(data)
+                f.write(footer)
+                f.flush()
+                os.fsync(f.fileno()) # Force write to physical disk
         except Exception as e:
             logger.error(f"Log append failed: {e}")
+            raise # Ensure caller (DB Handler) knows the write failed
 
     def rotate(self):
-        """
-        將當前日誌內容附加到備份檔，並清空當前日誌。
-        這確保了即使上次同步失敗，備份檔也會累積所有未同步的變更，
-        且已納入本次 Snapshot 的變更最終會被 clear() 清除。
-        """
+        """Atomic log rotation: append to .bak, then truncate via os.replace."""
         if not os.path.exists(self.log_path): return
         
         bak_path = self.log_path + '.bak'
         try:
-            # 如果當前 Log 有內容，將其附加到 bak 檔
             if os.path.getsize(self.log_path) > 0:
                 with open(self.log_path, 'rb') as src:
                     content = src.read()
                     if content:
                         with open(bak_path, 'ab') as dst:
                             dst.write(content)
+                            dst.flush()
+                            os.fsync(dst.fileno())
                 
-                # 清空當前 Log (Truncate)
-                with open(self.log_path, 'wb') as f:
-                    pass # Just open and close to clear it
+                tmp_path = self.log_path + '.tmp'
+                with open(tmp_path, 'wb') as f:
+                    pass
+                os.replace(tmp_path, self.log_path)
                     
         except OSError as e:
             logger.error(f"Log rotation failed: {e}")
 
     def replay(self, conn: sqlite3.Connection):
-        """啟動時重放日誌到記憶體 DB"""
-        # 先重放備份 (如果存在)
+        """Replays the transaction log to the in-memory database."""
         self._replay_file(conn, self.log_path + '.bak')
-        # 再重放當前日誌
         self._replay_file(conn, self.log_path)
 
     def _replay_file(self, conn: sqlite3.Connection, path: str):
@@ -60,18 +71,46 @@ class TransactionLogger:
             with open(path, 'rb') as f:
                 with conn:
                     while True:
+                        header = f.read(4)
+                        if not header:
+                            break # EOF reached safely
+                        if len(header) < 4:
+                            logger.warning(f"Incomplete length header found in {path}. Safe truncation applied.")
+                            break
+                        
+                        data_len = struct.unpack('<I', header)[0]
+                        
+                        data = f.read(data_len)
+                        if len(data) < data_len:
+                            logger.warning(f"Incomplete payload data found in {path} (Expected {data_len}, got {len(data)}). Safe truncation applied.")
+                            break
+                            
+                        footer = f.read(4)
+                        if len(footer) < 4:
+                            logger.warning(f"Incomplete CRC32 footer found in {path}. Safe truncation applied.")
+                            break
+                            
+                        expected_crc = struct.unpack('<I', footer)[0]
+                        actual_crc = zlib.crc32(data) & 0xFFFFFFFF
+                        
+                        if expected_crc != actual_crc:
+                            logger.error(f"CRC32 mismatch detected in {path}! Dropping corrupted record and stopping replay.")
+                            break
+                        
                         try:
-                            sql, params = pickle.load(f)
+                            sql, params = pickle.loads(data)
                             conn.execute(sql, params)
                             count += 1
-                        except EOFError:
+                        except Exception as parse_err:
+                            logger.error(f"Failed to parse or execute healthy record: {parse_err}")
                             break
-            logger.info(f"Replayed {count} transactions from {path}.")
+
+            logger.info(f"Successfully replayed {count} healthy transactions from {path}.")
         except Exception as e:
-            logger.error(f"Replay from {path} failed: {e}")
+            logger.error(f"Replay from {path} encountered an unexpected error: {e}")
 
     def clear(self):
-        """雲端同步成功後清除備份日誌"""
+        """Clears backup log after successful cloud sync."""
         bak_path = self.log_path + '.bak'
         if os.path.exists(bak_path):
             try:

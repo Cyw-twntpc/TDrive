@@ -59,15 +59,9 @@ class DatabaseHandler:
         return self._connection
 
     def _execute_write(self, cursor: sqlite3.Cursor, sql: str, params: tuple, score: int = 1):
-        """
-        統一處理寫入操作：
-        1. 執行 SQL
-        2. 寫入重放日誌
-        3. 增加同步積分
-        """
-        cursor.execute(sql, params)
-        # 僅當操作成功後才記錄 Log (由於是記憶體 DB，rollback 機率低，這裡簡化處理)
+        """Executes write operation with Write-Ahead Logging (WAL) pattern."""
         self.transaction_logger.append(sql, params)
+        cursor.execute(sql, params)
         self.sync_manager.add_change(score)
 
     def _init_db(self):
@@ -335,6 +329,28 @@ class DatabaseHandler:
         return cursor.fetchone()['id']
 
     # --- Public API ---
+
+    def run_integrity_check(self) -> bool:
+        """Executes PRAGMA integrity_check to verify database health."""
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check;")
+            rows = cursor.fetchall()
+            
+            # integrity_check returns a single row with 'ok' if healthy
+            if rows and len(rows) > 0:
+                result = rows[0][0]
+                if str(result).lower() == 'ok':
+                    return True
+                else:
+                    errors = [str(r[0]) for r in rows]
+                    logger.error(f"Database integrity check failed: {errors}")
+                    return False
+            return False
+        except Exception as e:
+            logger.error(f"Error during database integrity check: {e}")
+            return False
 
     def get_folder_contents(self, folder_id: int) -> dict:
         conn = self._get_conn()
