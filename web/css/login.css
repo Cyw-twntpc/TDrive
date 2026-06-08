@@ -297,7 +297,13 @@ body {
     position: relative;
     overflow: hidden;
 }
-.qr-code img { transition: filter 0.3s ease; }
+.qr-code img { 
+    width: 100%; 
+    height: 100%; 
+    object-fit: contain; 
+    display: block; 
+    transition: filter 0.3s ease; 
+}
 
 .qr-code.expired img {
     filter: blur(4px);
