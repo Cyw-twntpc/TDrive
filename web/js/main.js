@@ -405,7 +405,14 @@ function setupGlobalDragAndDrop() {
 }
 // Auto-refresh dynamic views on language change
 document.addEventListener('i18nChanged', () => {
-    if (typeof ActionHandler !== 'undefined' && ActionHandler._appState && ActionHandler._appState.currentFolderId) {
-        window.tdrive_bridge.list_directory(ActionHandler._appState.currentFolderId, ActionHandler._appState.currentViewRequestId);
+    if (typeof ActionHandler !== 'undefined' && ActionHandler._appState) {
+        // Re-render file list using cached data
+        if (typeof FileListHandler !== 'undefined' && ActionHandler._appState.currentFolderContents) {
+            FileListHandler.sortAndRender(ActionHandler._appState);
+        }
+        // Re-render trash list using cached data
+        if (typeof TrashHandler !== 'undefined' && TrashHandler._trashItems && TrashHandler._trashItems.length > 0) {
+            TrashHandler._renderTrashItems(TrashHandler._trashItems);
+        }
     }
 });
