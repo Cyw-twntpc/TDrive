@@ -13,6 +13,7 @@ from core_app.api import telegram_comms, crypto_handler
 from core_app.common import errors
 from core_app.api import file_processor as fp
 from ...media.image_processor import ImageProcessor
+from ..metadata_extractor import extract_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +44,13 @@ class UploadStrategy(TransferStrategy):
                 
                 try:
                     total_size = os.path.getsize(file_path)
+                    meta = extract_metadata(file_path)
                 except OSError:
                     total_size = 0
+                    meta = None
 
                 self.context.controller.add_upload_task(
-                    task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None
+                    task_id, file_path, parent_id, total_size, is_folder=False, file_hash=None, file_details=meta
                 )
 
                 progress_callback(task_id, file_name, 0, total_size, 'queued', 0, is_folder=False)
@@ -161,10 +164,12 @@ class UploadStrategy(TransferStrategy):
                     
                     if target_parent_id:
                         real_total_size += f_size
+                        meta = extract_metadata(file_path)
                         child_tasks_map[sub_task_id] = {
                             "file_path": file_path,
                             "parent_id": target_parent_id,
                             "total_size": f_size,
+                            "file_details": meta,
                             "status": "queued"
                         }
                         
@@ -201,8 +206,15 @@ class UploadStrategy(TransferStrategy):
                     if res is None:
                         continue 
                     
-                    fid, chunks = res
+                    fid, chunks, sub_id = res
                     if not chunks: continue
+                    
+                    file_details = None
+                    task_data = self.context.controller.get_task(main_task_id)
+                    if task_data and task_data.get('is_folder'):
+                        child = task_data.get('child_tasks', {}).get(sub_id)
+                        if child:
+                            file_details = child.get('file_details')
                     
                     def _get_fid_parent():
                         conn = self.context.db._get_conn()
@@ -213,7 +225,7 @@ class UploadStrategy(TransferStrategy):
                     
                     folder_id = await loop.run_in_executor(None, _get_fid_parent)
                     if folder_id:
-                        transfers_by_folder[folder_id][fid] = chunks
+                        transfers_by_folder[folder_id][fid] = {'c': chunks, 'm': file_details or {}}
 
                 for folder_id, file_map in transfers_by_folder.items():
                     if file_map:
@@ -326,8 +338,8 @@ class UploadStrategy(TransferStrategy):
                     logger.info(f"Sec-upload (Deduplication) triggered for {file_name}")
                     try:
                         def _dedup_add():
-                            fid = self.context.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
-                            self.context.controller.record_created_artifact(main_task_id, 'file', fid)
+                            fid, ui_id = self.context.db.add_file(parent_id, file_name, time.time(), file_id=existing_file_id)
+                            self.context.controller.record_created_artifact(main_task_id, 'file', ui_id)
                             return fid
 
                         await loop.run_in_executor(None, _dedup_add)
@@ -398,8 +410,8 @@ class UploadStrategy(TransferStrategy):
                             return self.context.db.add_file(parent_id, file_name, time.time(), file_id=existing_id)
                         raise
                 
-                fid = await loop.run_in_executor(None, _pre_insert_file)
-                self.context.controller.record_created_artifact(main_task_id, 'file', fid)
+                fid, ui_id = await loop.run_in_executor(None, _pre_insert_file)
+                self.context.controller.record_created_artifact(main_task_id, 'file', ui_id)
                 
                 if thumb_bytes:
                     self.context.controller.db.add_task_thumbnail(main_task_id, parent_id, fid, thumb_bytes)
@@ -407,11 +419,21 @@ class UploadStrategy(TransferStrategy):
                 self.context.controller.mark_sub_task_completed(main_task_id, sub_task_id)
 
                 if defer_map_processing:
-                    return (fid, split_files_info)
+                    return (fid, split_files_info, sub_task_id)
+                    
+                task_data = self.context.controller.get_task(main_task_id)
+                file_details = None
+                if task_data:
+                    if task_data.get('is_folder'):
+                        child = task_data.get('child_tasks', {}).get(sub_task_id)
+                        if child:
+                            file_details = child.get('file_details')
+                    elif main_task_id == sub_task_id:
+                        file_details = task_data.get('file_details')
 
                 await self.context.metadata_manager.process_file_transfer(
                     client, self.context.shared_state.group_id, self.context.shared_state.api_id,
-                    parent_id, fid, split_files_info
+                    parent_id, fid, split_files_info, metadata=file_details
                 )
                 
                 if main_task_id == sub_task_id:

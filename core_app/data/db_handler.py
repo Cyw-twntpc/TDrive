@@ -490,10 +490,12 @@ class DatabaseHandler:
                     "INSERT INTO file_folder_map (folder_id, file_id, name, modif_date) VALUES (?, ?, ?, ?)",
                     (folder_id, target_file_id, name, modif_date_ts), score=1
                 )
+                
+                ui_file_id = cursor.lastrowid
 
                 self._update_folder_size_recursively(cursor, folder_id, target_size)
                 
-                return target_file_id
+                return target_file_id, ui_file_id
 
     def remove_file(self, map_id: int) -> dict | None:
         with self._db_lock:

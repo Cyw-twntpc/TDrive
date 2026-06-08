@@ -71,7 +71,7 @@ class TransferController:
 
     def add_upload_task(self, task_id: str, file_path: str, parent_id: int, 
                         total_size: int, is_folder: bool = False, 
-                        file_hash: str = None):
+                        file_hash: str = None, file_details: Dict = None):
         now = time.time()
         
         main_task_data = {
@@ -95,7 +95,8 @@ class TransferController:
                 "local_path": file_path,
                 "remote_id": parent_id,
                 "total_size": total_size,
-                "file_hash": file_hash
+                "file_hash": file_hash,
+                "file_details": file_details
             }]
             self.db.create_sub_tasks_bulk(sub_tasks)
 

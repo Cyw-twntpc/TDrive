@@ -295,7 +295,8 @@
         "detail_path": "路徑:",
         "detail_folders": "資料夾數量:",
         "detail_files": "檔案數量:",
-        "detail_total_size": "總計大小:"
+        "detail_total_size": "總計大小:",
+        "detail_name": "名稱:"
     },
     "meta": {
         "res": "解析度",
@@ -303,6 +304,12 @@
         "w_cnt": "字數",
         "auth": "作者",
         "bit": "位元率",
-        "fps": "影格率"
+        "fps": "影格率",
+        "fmt": "檔案格式",
+        "mode": "色彩模式",
+        "cam_mk": "相機品牌",
+        "cam_mod": "相機型號",
+        "iso": "ISO感光度",
+        "pg_cnt": "頁數"
     }
 }

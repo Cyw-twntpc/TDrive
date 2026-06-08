@@ -447,15 +447,18 @@ class TransferDBHandler:
                 if main_task['type'] == 'upload':
                     sub_data['file_hash'] = st['file_hash']
                     sub_data['split_files_info'] = []
-                elif main_task['type'] == 'download' and st['file_details_json']:
+                if st.get('file_details_json'):
                     sub_data['file_details'] = json.loads(st['file_details_json'])
 
                 if main_task['is_folder']:
                     main_task['child_tasks'][st['sub_task_id']] = sub_data
                     sub_tasks_map[st['sub_task_id']] = sub_data
                 else:
-                    if main_task['type'] == 'upload': main_task['file_hash'] = sub_data['file_hash']
-                    elif main_task['type'] == 'download': main_task['file_details'] = sub_data.get('file_details')
+                    if main_task['type'] == 'upload': 
+                        main_task['file_hash'] = sub_data['file_hash']
+                        main_task['file_details'] = sub_data.get('file_details')
+                    elif main_task['type'] == 'download': 
+                        main_task['file_details'] = sub_data.get('file_details')
                     sub_tasks_map[st['sub_task_id']] = main_task 
 
             cursor.execute("SELECT * FROM task_progress ORDER BY sub_task_id, part_num")
@@ -516,15 +519,16 @@ class TransferDBHandler:
                 if task_type == 'upload':
                     sub_data['file_hash'] = st['file_hash']
                     sub_data['split_files_info'] = []
-                elif task_type == 'download' and st['file_details_json']:
+                if st.get('file_details_json'):
                     sub_data['file_details'] = json.loads(st['file_details_json'])
 
                 if is_folder:
                     task_data['child_tasks'][sub_id] = sub_data
                     sub_tasks_refs[sub_id] = sub_data
                 else:
-                    if task_type == 'upload': task_data['file_hash'] = sub_data['file_hash']
-                    else: task_data['file_details'] = sub_data.get('file_details')
+                    if task_type == 'upload':
+                        task_data['file_hash'] = sub_data['file_hash']
+                    task_data['file_details'] = sub_data.get('file_details')
                     sub_tasks_refs[sub_id] = task_data
 
             cursor.execute("""

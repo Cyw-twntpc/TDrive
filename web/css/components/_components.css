@@ -284,6 +284,11 @@ input:checked+.slider:before {
     transform: scale(1);
 }
 
+#alert-modal .modal-content {
+    max-height: 75vh;
+    margin-bottom: 10vh;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;

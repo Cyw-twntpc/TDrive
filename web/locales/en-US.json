@@ -295,7 +295,8 @@
         "detail_path": "Path:",
         "detail_folders": "Folders:",
         "detail_files": "Files:",
-        "detail_total_size": "Total Size:"
+        "detail_total_size": "Total Size:",
+        "detail_name": "Name:"
     },
     "meta": {
         "res": "Resolution",
@@ -303,6 +304,12 @@
         "w_cnt": "Word Count",
         "auth": "Author",
         "bit": "Bitrate",
-        "fps": "Framerate"
+        "fps": "Framerate",
+        "fmt": "Format",
+        "mode": "Color Mode",
+        "cam_mk": "Camera Make",
+        "cam_mod": "Camera Model",
+        "iso": "ISO",
+        "pg_cnt": "Pages"
     }
 }

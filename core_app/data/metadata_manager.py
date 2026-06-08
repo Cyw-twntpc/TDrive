@@ -249,6 +249,11 @@ class MetadataManager:
             decompressed = gzip.decompress(decrypted)
             json_data = json.loads(decompressed.decode('utf-8'))
             
+            # Normalize structure for backward compatibility
+            for k, v in json_data.items():
+                if isinstance(v, list):
+                    json_data[k] = {'c': v, 'm': {}}
+            
             # Cache it
             if len(self._map_cache) >= self._cache_size:
                 self._map_cache.popitem(last=False)
@@ -302,12 +307,15 @@ class MetadataManager:
         map_msg_id = row['msg_id']
         
         map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
-        return map_data.get(str(file_id), [])
+        file_data = map_data.get(str(file_id))
+        if isinstance(file_data, dict) and 'c' in file_data:
+            return file_data['c']
+        return file_data or []
 
     # --- Transfer Integration Logic ---
 
     async def batch_process_file_transfers(self, client, group_id: int, api_id: int, 
-                                           folder_id: int, file_chunks_map: Dict[int, List[List]]):
+                                           folder_id: int, file_data_map: Dict[int, Dict]):
         """
         Batch processes multiple files for a single folder to minimize IO.
         """
@@ -327,7 +335,7 @@ class MetadataManager:
                 else:
                     current_db_map_id = None
             
-            total_chunks = sum(len(v) for v in current_map_data.values())
+            total_chunks = sum(len(v.get('c', [])) if isinstance(v, dict) else len(v) for v in current_map_data.values())
             files_in_current_batch = []
 
             async def _flush():
@@ -361,7 +369,8 @@ class MetadataManager:
                 files_in_current_batch = []
                 return saved_db_map_id
 
-            for fid, chunks in file_chunks_map.items():
+            for fid, data_dict in file_data_map.items():
+                chunks = data_dict.get('c', [])
                 if total_chunks + len(chunks) > 1000:
                     await _flush()
                     # Rotate
@@ -370,18 +379,18 @@ class MetadataManager:
                     current_db_map_id = None
                     total_chunks = 0
                 
-                current_map_data[str(fid)] = chunks
+                current_map_data[str(fid)] = data_dict
                 files_in_current_batch.append(fid)
                 total_chunks += len(chunks)
             
             await _flush()
 
     async def process_file_transfer(self, client, group_id: int, api_id: int, 
-                                    folder_id: int, file_id: int, chunks: List[List]):
+                                    folder_id: int, file_id: int, chunks: List[List], metadata: Dict = None):
         """
-        Wrapper for single file processing.
+        Saves file chunk mapping and metadata to a Map File, updating active map.
         """
-        await self.batch_process_file_transfers(client, group_id, api_id, folder_id, {file_id: chunks})
+        await self.batch_process_file_transfers(client, group_id, api_id, folder_id, {file_id: {'c': chunks, 'm': metadata or {}}})
 
     async def handle_deletion(self, client, group_id: int, api_id: int, deletion_results: List[Dict]):
         """

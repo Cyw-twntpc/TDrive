@@ -213,8 +213,8 @@ const ActionHandler = {
             const iconClass = item.type === 'folder' ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
             
             // Build full path
-            let pathStr = '/';
-            let currentId = item.parent_id;
+            let pathStr = '';
+            let currentId = item.parent_id || this._appState.currentFolderId;
             const pathArr = [];
             while (currentId) {
                 const folder = this._appState.folderMap.get(currentId);
@@ -223,7 +223,8 @@ const ActionHandler = {
                     currentId = folder.parent_id;
                 } else break;
             }
-            if (pathArr.length > 0) pathStr += pathArr.join('/') + '/';
+            if (pathArr.length > 0) pathStr = pathArr.join('/') + '/';
+            else pathStr = '/';
 
             let typeStr = window.t('file_list.type_file');
             if (item.type === 'folder') {
@@ -243,12 +244,17 @@ const ActionHandler = {
                 }
             }
 
+            let visualHtml = `<i class="${iconClass}" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>`;
+            if (item.type === 'file' && this._appState.currentThumbnails && this._appState.currentThumbnails[item.id]) {
+                visualHtml = `<img src="data:image/jpeg;base64,${this._appState.currentThumbnails[item.id]}" style="max-width: 120px; max-height: 120px; border-radius: 8px; margin-bottom: 12px; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">`;
+            }
+
             contentHTML = `
                 <div style="text-align: center; margin-bottom: 20px;">
-                    <i class="${iconClass}" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>
-                    <h3 style="word-break: break-all; margin: 0; font-size: 1.2rem;">${item.name}</h3>
+                    ${visualHtml}
                 </div>
                 <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
+                    <tr><td style="color: #666; width: 90px;" data-i18n="dialog.detail_name"></td><td style="word-break: break-all;">${item.name}</td></tr>
                     <tr><td style="color: #666; width: 90px;" data-i18n="dialog.detail_type"></td><td>${typeStr}</td></tr>
                     <tr><td style="color: #666;" data-i18n="dialog.detail_size"></td><td>${sizeStr}</td></tr>
                     <tr><td style="color: #666;" data-i18n="dialog.detail_date"></td><td>${dateStr}</td></tr>
