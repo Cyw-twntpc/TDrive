@@ -201,6 +201,144 @@ const ActionHandler = {
         }
     },
 
+    async handleDetails() {
+        const items = this._appState.selectedItems;
+        if (items.length === 0) return;
+
+        let contentHTML = '';
+        if (items.length === 1) {
+            const item = items[0];
+            const sizeStr = item.type === 'file' ? (item.size || '--') : '--';
+            const dateStr = item.modif_date || item.created_at || item.uploaded_at || '--';
+            const iconClass = item.type === 'folder' ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
+            
+            // Build full path
+            let pathStr = '/';
+            let currentId = item.parent_id;
+            const pathArr = [];
+            while (currentId) {
+                const folder = this._appState.folderMap.get(currentId);
+                if (folder) {
+                    pathArr.unshift(folder.name);
+                    currentId = folder.parent_id;
+                } else break;
+            }
+            if (pathArr.length > 0) pathStr += pathArr.join('/') + '/';
+
+            let typeStr = window.t('file_list.type_file');
+            if (item.type === 'folder') {
+                typeStr = window.t('file_list.type_folder');
+            } else {
+                const parts = item.name.split('.');
+                if (parts.length > 1) {
+                    const ext = parts.pop().toLowerCase();
+                    const extKey = `file_list.type_${ext}`;
+                    const translatedExt = window.t(extKey);
+                    
+                    if (translatedExt !== extKey) {
+                        typeStr = translatedExt;
+                    } else {
+                        typeStr = ext.toUpperCase() + ' ' + window.t('file_list.type_file');
+                    }
+                }
+            }
+
+            contentHTML = `
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <i class="${iconClass}" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>
+                    <h3 style="word-break: break-all; margin: 0; font-size: 1.2rem;">${item.name}</h3>
+                </div>
+                <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
+                    <tr><td style="color: #666; width: 90px;" data-i18n="dialog.detail_type"></td><td>${typeStr}</td></tr>
+                    <tr><td style="color: #666;" data-i18n="dialog.detail_size"></td><td>${sizeStr}</td></tr>
+                    <tr><td style="color: #666;" data-i18n="dialog.detail_date"></td><td>${dateStr}</td></tr>
+                    <tr><td style="color: #666;" data-i18n="dialog.detail_path"></td><td style="word-break: break-all;">${pathStr}</td></tr>
+                </table>
+                <div id="adv-details-container" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; min-height: 40px;">
+                    <div id="adv-details-spinner" style="text-align: center; color: #999;">
+                        <i class="fas fa-spinner fa-spin"></i> ${window.t('main.loading') || 'Loading...'}
+                    </div>
+                    <table id="adv-details-table" style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem; display: none;">
+                        <!-- Advanced metadata rows will be injected here -->
+                    </table>
+                </div>
+            `;
+
+            // Display basic info immediately
+            this._uiModals.showAlert(window.t('dialog.details_title'), contentHTML, 'btn-primary');
+            
+            // Force update title and remove data-i18n to prevent overwriting
+            const titleEl = document.getElementById('alert-title');
+            if (titleEl) {
+                titleEl.removeAttribute('data-i18n');
+                titleEl.textContent = window.t('dialog.details_title');
+            }
+
+            // Translate dynamically injected elements
+            const alertMessageEl = document.getElementById('alert-message');
+            if (window.i18n) window.i18n.translateDOM(alertMessageEl);
+
+            // Hide spinner if it's a folder, else fetch advanced details
+            const spinner = document.getElementById('adv-details-spinner');
+            if (item.type === 'folder') {
+                spinner.style.display = 'none';
+            } else {
+                // Fetch advanced details
+                if (window.tdrive_bridge && window.tdrive_bridge.get_file_extended_details) {
+                    window.tdrive_bridge.get_file_extended_details(item.id, (responseStr) => {
+                        spinner.style.display = 'none';
+                        try {
+                            const response = JSON.parse(responseStr);
+                            if (response && response.success && response.metadata && Object.keys(response.metadata).length > 0) {
+                                const table = document.getElementById('adv-details-table');
+                                let rows = '';
+                                for (const [key, value] of Object.entries(response.metadata)) {
+                                    const translatedKey = window.t(`meta.${key}`) || key;
+                                    rows += `<tr><td style="color: #666; width: 90px;">${translatedKey}:</td><td style="word-break: break-all;">${value}</td></tr>`;
+                                }
+                                table.innerHTML = rows;
+                                table.style.display = 'table';
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse extended details', e);
+                        }
+                    });
+                } else {
+                    spinner.style.display = 'none'; // Backend not implemented yet
+                }
+            }
+        } else {
+            let totalSize = 0;
+            let folderCount = 0;
+            let fileCount = 0;
+
+            items.forEach(item => {
+                if (item.type === 'folder') {
+                    folderCount++;
+                } else {
+                    fileCount++;
+                    totalSize += (item.raw_size || 0);
+                }
+            });
+
+            contentHTML = `
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <i class="fas fa-layer-group" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>
+                    <h3 style="margin: 0;">${items.length} ${window.t('dialog.items_selected')}</h3>
+                </div>
+                <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
+                    <tr><td style="color: #666; width: 90px;" data-i18n="dialog.detail_folders"></td><td>${folderCount}</td></tr>
+                    <tr><td style="color: #666;" data-i18n="dialog.detail_files"></td><td>${fileCount}</td></tr>
+                    <tr><td style="color: #666;" data-i18n="dialog.detail_total_size"></td><td>${UIManager.formatBytes(totalSize)}</td></tr>
+                </table>
+            `;
+            
+            this._uiModals.showAlert(window.t('dialog.details_title'), contentHTML, 'btn-primary');
+            const alertMessageEl = document.getElementById('alert-message');
+            if (window.i18n) window.i18n.translateDOM(alertMessageEl);
+        }
+    },
+
     async handleRename(item) {
         const { id, name, type } = item;
 

@@ -48,7 +48,9 @@ const UIModals = {
         return new Promise(resolve => {
             const modalId = 'alert-modal';
             const modal = document.getElementById(modalId);
-            modal.querySelector('#alert-title').textContent = title;
+            const titleEl = modal.querySelector('#alert-title');
+            titleEl.removeAttribute('data-i18n');
+            titleEl.textContent = title;
             modal.querySelector('#alert-message').innerHTML = message;
             const okBtn = modal.querySelector('#alert-ok-btn');
             okBtn.className = `btn ${okClass}`;

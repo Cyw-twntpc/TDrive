@@ -58,8 +58,7 @@ const FileListHandler = {
         });
         // Details button placeholder
         this.ftDetailsBtn.addEventListener('click', () => {
-             // Future implementation
-             console.log("Details clicked");
+            ActionHandler.handleDetails();
         });
         this.ftTrashBtn.addEventListener('click', () => ActionHandler.handleDelete());
     },
