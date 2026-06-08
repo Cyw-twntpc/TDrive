@@ -64,7 +64,7 @@ const ApiService = {
                             resolve({ success: true, request_id: requestId });
                         } else if (result.type === 'error') {
                             window.tdrive_bridge.queryResultReady.disconnect(handler);
-                            resolve({ success: false, message: result.data?.message || '搜尋錯誤' });
+                            resolve({ success: false, message: result.data?.message || window.t('dialog.search_err') });
                         }
                     }
                 };

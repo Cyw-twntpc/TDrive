@@ -54,7 +54,7 @@ const FileListHandler = {
             if (AppState.selectedItems.length === 1) ActionHandler.handleRename(AppState.selectedItems[0]);
         });
         this.ftShareBtn.addEventListener('click', () => {
-            UIModals.showAlert('分享', '此功能即將推出！');
+            UIModals.showAlert(window.t('menu.share'), window.t('dialog.feature_soon'));
         });
         // Details button placeholder
         this.ftDetailsBtn.addEventListener('click', () => {
@@ -485,9 +485,9 @@ const FileListHandler = {
                     </div>
                 </div>
                 <div class="name-col-actions">
-                    <button class="item-action-btn rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
-                    <button class="item-action-btn download-btn" title="下載"><i class="fas fa-download"></i></button>
-                    <button class="item-action-btn delete-btn" title="移至回收桶"><i class="fas fa-trash"></i></button>
+                    <button class="item-action-btn rename-btn" title="' + window.t('menu.rename') + '"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="item-action-btn download-btn" title="' + window.t('menu.download') + '"><i class="fas fa-download"></i></button>
+                    <button class="item-action-btn delete-btn" title="' + window.t('menu.move_to_trash') + '"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
             <div class="file-item-col date">${item.modif_date}</div>

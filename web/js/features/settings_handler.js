@@ -20,8 +20,8 @@ const SettingsHandler = {
             pathDisplay.textContent = savedPath;
             pathDisplay.title = savedPath;
         } else {
-            pathDisplay.textContent = '未設定';
-            pathDisplay.title = '尚未設定預設路徑';
+            pathDisplay.textContent = window.t('dialog.path_not_set_val');
+            pathDisplay.title = window.t('dialog.path_not_set_msg');
         }
         
         // Enable or disable the "Set Path" button based on the toggle.
@@ -39,7 +39,7 @@ const SettingsHandler = {
         // Save default download path toggle state
         localStorage.setItem('useDefaultDownloadPath', useDefaultToggle.checked);
         
-        UIModals.showAlert('設定已儲存', '您的設定已更新。', 'btn-primary');
+        UIModals.showAlert(window.t('dialog.settings_saved'), window.t('dialog.settings_saved_msg'), 'btn-primary');
         document.getElementById('settings-popover').classList.add('hidden');
     },
 
@@ -52,7 +52,7 @@ const SettingsHandler = {
         document.getElementById('set-default-download-path-btn').addEventListener('click', async () => {
             UIManager.toggleModal('blocking-overlay', true);
             try {
-                const path = await ApiService.selectDirectory("選擇預設下載資料夾");
+                const path = await ApiService.selectDirectory(window.t('dialog.select_default_dl'));
                 if (path) {
                     localStorage.setItem('defaultDownloadPath', path);
                     this.loadAndApply(); // Reload and display the new path

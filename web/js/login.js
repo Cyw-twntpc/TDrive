@@ -118,7 +118,7 @@ const UIHandler = {
         }
     },
     handleBackendError: (response) => {
-        alert(response.message || '發生未知錯誤。');
+        alert(response.message || window.t('errors.UNKNOWN') || 'Error');
     }
 };
 
@@ -164,8 +164,8 @@ function submitApiCredentials() {
     const apiHash = document.getElementById('apiHash').value.trim();
     let hasError = false;
 
-    if (!apiId || !/^\d+$/.test(apiId)) { UIHandler.showInlineError('apiId', '請輸入有效的 API ID (僅限數字)'); hasError = true; }
-    if (!apiHash) { UIHandler.showInlineError('apiHash', '請輸入 API Hash'); hasError = true; }
+    if (!apiId || !/^\d+$/.test(apiId)) { UIHandler.showInlineError('apiId', window.t('validation.api_id_invalid')); hasError = true; }
+    if (!apiHash) { UIHandler.showInlineError('apiHash', window.t('validation.api_hash_empty')); hasError = true; }
     if (hasError) return;
 
     setLoading('submitApiBtn', true);
@@ -175,7 +175,7 @@ function submitApiCredentials() {
             if (result.success) {
                 showScreen('methodScreen');
             } else {
-                UIHandler.showInlineError('apiId', result.message);
+                UIHandler.showInlineError('apiId', UIHandler.getErrorMessage(result));
             }
         });
     }
@@ -192,8 +192,8 @@ function proceedWithMethod() {
 function startQrLogin() {
     const qrContainer = document.getElementById('qrCodeContainer');
     qrContainer.classList.remove('expired');
-    qrContainer.innerHTML = `<div class="qr-loading"><i class="fas fa-spinner fa-spin"></i><span>產生中...</span></div>
-                             <div class="qr-overlay" id="qrOverlay"><button id="centerRefreshQrBtn" class="center-refresh-btn" title="重新產生"><i class="fas fa-sync-alt"></i></button></div>`;
+    qrContainer.innerHTML = `<div class="qr-loading"><i class="fas fa-spinner fa-spin"></i><span data-i18n="login.qr_generating"></span></div>
+                             <div class="qr-overlay" id="qrOverlay"><button id="centerRefreshQrBtn" class="center-refresh-btn" data-i18n-title="login.qr_refresh_title"><i class="fas fa-sync-alt"></i></button></div>`;
     document.getElementById('centerRefreshQrBtn').addEventListener('click', startQrLogin);
     
     if(window.tdrive_bridge) {
@@ -207,12 +207,12 @@ function startQrLogin() {
                 
                 const overlay = document.createElement('div');
                 overlay.className = 'qr-overlay';
-                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn" title="重新產生"><i class="fas fa-sync-alt"></i></button>`;
+                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn" data-i18n-title="login.qr_refresh_title"><i class="fas fa-sync-alt"></i></button>`;
                 qrContainer.appendChild(overlay);
                 document.getElementById('centerRefreshQrBtn').addEventListener('click', startQrLogin);
 
             } else {
-                showErrorScreen('QR Code Generation Failed', result.message || 'An unknown error occurred. Please check your network connection or API keys.');
+                showErrorScreen(window.t('login.qr_gen_failed_title'), UIHandler.getErrorMessage(result) !== window.t('errors.UNKNOWN') ? UIHandler.getErrorMessage(result) : window.t('login.qr_gen_failed_desc'));
             }
         });
     }
@@ -249,17 +249,17 @@ function on_login_event(event) {
 function submitPhoneNumber() {
     UIHandler.showInlineError('phoneNumber', '');
     const phone = document.getElementById('phoneNumber').value.trim();
-    if (!phone) { UIHandler.showInlineError('phoneNumber', 'Please enter your phone number'); return; }
+    if (!phone) { UIHandler.showInlineError('phoneNumber', window.t('validation.phone_empty')); return; }
 
     setLoading('submitPhoneBtn', true);
     if(window.tdrive_bridge) {
         window.tdrive_bridge.send_code_request(phone, function(result) {
             setLoading('submitPhoneBtn', false);
             if (result.success) {
-                document.getElementById('verificationMessage').textContent = `A code has been sent to ${phone}`;
+                document.getElementById('verificationMessage').textContent = window.t('validation.code_sent_to') + phone;
                 showScreen('verificationScreen');
             } else {
-                UIHandler.showInlineError('phoneNumber', result.message);
+                UIHandler.showInlineError('phoneNumber', UIHandler.getErrorMessage(result));
             }
         });
     }
@@ -268,7 +268,7 @@ function submitPhoneNumber() {
 function submitVerificationCode() {
     UIHandler.showInlineError('verificationCode', '');
     const code = document.getElementById('verificationCode').value.trim();
-    if (!code) { UIHandler.showInlineError('verificationCode', 'Please enter the verification code'); return; }
+    if (!code) { UIHandler.showInlineError('verificationCode', window.t('validation.code_empty')); return; }
 
     setLoading('submitCodeBtn', true);
     if(window.tdrive_bridge) {
@@ -277,7 +277,7 @@ function submitVerificationCode() {
             if (result.success) {
                 result.password_needed ? showScreen('passwordScreen') : loginSuccess();
             } else {
-                UIHandler.showInlineError('verificationCode', result.message);
+                UIHandler.showInlineError('verificationCode', UIHandler.getErrorMessage(result));
             }
         });
     }
@@ -286,7 +286,7 @@ function submitVerificationCode() {
 function submitPassword() {
     UIHandler.showInlineError('password', '');
     const password = document.getElementById('password').value.trim();
-    if (!password) { UIHandler.showInlineError('password', 'Please enter your password'); return; }
+    if (!password) { UIHandler.showInlineError('password', window.t('validation.password_empty')); return; }
     
     setLoading('submitPasswordBtn', true);
     if(window.tdrive_bridge) {
@@ -295,7 +295,7 @@ function submitPassword() {
             if (result.success) {
                 loginSuccess();
             } else {
-                UIHandler.showInlineError('password', result.message);
+                UIHandler.showInlineError('password', UIHandler.getErrorMessage(result));
             }
         });
     }

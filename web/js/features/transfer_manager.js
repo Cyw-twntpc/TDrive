@@ -200,7 +200,7 @@ const TransferManager = {
         if (task.status === 'failed' && !task.alertShown) {
             this.UIManager.handleBackendError({
                 error_code: 'TRANSFER_FAILED',
-                message: `"${task.name}" 傳輸失敗。<br><b>原因：</b> ${task.message || '未知錯誤'}`
+                message: window.t('transfer.msg_failed').replace('{name}', task.name).replace('{reason}', task.message || window.t('transfer.reason_unknown'))
             });
             task.alertShown = true;
         }
@@ -317,15 +317,15 @@ const TransferManager = {
             else if (activeDownloads > 0 && activeUploads === 0) panel.classList.add('download-active');
             else panel.classList.add('mixed-active');
 
-            titleEl.textContent = `正在傳輸 ${activeCount} 個項目`;
+            titleEl.textContent = window.t('transfer.status_active').replace('{count}', activeCount);
             speedEl.textContent = (currentSpeed > 0) ? `${this.UIManager.formatBytes(currentSpeed)}/s` : '-- B/s';
         } else if (allTasks.some(t => t.status === 'paused')) {
             panel.classList.add('transfer-active');
-            titleEl.textContent = '傳輸已暫停';
+            titleEl.textContent = window.t('transfer.status_paused');
             speedEl.textContent = '-- B/s';
         } else if ((totalSize > 0 && totalProgress >= totalSize) || (activeCount === 0 && this._showCompletedState)) {
             panel.classList.add('status-completed');
-            titleEl.textContent = '傳輸完成';
+            titleEl.textContent = window.t('transfer.status_completed');
             speedEl.textContent = '-- B/s'; 
         } else {
             this.setPanelToReadyState();
@@ -364,7 +364,7 @@ const TransferManager = {
             });
             if (currentSpeed > 0 && totalRemaining > 0) {
                 const seconds = Math.ceil(totalRemaining / currentSpeed);
-                etaEl.textContent = seconds > 86400 ? '> 1 天' : new Date(seconds * 1000).toISOString().substr(11, 8);
+                etaEl.textContent = seconds > 86400 ? window.t('transfer.eta_days') : new Date(seconds * 1000).toISOString().substr(11, 8);
             } else etaEl.textContent = '--:--:--';
         }
     },
@@ -444,7 +444,7 @@ const TransferManager = {
         container.innerHTML = `
             <div class="empty-state" style="text-align:center; padding:40px; color:#9ca3af;">
                 <i class="fas fa-tasks" style="font-size:48px; margin-bottom:15px; display:block;"></i>
-                <p>暫無傳輸任務</p>
+                <p data-i18n="transfer.no_transfers"></p>
             </div>
         `;
     },
@@ -493,27 +493,27 @@ const TransferManager = {
         
         if (speedEl) {
             if (task.status === 'paused') {
-                speedEl.textContent = '已暫停';
+                speedEl.textContent = window.t('transfer.lbl_paused');
                 speedEl.style.color = '#f59e0b';
                 if (btn && btn.dataset.lastStatus !== 'paused') {
                     btn.innerHTML = '<i class="fas fa-play"></i>';
-                    btn.title = '繼續';
+                    btn.title = window.t('transfer.lbl_resume');
                     btn.dataset.lastStatus = 'paused';
                 }
             } else if (task.status === 'failed') {
-                speedEl.textContent = '傳輸失敗';
+                speedEl.textContent = window.t('transfer.lbl_failed');
                 speedEl.style.color = 'var(--danger-color)';
                 if (btn && btn.dataset.lastStatus !== 'failed') {
                     btn.innerHTML = '<i class="fas fa-redo"></i>';
-                    btn.title = '重試';
+                    btn.title = window.t('transfer.lbl_retry');
                     btn.dataset.lastStatus = 'failed';
                 }
             } else if (['queued', 'pending'].includes(task.status)) {
-                speedEl.textContent = '等待中...';
+                speedEl.textContent = window.t('transfer.lbl_queued');
                 speedEl.style.color = '';
                 if (btn && btn.dataset.lastStatus !== 'queued') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>'; 
-                    btn.title = '暫停';
+                    btn.title = window.t('transfer.lbl_pause');
                     btn.dataset.lastStatus = 'queued';
                 }
             } else {
@@ -522,13 +522,13 @@ const TransferManager = {
                 let eta = '';
                 if (task.speed > 0 && (task.size - task.progress) > 0) {
                     const sec = Math.ceil((task.size - task.progress) / task.speed);
-                    eta = ` • 剩餘 ${sec > 60 ? Math.ceil(sec / 60) + ' 分' : sec + ' 秒'}`;
+                    eta = (sec > 60 ? window.t('transfer.eta_format_min').replace('{time}', Math.ceil(sec / 60)) : window.t('transfer.eta_format_sec').replace('{time}', sec));
                 }
                 speedEl.textContent = `${speed}/s${eta}`;
                 
                 if (btn && btn.dataset.lastStatus !== 'transferring') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>';
-                    btn.title = '暫停';
+                    btn.title = window.t('transfer.lbl_pause');
                     btn.dataset.lastStatus = 'transferring';
                 }
             }
@@ -554,8 +554,8 @@ const TransferManager = {
         el.dataset.id = task.id;
         el.dataset.type = task.type;
         const pathInfo = (task.type === 'upload') 
-            ? `<i class="fas fa-file-upload"></i> ${task.localPath || '未知路徑'}` 
-            : `<i class="fas fa-cloud-download-alt"></i> 下載至 ${task.localPath || '預設路徑'}`;
+            ? `<i class="fas fa-file-upload"></i> ${task.localPath || window.t('transfer.path_unknown')}` 
+            : `<i class="fas fa-cloud-download-alt"></i> ` + window.t('transfer.download_to').replace('{path}', task.localPath || window.t('transfer.path_default'));
         el.innerHTML = `
             <div class="card-row-main">
                 <div class="file-icon-lg"><i class="${this.UIManager.getFileTypeIcon(task.name)}"></i></div>
@@ -567,7 +567,7 @@ const TransferManager = {
                 </div>
                 <div class="card-actions">
                     <button class="icon-btn btn-toggle"><i class="fas fa-pause"></i></button>
-                    <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
+                    <button class="icon-btn btn-cancel" title="' + window.t('transfer.btn_cancel') + '"><i class="fas fa-times"></i></button>
                 </div>
             </div>`;
         this._bindCardActions(el, task);
@@ -583,11 +583,11 @@ const TransferManager = {
         el.innerHTML = `
             <div style="display:flex; align-items:center; gap:15px;">
                 <div style="color:var(--danger-color); font-size:20px;"><i class="fas fa-exclamation-circle"></i></div>
-                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${task.name}</span><span class="failed-msg">${task.message || '未知錯誤'}</span></div>
+                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${task.name}</span><span class="failed-msg">${task.message || window.t('transfer.reason_unknown')}</span></div>
             </div>
             <div class="card-actions">
-                <button class="icon-btn btn-retry" style="color:var(--primary-color);" title="重試"><i class="fas fa-redo"></i></button>
-                <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>
+                <button class="icon-btn btn-retry" style="color:var(--primary-color);" title="' + window.t('transfer.btn_retry') + '"><i class="fas fa-redo"></i></button>
+                <button class="icon-btn btn-cancel" title="' + window.t('transfer.btn_cancel') + '"><i class="fas fa-times"></i></button>
             </div>`;
         this._bindCardActions(el, task);
         this.renderTaskCard(task, el);
@@ -602,7 +602,7 @@ const TransferManager = {
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
             <div class="queued-content"><div class="queued-name">${task.name}</div><div class="queued-size">${this.UIManager.formatBytes(task.size)}</div></div>
-            <button class="icon-btn btn-cancel" title="取消"><i class="fas fa-times"></i></button>`;
+            <button class="icon-btn btn-cancel" title="' + window.t('transfer.btn_cancel') + '"><i class="fas fa-times"></i></button>`;
         this._bindCardActions(el, task);
         this.renderTaskCard(task, el);
         return el;
@@ -615,12 +615,12 @@ const TransferManager = {
     },
 
     _getCloudPath(folderId) {
-        if (!this.AppState || !this.AppState.folderMap) return '路徑不存在';
+        if (!this.AppState || !this.AppState.folderMap) return window.t('transfer.path_not_exists');
         
         const path = [];
         let current = this.AppState.folderMap.get(folderId);
 
-        if (!current) return '路徑不存在';
+        if (!current) return window.t('transfer.path_not_exists');
 
         while (current) {
             path.unshift(current.name);
@@ -631,12 +631,12 @@ const TransferManager = {
 
             const next = this.AppState.folderMap.get(current.parent_id);
             
-            if (!next) return '路徑不存在';
+            if (!next) return window.t('transfer.path_not_exists');
             
             current = next;
         }
 
-        return '路徑不存在';
+        return window.t('transfer.path_not_exists');
     },
 
     _renderCompletedList() {
@@ -687,8 +687,8 @@ const TransferManager = {
             const itemClass = isValid ? 'history-item' : 'history-item item-invalid';
             
             let btnTitle;
-            if (isUp) btnTitle = isValid ? '前往雲端位置' : '資料夾已不存在';
-            else btnTitle = isValid ? '在檔案總管中顯示' : '檔案已移除';
+            if (isUp) btnTitle = isValid ? window.t('transfer.go_to_cloud') : window.t('transfer.folder_not_exists');
+            else btnTitle = isValid ? window.t('transfer.show_in_explorer') : window.t('transfer.file_removed');
 
             row.className = itemClass;
             row.innerHTML = `
@@ -696,17 +696,17 @@ const TransferManager = {
                 <div class="sm-name">
                     ${task.name}
                     <div style="font-size:12px; color:#9ca3af; margin-top:2px;">
-                        ${isUp ? `上傳至: ${cloudPath}` : `下載至: ${task.localPath || '預設路徑'}`}
+                        ${isUp ? window.t('transfer.upload_to').replace('{path}', cloudPath) : window.t('transfer.download_to').replace('{path}', task.localPath || window.t('transfer.path_default'))}
                     </div>
                 </div>
-                <div class="sm-badge">${isUp ? '上傳成功' : '下載成功'}</div>
+                <div class="sm-badge">${isUp ? window.t('transfer.upload_success') : window.t('transfer.download_success')}</div>
                 <div class="history-actions">
                     ${isUp 
                         ? `<button class="icon-btn btn-go-cloud" title="${btnTitle}"><i class="fas fa-external-link-alt"></i></button>`
                         : `<button class="icon-btn btn-reveal-local" title="${btnTitle}"><i class="fas fa-folder-open"></i></button>`
                     }
                 </div>
-                <button class="btn-remove-history" title="移除此紀錄"><i class="fas fa-trash-alt"></i></button>`;
+                <button class="btn-remove-history" title="' + window.t('transfer.remove_record') + '"><i class="fas fa-trash-alt"></i></button>`;
             
             listEl.appendChild(row);
 
@@ -883,8 +883,8 @@ const TransferManager = {
                         }
 
                         let btnTitle;
-                        if (isUp) btnTitle = isValid ? '前往雲端位置' : '資料夾已不存在';
-                        else btnTitle = isValid ? '在檔案總管中顯示' : '檔案已移除';
+                        if (isUp) btnTitle = isValid ? window.t('transfer.go_to_cloud') : window.t('transfer.folder_not_exists');
+                        else btnTitle = isValid ? window.t('transfer.show_in_explorer') : window.t('transfer.file_removed');
 
                         const btn = isUp ? el.querySelector('.btn-go-cloud') : el.querySelector('.btn-reveal-local');
                         if (btn) btn.title = btnTitle;
@@ -892,7 +892,7 @@ const TransferManager = {
                         if (isUp) {
                             const pathEl = el.querySelector('.sm-name div');
                             if (pathEl) {
-                                pathEl.textContent = `上傳至: ${this._getCloudPath(task.parentFolderId)}`;
+                                pathEl.textContent = window.t('transfer.upload_to').replace('{path}', this._getCloudPath(task.parentFolderId));
                             }
                         }
                     }
@@ -912,7 +912,7 @@ const TransferManager = {
             if (task && task.parentFolderId) {
                 const pathEl = el.querySelector('.sm-name div');
                 if (pathEl) {
-                    pathEl.textContent = `上傳至: ${this._getCloudPath(task.parentFolderId)}`;
+                    pathEl.textContent = window.t('transfer.upload_to').replace('{path}', this._getCloudPath(task.parentFolderId));
                 }
             }
         });

@@ -116,7 +116,7 @@ const UIModals = {
                 input.classList.remove('input-error');
 
                 if (!value) {
-                    showError('名稱不能為空。');
+                    showError(window.t('dialog.name_empty'));
                     return;
                 }
 
@@ -129,14 +129,14 @@ const UIModals = {
                         okBtn.disabled = false;
 
                         if (result && !result.success) {
-                            showError(result.message || '發生未知的驗證錯誤。');
+                            showError(result.message || window.t('dialog.val_err_unknown'));
                             input.focus();
                             return; // Keep the prompt open
                         }
                     } catch (e) {
                         okBtn.classList.remove('loading');
                         okBtn.disabled = false;
-                        showError('發生系統錯誤，請重試。');
+                        showError(window.t('dialog.sys_err_retry'));
                         console.error(e);
                         return;
                     }

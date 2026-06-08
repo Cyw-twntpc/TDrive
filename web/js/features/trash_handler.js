@@ -44,7 +44,7 @@ const TrashHandler = {
                 }
             } catch (e) {
                 console.error(e);
-                UIManager.handleBackendError({ message: "還原失敗" });
+                UIManager.handleBackendError({ message: window.t('dialog.restore_failed') });
             } finally {
                 UIManager.stopProgress();
                 UIManager.setInteractionLock(false);
@@ -56,8 +56,8 @@ const TrashHandler = {
             if (count === 0) return;
 
             const confirmed = await UIModals.showConfirm(
-                '永久刪除',
-                `確定要永久刪除選取的 ${count} 個項目嗎？`,
+                window.t('trash.btn_delete'),
+                window.t('trash.confirm_delete_multi').replace('{count}', count),
                 'btn-danger'
             );
             
@@ -75,7 +75,7 @@ const TrashHandler = {
                 }
             } catch (e) {
                 console.error(e);
-                UIManager.handleBackendError({ message: "刪除失敗" });
+                UIManager.handleBackendError({ message: window.t('dialog.delete_failed') });
             } finally {
                 UIManager.stopProgress();
                 UIManager.setInteractionLock(false);
@@ -106,11 +106,11 @@ const TrashHandler = {
                 this.sortAndRender();
             } else {
                 console.error("Invalid trash response:", response);
-                UIManager.handleBackendError(response || { message: "無法載入回收桶內容。" });
+                UIManager.handleBackendError(response || { message: window.t('trash.empty_text') });
             }
         } catch (e) {
             console.error("Error loading trash:", e);
-            UIManager.handleBackendError({ message: "系統錯誤，請重試。" });
+            UIManager.handleBackendError({ message: window.t('dialog.sys_err_retry') });
         } finally {
             UIManager.stopProgress();
         }
@@ -169,7 +169,7 @@ const TrashHandler = {
             this.listBody.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-trash-alt"></i>
-                    <p>回收桶是空的</p>
+                    <p data-i18n="trash.empty_text"></p>
                 </div>`;
             this.emptyBtn.disabled = true;
             return;
@@ -187,7 +187,7 @@ const TrashHandler = {
             
             const iconClass = item.type === 'folder' ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
             
-            const pathName = item.displayPath || '未知位置';
+            const pathName = item.displayPath || window.t('trash.unknown_location');
             
             el.innerHTML = `
                 <div class="trash-col-name">
@@ -196,12 +196,12 @@ const TrashHandler = {
                         <span title="${item.name}">${item.name}</span>
                     </div>
                     <div class="trash-col-actions">
-                        <button class="trash-action-btn restore-btn" title="還原"><i class="fas fa-undo-alt"></i></button>
-                        <button class="trash-action-btn delete-btn" title="永久刪除"><i class="fas fa-trash-alt"></i></button>
+                        <button class="trash-action-btn restore-btn" title="' + window.t('trash.btn_restore') + '"><i class="fas fa-undo-alt"></i></button>
+                        <button class="trash-action-btn delete-btn" title="' + window.t('trash.btn_delete') + '"><i class="fas fa-trash-alt"></i></button>
                     </div>
                 </div>
                 <div>${item.trashed_date}</div>
-                <div>${item.type === 'folder' ? '資料夾' : '檔案'}</div>
+                <div>${item.type === 'folder' ? window.t('file_list.type_folder') : window.t('file_list.type_file')}</div>
                 <div class="trash-col-path" title="${pathName}">${pathName}</div> 
                 <div>${item.size}</div>
             `;
@@ -227,14 +227,14 @@ const TrashHandler = {
      * Recursively builds the full path string from a folder ID.
      */
     _getOriginalPath(folderId) {
-        if (!folderId) return '路徑不存在';
-        if (!AppState || !AppState.folderMap) return '路徑不存在';
+        if (!folderId) return window.t('transfer.path_not_exists');
+        if (!AppState || !AppState.folderMap) return window.t('transfer.path_not_exists');
         
         const path = [];
         let current = AppState.folderMap.get(folderId);
 
         // Case 1: ID not found in current map
-        if (!current) return '路徑不存在';
+        if (!current) return window.t('transfer.path_not_exists');
 
         while (current) {
             path.unshift(current.name);
@@ -248,7 +248,7 @@ const TrashHandler = {
             const next = AppState.folderMap.get(current.parent_id);
             
             // Case 2: Broken chain
-            if (!next) return '路徑不存在';
+            if (!next) return window.t('transfer.path_not_exists');
             
             current = next;
         }
@@ -279,8 +279,8 @@ const TrashHandler = {
     setupEmptyButton() {
         this.emptyBtn.addEventListener('click', async () => {
             const confirmed = await UIModals.showConfirm(
-                '清空回收桶', 
-                '確定要永久刪除回收桶中的所有項目嗎？<b>此動作無法復原。</b>',
+                window.t('trash.confirm_empty_title'), 
+                window.t('trash.confirm_empty_msg'),
                 'btn-danger'
             );
             
@@ -296,7 +296,7 @@ const TrashHandler = {
                     }
                 } catch (e) {
                     console.error(e);
-                    UIManager.handleBackendError({ message: "清空失敗" });
+                    UIManager.handleBackendError({ message: window.t('dialog.empty_failed') });
                 } finally {
                     UIManager.stopProgress();
                     UIManager.setInteractionLock(false);
@@ -317,7 +317,7 @@ const TrashHandler = {
             }
         } catch (e) {
             console.error(e);
-            UIManager.handleBackendError({ message: "還原失敗" });
+            UIManager.handleBackendError({ message: window.t('dialog.restore_failed') });
         } finally {
             UIManager.stopProgress();
             UIManager.setInteractionLock(false);
@@ -326,8 +326,8 @@ const TrashHandler = {
 
     async deleteItemPermanently(item) {
         const confirmed = await UIModals.showConfirm(
-            '永久刪除',
-            `確定要永久刪除 "${item.name}" 嗎？`,
+            window.t('trash.btn_delete'),
+            window.t('trash.confirm_delete_single').replace('{name}', item.name),
             'btn-danger'
         );
         
@@ -344,7 +344,7 @@ const TrashHandler = {
             }
         } catch (e) {
             console.error(e);
-            UIManager.handleBackendError({ message: "刪除失敗" });
+            UIManager.handleBackendError({ message: window.t('dialog.delete_failed') });
         } finally {
             UIManager.stopProgress();
             UIManager.setInteractionLock(false);

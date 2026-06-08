@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
-    <title>TDrive - 登入</title>
+    <title data-i18n="login.window_title"></title>
     <!-- FontAwesome -->
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
     <!-- Custom CSS -->
@@ -12,6 +12,7 @@
     <!-- QWebChannel -->
     <script type="text/javascript" src="js/qwebchannel.js"></script>
     <!-- Custom JS -->
+    <script type="text/javascript" src="js/i18n.js"></script>
     <script type="text/javascript" src="js/login.js" defer></script>
 </head>
 <body oncontextmenu="return false;">
@@ -28,12 +29,12 @@
         <div class="window-drag-area"></div>
 
         <div class="window-controls">
-            <div class="control-btn minimize" id="btn-minimize" title="最小化">
+            <div class="control-btn minimize" id="btn-minimize" data-i18n-title="window.minimize">
                 <svg width="10" height="1" viewBox="0 0 10 1" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="10" height="1" fill="currentColor"/>
                 </svg>
             </div>
-            <div class="control-btn close" id="btn-close" title="關閉">
+            <div class="control-btn close" id="btn-close" data-i18n-title="window.close">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
                 </svg>
@@ -46,133 +47,133 @@
                     <div class="logo-glow"></div>
                     <img src="icon.ico" alt="TDrive Logo" class="no-drag">
                 </div>
-                <h1 class="app-title">TDrive</h1>
-                <p class="app-subtitle">安全的 Telegram 雲端儲存</p>
+                <h1 class="app-title" data-i18n="login.app_title"></h1>
+                <p class="app-subtitle" data-i18n="login.app_subtitle"></p>
             </div>
 
             <div class="form-section">
                 <div class="screen active" id="apiScreen">
                     <div class="info-box">
-                        <p>開始前，請先輸入您的 Telegram API 金鑰。可前往 <a href="https://my.telegram.org">my.telegram.org</a> 申請。</p>
+                        <p data-i18n="login.api_info_html"></p>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">API ID</label>
-                        <input type="text" id="apiId" class="form-input" placeholder="請輸入您的 API ID" spellcheck="false" autocomplete="off">
+                        <label class="form-label" data-i18n="login.api_id_label"></label>
+                        <input type="text" id="apiId" class="form-input" data-i18n-placeholder="login.api_id_placeholder" spellcheck="false" autocomplete="off">
                         <div class="error-message" id="apiIdError"></div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">API Hash</label>
-                        <input type="text" id="apiHash" class="form-input" placeholder="請輸入您的 API Hash" spellcheck="false" autocomplete="off">
+                        <label class="form-label" data-i18n="login.api_hash_label"></label>
+                        <input type="text" id="apiHash" class="form-input" data-i18n-placeholder="login.api_hash_placeholder" spellcheck="false" autocomplete="off">
                         <div class="error-message" id="apiHashError"></div>
                     </div>
                     <button class="btn" id="submitApiBtn">
-                        <span class="btn-text">連接 Telegram</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_connect"></span><span class="spinner"></span>
                     </button>
                 </div>
 
                 <div class="screen" id="methodScreen">
-                    <h3 class="text-center section-title">選擇驗證方式</h3>
+                    <h3 class="text-center section-title" data-i18n="login.select_method_title"></h3>
                     <div class="login-method-selector">
                         <div class="method-btn active" id="qrMethod" data-method="qr">
                             <i class="fas fa-qrcode"></i>
-                            <h4>QR 碼登入</h4>
-                            <p>快速安全</p>
+                            <h4 data-i18n="login.method_qr_title"></h4>
+                            <p data-i18n="login.method_qr_desc"></p>
                         </div>
                         <div class="method-btn" id="phoneMethod" data-method="phone">
                             <i class="fas fa-mobile-alt"></i>
-                            <h4>手機號碼</h4>
-                            <p>接收驗證碼</p>
+                            <h4 data-i18n="login.method_phone_title"></h4>
+                            <p data-i18n="login.method_phone_desc"></p>
                         </div>
                     </div>
                     <button class="btn" id="proceedBtn">
-                        <span class="btn-text">繼續</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_continue"></span><span class="spinner"></span>
                     </button>
                     <div class="text-center method-switch">
-                        <button class="btn-link" data-target="apiScreen">返回 API 設定</button>
+                        <button class="btn-link" data-target="apiScreen" data-i18n="login.btn_back_to_api"></button>
                     </div>
                 </div>
 
                 <div class="screen" id="qrScreen">
                     <div class="text-center header-group">
-                        <h3 class="section-title">掃描 QR 碼登入</h3>
-                        <p class="text-muted">使用 Telegram 手機應用程式掃描</p>
+                        <h3 class="section-title" data-i18n="login.qr_scan_title"></h3>
+                        <p class="text-muted" data-i18n="login.qr_scan_desc"></p>
                     </div>
                     <div class="qr-container">
                         <div class="qr-code" id="qrCodeContainer">
                             <div class="qr-loading">
                                 <i class="fas fa-spinner"></i>
-                                <span>產生中...</span>
+                                <span data-i18n="login.qr_generating"></span>
                             </div>
                             <div class="qr-overlay" id="qrOverlay">
-                                <button id="centerRefreshQrBtn" class="center-refresh-btn" title="重新產生">
+                                <button id="centerRefreshQrBtn" class="center-refresh-btn" data-i18n-title="login.qr_refresh_title">
                                     <i class="fas fa-sync-alt"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
                     <div class="text-center method-switch">
-                        <button class="btn-link" data-target="methodScreen">使用其他登入方式</button>
+                        <button class="btn-link" data-target="methodScreen" data-i18n="login.btn_other_methods"></button>
                     </div>
                 </div>
 
                 <div class="screen" id="phoneScreen">
                     <div class="text-center header-group">
-                        <h3 class="section-title">手機號碼登入</h3>
-                        <p class="text-muted">輸入您註冊的 Telegram 手機號碼</p>
+                        <h3 class="section-title" data-i18n="login.phone_title"></h3>
+                        <p class="text-muted" data-i18n="login.phone_desc"></p>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">手機號碼</label>
-                        <input type="tel" id="phoneNumber" class="form-input" placeholder="+886 912345678" spellcheck="false" autocomplete="off">
+                        <label class="form-label" data-i18n="login.phone_label"></label>
+                        <input type="tel" id="phoneNumber" class="form-input" data-i18n-placeholder="login.phone_placeholder" spellcheck="false" autocomplete="off">
                         <div class="error-message" id="phoneNumberError"></div>
                     </div>
                     <button class="btn" id="submitPhoneBtn">
-                        <span class="btn-text">發送驗證碼</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_send_code"></span><span class="spinner"></span>
                     </button>
                     <div class="text-center method-switch">
-                        <button class="btn-link" data-target="methodScreen">使用其他登入方式</button>
+                        <button class="btn-link" data-target="methodScreen" data-i18n="login.btn_other_methods"></button>
                     </div>
                 </div>
 
                 <div class="screen" id="verificationScreen">
                     <div class="text-center header-group">
                         <i class="fas fa-shield-alt icon-large"></i>
-                        <h3 class="section-title">驗證您的帳號</h3>
-                        <p class="text-muted" id="verificationMessage">驗證碼已發送到您的 Telegram</p>
+                        <h3 class="section-title" data-i18n="login.verify_title"></h3>
+                        <p class="text-muted" id="verificationMessage" data-i18n="login.verify_desc"></p>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">驗證碼</label>
-                        <input type="text" id="verificationCode" class="form-input verification-input" placeholder="12345" maxlength="5" spellcheck="false" autocomplete="off">
+                        <label class="form-label" data-i18n="login.verify_label"></label>
+                        <input type="text" id="verificationCode" class="form-input verification-input" data-i18n-placeholder="login.verify_placeholder" maxlength="5" spellcheck="false" autocomplete="off">
                         <div class="error-message" id="verificationCodeError"></div>
                     </div>
                     <button class="btn" id="submitCodeBtn">
-                        <span class="btn-text">驗證</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_verify"></span><span class="spinner"></span>
                     </button>
                 </div>
                 
                 <div class="screen" id="passwordScreen">
                     <div class="text-center header-group">
                         <i class="fas fa-key icon-large"></i>
-                        <h3 class="section-title">需要兩步驟驗證</h3>
-                        <p class="text-muted">請輸入您的帳號密碼</p>
+                        <h3 class="section-title" data-i18n="login.password_title"></h3>
+                        <p class="text-muted" data-i18n="login.password_desc"></p>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">密碼 (Password)</label>
-                        <input type="password" id="password" class="form-input" placeholder="請輸入您的密碼" spellcheck="false" autocomplete="off">
+                        <label class="form-label" data-i18n="login.password_label"></label>
+                        <input type="password" id="password" class="form-input" data-i18n-placeholder="login.password_placeholder" spellcheck="false" autocomplete="off">
                         <div class="error-message" id="passwordError"></div>
                     </div>
                     <button class="btn" id="submitPasswordBtn">
-                        <span class="btn-text">登入</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_login"></span><span class="spinner"></span>
                     </button>
                 </div>
 
                 <div class="screen" id="errorScreen">
                     <div class="text-center header-group">
                         <i class="fas fa-exclamation-triangle icon-large error-icon"></i>
-                        <h3 class="section-title" id="errorTitle">發生錯誤</h3>
-                        <p class="text-muted" id="errorMessage" style="margin-bottom: 28px;">錯誤詳情將顯示於此</p>
+                        <h3 class="section-title" id="errorTitle" data-i18n="login.error_title"></h3>
+                        <p class="text-muted" id="errorMessage" style="margin-bottom: 28px;" data-i18n="login.error_default_desc"></p>
                     </div>
                     <button class="btn" id="errorReturnBtn" data-target="apiScreen">
-                        <span class="btn-text">返回 API 設定</span><span class="spinner"></span>
+                        <span class="btn-text" data-i18n="login.btn_back_to_api"></span><span class="spinner"></span>
                     </button>
                 </div>
 
@@ -183,8 +184,8 @@
                                 <i class="fas fa-check-circle"></i>
                             </div>
                             <div class="success-text-container">
-                                <h3 class="section-title success-title">登入成功！</h3>
-                                <p class="text-muted">正在初始化檔案介面...</p>
+                                <h3 class="section-title success-title" data-i18n="login.success_title"></h3>
+                                <p class="text-muted" data-i18n="login.success_desc"></p>
                             </div>
                         </div>
                         <div class="notched-spinner"></div>

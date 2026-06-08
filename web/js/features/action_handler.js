@@ -19,7 +19,7 @@ const ActionHandler = {
 
     async handleMove() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要移動的項目。", 'btn-primary');
+            return await this._uiModals.showAlert(window.t('dialog.alert_title'), window.t('dialog.select_move_item'), 'btn-primary');
         }
 
         const modalId = 'move-modal';
@@ -73,7 +73,7 @@ const ActionHandler = {
 
                 if (folder.id === this._appState.currentFolderId) {
                     contentEl.classList.add('current-location');
-                    contentEl.title = "目前位置";
+                    contentEl.title = window.t('dialog.current_location');
                 }
 
                 contentEl.addEventListener('click', (e) => {
@@ -179,7 +179,7 @@ const ActionHandler = {
         });
 
         if (isCircular) {
-            this._uiModals.showAlert("操作無效", "無法將資料夾移動到其子資料夾中。", 'btn-danger');
+            this._uiModals.showAlert(window.t('dialog.invalid_move'), window.t('dialog.invalid_move_sub'), 'btn-danger');
             return;
         }
         this._uiManager.startProgress();
@@ -194,7 +194,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Move operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+            this._uiManager.handleBackendError({ message: window.t('dialog.err_backend') });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
@@ -205,8 +205,8 @@ const ActionHandler = {
         const { id, name, type } = item;
 
         await this._uiModals.showPrompt(
-            '重新命名',
-            `請輸入 "${name}" 的新名稱：`,
+            window.t('menu.rename'),
+            window.t('dialog.rename_prompt').replace('{name}', name),
             name,
             async (newName) => {
                 if (newName === name) return { success: true };
@@ -221,7 +221,7 @@ const ActionHandler = {
                     }
                 } catch (error) {
                     console.error("Rename operation failed:", error);
-                    return { success: false, message: "與後端通訊時發生錯誤，請重試。" };
+                    return { success: false, message: window.t('dialog.err_backend') };
                 }
             },
             'filename'
@@ -230,7 +230,7 @@ const ActionHandler = {
 
     async handleDelete() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要刪除的項目。", 'btn-primary');
+            return await this._uiModals.showAlert(window.t('dialog.alert_title'), window.t('dialog.select_del_item'), 'btn-primary');
         }
         
         this._uiManager.startProgress();
@@ -245,7 +245,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Delete operation failed:", error);
-            this._uiManager.handleBackendError({ message: "與後端通訊時發生錯誤，請重試。" });
+            this._uiManager.handleBackendError({ message: window.t('dialog.err_backend') });
         } finally {
             this._uiManager.stopProgress();
             this._uiManager.setInteractionLock(false);
@@ -254,9 +254,9 @@ const ActionHandler = {
 
     async handleNewFolder() {
         await this._uiModals.showPrompt(
-            "新資料夾",
-            "請輸入新資料夾的名稱：",
-            "未命名資料夾",
+            window.t('dialog.new_folder'),
+            window.t('dialog.new_folder_prompt'),
+            window.t('dialog.unnamed_folder'),
             async (newFolderName) => {
                 try {
                     const result = await this._apiService.createFolder(this._appState.currentFolderId, newFolderName);
@@ -268,7 +268,7 @@ const ActionHandler = {
                     }
                 } catch (error) {
                     console.error("Create folder operation failed:", error);
-                    return { success: false, message: "與後端通訊時發生錯誤，請重試。" };
+                    return { success: false, message: window.t('dialog.err_backend') };
                 }
             }
         );
@@ -276,7 +276,7 @@ const ActionHandler = {
 
     async handleDownload() {
         if (this._appState.selectedItems.length === 0) {
-            return await this._uiModals.showAlert("提示", "請先選擇要下載的項目。", 'btn-primary');
+            return await this._uiModals.showAlert(window.t('dialog.alert_title'), window.t('dialog.select_dl_item'), 'btn-primary');
         }
 
         let destinationDir = null;
@@ -285,13 +285,13 @@ const ActionHandler = {
         if (useDefault) {
             destinationDir = localStorage.getItem('defaultDownloadPath');
             if (!destinationDir) {
-                await this._uiModals.showAlert("錯誤", "已啟用預設下載路徑但尚未設定。", 'btn-primary');
+                await this._uiModals.showAlert(window.t('dialog.err_title'), window.t('dialog.dl_path_not_set'), 'btn-primary');
                 return;
             }
         } else {
             UIManager.toggleModal('blocking-overlay', true);
             try {
-                destinationDir = await this._apiService.selectDirectory("選擇下載資料夾");
+                destinationDir = await this._apiService.selectDirectory(window.t('dialog.select_dl_folder'));
             } finally {
                 UIManager.toggleModal('blocking-overlay', false);
             }
@@ -330,7 +330,7 @@ const ActionHandler = {
         }
 
         if (duplicateCount > 0) {
-            this._uiModals.showAlert("提示", `${duplicateCount} 個項目已在下載佇列中，將被略過。`, 'btn-secondary');
+            this._uiModals.showAlert(window.t('dialog.alert_title'), window.t('dialog.dl_duplicate_skip').replace('{count}', duplicateCount), 'btn-secondary');
         }
 
         if (itemsToDownload.length > 0) {
@@ -342,7 +342,7 @@ const ActionHandler = {
     async handleFileUpload() {
         UIManager.toggleModal('blocking-overlay', true);
         try {
-            const localPaths = await this._apiService.selectFiles(true, "選擇要上傳的檔案");
+            const localPaths = await this._apiService.selectFiles(true, window.t('dialog.select_ul_file'));
             if (!localPaths || localPaths.length === 0) return;
 
             const parentId = this._appState.currentFolderId;
@@ -354,7 +354,7 @@ const ActionHandler = {
                     this._appState.currentFolderContents.folders.some(f => f.name === fileName);
 
                 if (isDuplicate) {
-                    this._uiModals.showAlert('上傳失敗', `此資料夾中已存在名為 "${fileName}" 的項目。`);
+                    this._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', fileName));
                     return;
                 }
 
@@ -380,7 +380,7 @@ const ActionHandler = {
     async handleFolderUpload() {
         UIManager.toggleModal('blocking-overlay', true);
         try {
-            const folderPath = await this._apiService.selectDirectory("選擇要上傳的資料夾");
+            const folderPath = await this._apiService.selectDirectory(window.t('dialog.select_ul_folder'));
             if (!folderPath) return;
 
             const parentId = this._appState.currentFolderId;
@@ -390,7 +390,7 @@ const ActionHandler = {
                 this._appState.currentFolderContents.folders.some(f => f.name === folderName);
 
             if (isDuplicate) {
-                this._uiModals.showAlert('上傳失敗', `此資料夾中已存在名為 "${folderName}" 的項目。`);
+                this._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', folderName));
                 return;
             }
 
@@ -442,7 +442,7 @@ const ActionHandler = {
             if (this._appState.currentViewRequestId !== requestId) return;
             this._uiManager.stopProgress();
             if (!response.success) {
-                this._uiManager.handleBackendError({ message: response.message || "搜尋過程中發生未知錯誤。" });
+                this._uiManager.handleBackendError({ message: response.message || window.t('dialog.search_err') });
             } else {
                 console.log(`Search complete for request_id: ${requestId}`);
             }
@@ -456,7 +456,7 @@ const ActionHandler = {
     },
 
     async handleLogout() {
-        const confirmed = await this._uiModals.showConfirm('確認登出', '您確定要登出嗎？此動作將清除所有本機資料和設定。');
+        const confirmed = await this._uiModals.showConfirm(window.t('dialog.confirm_logout'), window.t('dialog.confirm_logout_msg'));
         if (confirmed) {
             this._uiManager.startProgress();
             this._uiManager.setInteractionLock(true);
@@ -466,7 +466,7 @@ const ActionHandler = {
                 window.location.href = 'login.html';
             } catch (error) {
                 console.error("Logout operation failed:", error);
-                this._uiManager.handleBackendError({ message: "登出過程中發生錯誤，請重試。" });
+                this._uiManager.handleBackendError({ message: window.t('dialog.logout_err') });
                 this._uiManager.stopProgress();
                 this._uiManager.setInteractionLock(false);
             }
@@ -482,7 +482,7 @@ const ActionHandler = {
             }
         } catch (error) {
             console.error("Play video failed:", error);
-            this._uiManager.handleBackendError({ message: "播放請求失敗。" });
+            this._uiManager.handleBackendError({ message: window.t('dialog.play_err') });
         } finally {
             this._uiManager.stopProgress();
         }

@@ -70,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 return;
             }
-            UIManager.handleBackendError(data || { message: "無法載入資料夾內容。" });
+            UIManager.handleBackendError(data || { message: window.t('file_list.empty_text') });
         }
     }
 
@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log(`Search complete for request_id: ${request_id}`);
         } else if (type === 'error') {
             UIManager.stopProgress();
-            UIManager.handleBackendError(data || { message: "搜尋過程中發生未知錯誤。" });
+            UIManager.handleBackendError(data || { message: window.t('dialog.search_err') });
         }
     }
 
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (AppState.isSearching) ActionHandler.exitSearchMode();
 
         if (!AppState.folderMap.has(folderId)) {
-            await UIModals.showAlert("錯誤", "目標資料夾不存在，可能已被移動或刪除。", 'btn-primary');
+            await UIModals.showAlert(window.t('dialog.err_title'), window.t('dialog.target_not_found'), 'btn-primary');
             const rootFolder = AppState.folderTreeData.find(f => f.parent_id === null);
             if (rootFolder) await navigateTo(rootFolder.id);
             return;
@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ApiService.getFolderContents(folderId).then(response => {
             if (!response || !response.success) {
-                UIModals.showAlert('載入失敗', response?.message || '無法載入資料夾內容。', 'btn-primary');
+                UIModals.showAlert(window.t('dialog.load_failed'), response?.message || window.t('file_list.empty_text'), 'btn-primary');
                 return;
             }
 
@@ -172,7 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!Array.isArray(rawFolderTree)) {
             console.error("Failed to load folder tree. Backend returned:", rawFolderTree);
-            return UIModals.showAlert('嚴重錯誤', '無法載入資料夾結構，請重新整理或重新登入。', 'btn-danger');
+            return UIModals.showAlert(window.t('dialog.err_critical'), window.t('dialog.struct_load_failed'), 'btn-danger');
         }
 
         AppState.folderTreeData = rawFolderTree;
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rootFolder) {
                 AppState.currentFolderId = rootFolder.id;
             } else {
-                return UIModals.showAlert('嚴重錯誤', '找不到根目錄。', 'btn-danger');
+                return UIModals.showAlert(window.t('dialog.err_critical'), window.t('file_list.root_not_found'), 'btn-danger');
             }
         }
         
@@ -247,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         searchScopeToggle.addEventListener('click', () => {
             AppState.searchScope = (AppState.searchScope === 'all') ? 'current' : 'all';
-            searchScopeToggle.textContent = (AppState.searchScope === 'all') ? '所有資料夾' : '目前資料夾';
+            searchScopeToggle.textContent = (AppState.searchScope === 'all') ? window.t('main.search_scope_all') : window.t('main.search_scope_current');
             if (AppState.isSearching) ActionHandler.handleSearch(AppState.searchTerm);
         });
 
@@ -258,11 +258,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (AppState.viewMode === 'list') {
                 AppState.viewMode = 'grid';
                 icon.className = 'fas fa-list';
-                btn.title = "切換至列表";
+                btn.title = window.t('main.view_list');
             } else {
                 AppState.viewMode = 'list';
                 icon.className = 'fas fa-th-large';
-                btn.title = "切換至縮圖";
+                btn.title = window.t('main.view_grid');
             }
             FileListHandler.sortAndRender(AppState);
         });

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
-    <title>TDrive - 您的安全雲端儲存</title>
+    <title data-i18n="main.window_title"></title>
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
     <script type="text/javascript" src="js/qwebchannel.js"></script>
@@ -30,19 +30,19 @@
                     <ul class="nav-items">
                         <li class="nav-item active" data-page="files">
                             <i class="fas fa-folder"></i>
-                            <span class="nav-text">我的檔案</span>
+                            <span class="nav-text" data-i18n="main.nav_files"></span>
                         </li>
                         <li class="nav-item" data-page="transfer">
                             <i class="fas fa-exchange-alt"></i>
-                            <span class="nav-text">傳輸管理</span>
+                            <span class="nav-text" data-i18n="main.nav_transfer"></span>
                         </li>
-                        <li class="nav-item disabled" data-page="shared" title="即將推出">
+                        <li class="nav-item disabled" data-page="shared" data-i18n-title="main.coming_soon">
                             <i class="fas fa-share-alt"></i>
-                            <span class="nav-text">分享項目</span>
+                            <span class="nav-text" data-i18n="main.nav_shared"></span>
                         </li>
                         <li class="nav-item" data-page="trash">
                             <i class="fas fa-trash-alt"></i>
-                            <span class="nav-text">回收桶</span>
+                            <span class="nav-text" data-i18n="main.nav_trash"></span>
                         </li>
                     </ul>
                 </nav>
@@ -51,18 +51,18 @@
                 <div class="sidebar-content">
                     <div class="sidebar-actions">
                         <button id="sidebar-new-btn" class="btn-primary-block" data-popover="new-menu-popover">
-                            <i class="fas fa-plus"></i> 新增
+                            <i class="fas fa-plus"></i> <span data-i18n="main.btn_new"></span>
                         </button>
                         <div id="new-menu-popover" class="popover hidden unselectable">
                             <ul style="list-style: none; padding: 0;">
                                 <li id="new-upload-file-btn" class="popover-item">
-                                    <i class="fas fa-file-upload"></i> 上傳檔案
+                                    <i class="fas fa-file-upload"></i> <span data-i18n="main.new_upload_file"></span>
                                 </li>
                                 <li id="new-upload-folder-btn" class="popover-item">
-                                    <i class="fas fa-folder-plus"></i> 上傳資料夾
+                                    <i class="fas fa-folder-plus"></i> <span data-i18n="main.new_upload_folder"></span>
                                 </li>
                                 <li id="new-create-folder-btn" class="popover-item">
-                                    <i class="fas fa-plus"></i> 新增資料夾
+                                    <i class="fas fa-plus"></i> <span data-i18n="main.new_create_folder"></span>
                                 </li>
                             </ul>
                         </div>
@@ -102,15 +102,15 @@
                         <div class="search-container">
                             <div class="search-bar">
                                 <i class="fas fa-search"></i>
-                                <input type="text" placeholder="在 TDrive 中搜尋" spellcheck="false" autocomplete="off">
+                                <input type="text" data-i18n-placeholder="main.search_placeholder" spellcheck="false" autocomplete="off">
                             </div>
-                            <button id="search-scope-toggle" class="search-scope-btn" title="切換搜尋範圍">全部資料夾</button>
+                            <button id="search-scope-toggle" class="search-scope-btn" data-i18n-title="main.search_scope_title"><span data-i18n="main.search_scope_all"></span></button>
                         </div>
                         <div class="user-actions">
-                            <button id="view-toggle-btn" class="btn-icon" title="切換檢視"><i class="fas fa-th-large"></i></button>
-                            <button id="help-btn" class="btn-icon" title="幫助" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
-                            <button id="settings-btn" class="btn-icon" title="設定" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
-                            <button id="user-btn" class="btn-icon" title="使用者資訊" data-popover="user-popover">
+                            <button id="view-toggle-btn" class="btn-icon" data-i18n-title="main.view_toggle_title"><i class="fas fa-th-large"></i></button>
+                            <button id="help-btn" class="btn-icon" data-i18n-title="main.help_title" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
+                            <button id="settings-btn" class="btn-icon" data-i18n-title="main.settings_title" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
+                            <button id="user-btn" class="btn-icon" data-i18n-title="main.user_info_title" data-popover="user-popover">
                                 <i class="fas fa-user-circle"></i>
                             </button>
                         </div>
@@ -124,25 +124,25 @@
                     <div class="file-list-header">
                         <div class="file-item-col name sortable" data-sort="name">
                             <div class="header-name-wrapper">
-                                <span>名稱</span>
+                                <span data-i18n="file_list.col_name"></span>
                                 <span class="sort-icon"></span>
                             </div>
                         </div>
                         <div class="file-item-col date sortable" data-sort="date">
                             <div class="header-name-wrapper">
-                                <span>修改日期</span>
+                                <span data-i18n="file_list.col_date"></span>
                                 <span class="sort-icon"></span>
                             </div>
                         </div>
                         <div class="file-item-col type sortable" data-sort="type">
                             <div class="header-name-wrapper">
-                                <span>類型</span>
+                                <span data-i18n="file_list.col_type"></span>
                                 <span class="sort-icon"></span>
                             </div>
                         </div>
                         <div class="file-item-col size sortable" data-sort="size">
                             <div class="header-name-wrapper">
-                                <span>檔案大小</span>
+                                <span data-i18n="file_list.col_size"></span>
                                 <span class="sort-icon"></span>
                             </div>
                         </div>
@@ -154,14 +154,14 @@
                 
                 <!-- Floating Action Toolbar -->
                 <div id="file-floating-toolbar" class="floating-toolbar">
-                    <button class="toolbar-btn" id="ft-download-btn" title="下載"><i class="fas fa-download"></i></button>
-                    <button class="toolbar-btn" id="ft-move-btn" title="移動"><i class="fas fa-arrow-right-to-bracket"></i></button>
-                    <button class="toolbar-btn" id="ft-rename-btn" title="重新命名"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="toolbar-btn" id="ft-download-btn" data-i18n-title="menu.download"><i class="fas fa-download"></i></button>
+                    <button class="toolbar-btn" id="ft-move-btn" data-i18n-title="menu.move"><i class="fas fa-arrow-right-to-bracket"></i></button>
+                    <button class="toolbar-btn" id="ft-rename-btn" data-i18n-title="menu.rename"><i class="fas fa-pencil-alt"></i></button>
                     <div class="toolbar-separator"></div>
-                    <button class="toolbar-btn" id="ft-share-btn" title="分享 (即將推出)"><i class="fas fa-share-alt"></i></button>
-                    <button class="toolbar-btn" id="ft-details-btn" title="詳細資訊"><i class="fas fa-info-circle"></i></button>
+                    <button class="toolbar-btn" id="ft-share-btn" data-i18n-title="menu.share_soon"><i class="fas fa-share-alt"></i></button>
+                    <button class="toolbar-btn" id="ft-details-btn" data-i18n-title="menu.details"><i class="fas fa-info-circle"></i></button>
                     <div class="toolbar-separator"></div>
-                    <button class="toolbar-btn" id="ft-trash-btn" title="移至回收桶"><i class="fas fa-trash"></i></button>
+                    <button class="toolbar-btn" id="ft-trash-btn" data-i18n-title="menu.move_to_trash"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
 
@@ -170,17 +170,17 @@
                 <header class="top-bar">
                     <div class="top-row">
                         <div class="trash-header-title">
-                            <i class="fas fa-trash-alt"></i> 回收桶 <span class="trash-tip">（移入的項目將在 30 天後永久刪除）</span>
+                            <i class="fas fa-trash-alt"></i> <span data-i18n="main.nav_trash"></span> <span class="trash-tip" data-i18n="trash.tip"></span>
                         </div>
                     </div>
                     <div class="bottom-row">
                         <div id="trash-bulk-actions" class="action-buttons hidden">
-                            <button id="trash-restore-btn" class="btn"><i class="fas fa-undo-alt"></i> 還原</button>
-                            <button id="trash-delete-btn" class="btn btn-danger"><i class="fas fa-trash-alt"></i> 刪除</button>
+                            <button id="trash-restore-btn" class="btn"><i class="fas fa-undo-alt"></i> <span data-i18n="trash.btn_restore"></span></button>
+                            <button id="trash-delete-btn" class="btn btn-danger"><i class="fas fa-trash-alt"></i> <span data-i18n="trash.btn_delete"></span></button>
                         </div>
                         <div class="action-buttons">
-                            <button id="empty-trash-btn" class="btn" title="清空回收桶">
-                                <i class="fas fa-dumpster"></i> 清空回收桶
+                            <button id="empty-trash-btn" class="btn" data-i18n-title="trash.btn_empty">
+                                <i class="fas fa-dumpster"></i> <span data-i18n="trash.btn_empty"></span>
                             </button>
                         </div>
                     </div>
@@ -188,19 +188,19 @@
                 <section class="file-list-section">
                     <div class="trash-list-header">
                         <div class="sortable" data-sort="name">
-                            <div class="header-name-wrapper"><span>名稱</span><span class="sort-icon"></span></div>
+                            <div class="header-name-wrapper"><span data-i18n="file_list.col_name"></span><span class="sort-icon"></span></div>
                         </div>
                         <div class="sortable desc" data-sort="trashed_date">
-                            <div class="header-name-wrapper"><span>刪除時間</span><span class="sort-icon"></span></div>
+                            <div class="header-name-wrapper"><span data-i18n="trash.col_deleted_date"></span><span class="sort-icon"></span></div>
                         </div>
                         <div class="sortable" data-sort="type">
-                            <div class="header-name-wrapper"><span>類型</span><span class="sort-icon"></span></div>
+                            <div class="header-name-wrapper"><span data-i18n="file_list.col_type"></span><span class="sort-icon"></span></div>
                         </div>
                         <div class="sortable" data-sort="original_parent_id">
-                            <div class="header-name-wrapper"><span>原始位置</span><span class="sort-icon"></span></div>
+                            <div class="header-name-wrapper"><span data-i18n="trash.col_original_path"></span><span class="sort-icon"></span></div>
                         </div>
                         <div class="sortable" data-sort="size">
-                            <div class="header-name-wrapper"><span>大小</span><span class="sort-icon"></span></div>
+                            <div class="header-name-wrapper"><span data-i18n="file_list.col_size"></span><span class="sort-icon"></span></div>
                         </div>
                     </div>
                     <div id="trash-list-body" class="trash-list-body">
@@ -220,28 +220,28 @@
                         <div class="hero-content">
                             <div class="hero-stat-block">
                                 <h2 id="hero-total-speed">-- B/s</h2>
-                                <p>即時總速度</p>
+                                <p data-i18n="transfer.total_speed"></p>
                             </div>
                             <div class="hero-stat-block">
                                 <h2 id="hero-daily-traffic">--</h2>
-                                <p>今日總流量</p>
+                                <p data-i18n="transfer.daily_traffic"></p>
                             </div>
                             <div class="hero-stat-block">
                                 <h2 id="hero-eta">--:--:--</h2>
-                                <p>剩餘預估時間</p>
+                                <p data-i18n="transfer.eta"></p>
                             </div>
                         </div>
                         <div class="hero-actions">
-                            <button id="global-pause-btn" class="icon-btn-lg" title="全部暫停"><i class="fas fa-pause"></i></button>
-                            <button id="global-cancel-btn" class="icon-btn-lg danger" title="全部取消"><i class="fas fa-times"></i></button>
+                            <button id="global-pause-btn" class="icon-btn-lg" data-i18n-title="transfer.pause_all"><i class="fas fa-pause"></i></button>
+                            <button id="global-cancel-btn" class="icon-btn-lg danger" data-i18n-title="transfer.cancel_all"><i class="fas fa-times"></i></button>
                         </div>
                     </div>
 
                     <!-- Tabs -->
                     <div class="tabs-container">
-                        <div class="tab-item active" data-tab="uploads">上傳中</div>
-                        <div class="tab-item" data-tab="downloads">下載中</div>
-                        <div class="tab-item" data-tab="completed">已完成</div>
+                        <div class="tab-item active" data-tab="uploads" data-i18n="transfer.tab_uploads"></div>
+                        <div class="tab-item" data-tab="downloads" data-i18n="transfer.tab_downloads"></div>
+                        <div class="tab-item" data-tab="completed" data-i18n="transfer.tab_completed"></div>
                     </div>
 
                     <!-- Dynamic Content -->
@@ -249,7 +249,7 @@
                         <!-- Active Tasks -->
                         <div id="section-active" class="task-section">
                             <div class="task-group-title" style="color:var(--primary);">
-                                進行中 (<span id="count-active">0</span>) <div class="group-line"></div>
+                                <span data-i18n="transfer.section_active"></span> (<span id="count-active">0</span>) <div class="group-line"></div>
                             </div>
                             <div id="list-active" class="task-list-container"></div>
                         </div>
@@ -257,9 +257,9 @@
                         <!-- Failed Tasks -->
                         <div id="section-failed" class="task-section hidden">
                             <div class="task-group-title" style="color:var(--danger);">
-                                失敗 (<span id="count-failed">0</span>) 
+                                <span data-i18n="transfer.section_failed"></span> (<span id="count-failed">0</span>) 
                                 <div class="group-line"></div> 
-                                <button id="retry-all-btn" class="retry-all-btn">全部重試</button>
+                                <button id="retry-all-btn" class="retry-all-btn" data-i18n="transfer.btn_retry_all"></button>
                             </div>
                             <div id="list-failed" class="task-list-container"></div>
                         </div>
@@ -267,7 +267,7 @@
                         <!-- Queued Tasks -->
                         <div id="section-queued" class="task-section">
                             <div class="task-group-title">
-                                等待中 (<span id="count-queued">0</span>) <div class="group-line"></div>
+                                <span data-i18n="transfer.section_queued"></span> (<span id="count-queued">0</span>) <div class="group-line"></div>
                             </div>
                             <div id="list-queued" class="task-list-container"></div>
                         </div>
@@ -277,16 +277,16 @@
                     <div id="transfer-completed-view" class="hidden">
                         <div class="completed-filter-bar">
                             <div class="filters-group">
-                                <div class="filter-segment active" data-filter="all">全部</div>
-                                <div class="filter-segment" data-filter="upload">上傳</div>
-                                <div class="filter-segment" data-filter="download">下載</div>
+                                <div class="filter-segment active" data-filter="all" data-i18n="transfer.filter_all"></div>
+                                <div class="filter-segment" data-filter="upload" data-i18n="transfer.filter_upload"></div>
+                                <div class="filter-segment" data-filter="download" data-i18n="transfer.filter_download"></div>
                             </div>
-                            <button id="btn-clear-completed" class="btn-text-danger"><i class="fas fa-trash-alt"></i> 清除紀錄</button>
+                            <button id="btn-clear-completed" class="btn-text-danger"><i class="fas fa-trash-alt"></i> <span data-i18n="transfer.btn_clear_history"></span></button>
                         </div>
                         <div class="sort-bar">
-                            <span class="sort-label">排序依據：</span>
-                            <div class="sort-item active" data-sort="time">完成時間 <i class="fas fa-sort-down"></i></div>
-                            <div class="sort-item" data-sort="name">名稱</div>
+                            <span class="sort-label" data-i18n="transfer.sort_by"></span>
+                            <div class="sort-item active" data-sort="time"><span data-i18n="transfer.sort_time"></span> <i class="fas fa-sort-down"></i></div>
+                            <div class="sort-item" data-sort="name" data-i18n="file_list.col_name"></div>
                         </div>
                         <div id="list-completed" class="history-list"></div>
                     </div>
@@ -298,58 +298,58 @@
     </div>
     
     <div id="help-popover" class="popover hidden unselectable">
-        <h3>幫助中心</h3>
-        <p>歡迎使用 TDrive！這是一個基於 Telegram 的安全雲端儲存工具。</p>
-        <p><b>操作提示：</b></p>
+        <h3 data-i18n="dialog.help_title"></h3>
+        <p data-i18n="dialog.help_intro"></p>
+        <p><b data-i18n="dialog.help_tips"></b></p>
         <ul>
-            <li><b>單擊</b>資料夾：導覽至該資料夾。</li>
-            <li><b>單擊小箭頭</b>：展開/收合資料夾。</li>
-            <li>按住 <b>Ctrl</b> 鍵再單擊可進行多選。</li>
-            <li>在空白處<b>拖曳滑鼠</b>可以框選多個項目。</li>
+            <li data-i18n="dialog.help_tip_1"></li>
+            <li data-i18n="dialog.help_tip_2"></li>
+            <li data-i18n="dialog.help_tip_3"></li>
+            <li data-i18n="dialog.help_tip_4"></li>
         </ul>
     </div>
 
     <div id="settings-popover" class="popover hidden unselectable">
-        <h3>設定</h3>
+        <h3 data-i18n="dialog.settings_title"></h3>
         <div class="setting-item">
-            <label for="theme-select">主題</label>
+            <label for="theme-select" data-i18n="dialog.settings_theme"></label>
             <select id="theme-select">
-                <option value="light">明亮模式</option>
-                <option value="dark" disabled>黑暗模式 (即將推出)</option>
+                <option value="light" data-i18n="dialog.theme_light"></option>
+                <option value="dark" disabled data-i18n="dialog.theme_dark_soon"></option>
             </select>
         </div>
         <div class="setting-item">
-            <label>預設下載路徑</label>
+            <label data-i18n="dialog.settings_default_dl"></label>
             <div class="setting-control-group">
                 <label class="switch">
                     <input type="checkbox" id="use-default-download-path-toggle">
                     <span class="slider round"></span>
                 </label>
-                <button id="set-default-download-path-btn" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">選擇路徑</button>
+                <button id="set-default-download-path-btn" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;" data-i18n="dialog.btn_select_path"></button>
             </div>
         </div>
-        <div id="default-download-path-display" class="setting-path-display">尚未設定</div>
-        <button id="save-settings-btn" class="btn" style="margin-top: 20px; width: 100%;">儲存設定</button>
+        <div id="default-download-path-display" class="setting-path-display"><span data-i18n="dialog.path_not_set"></span></div>
+        <button id="save-settings-btn" class="btn" style="margin-top: 20px; width: 100%;" data-i18n="dialog.btn_save_settings"></button>
     </div>
 
     <div id="user-popover" class="popover hidden unselectable">
-        <h3>使用者資訊</h3>
+        <h3 data-i18n="dialog.user_info_title"></h3>
         <div id="user-info-content"></div>
-        <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;">登出</button>
+        <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;" data-i18n="dialog.btn_logout"></button>
     </div>
 
     <div id="confirm-modal" class="modal-overlay hidden unselectable">
         <div class="modal-content small-modal">
             <div class="modal-header">
-                <h2 id="confirm-title">確認操作</h2>
+                <h2 id="confirm-title" data-i18n="dialog.confirm_title"></h2>
                 <button id="confirm-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <p id="confirm-message">您確定要執行此操作嗎？</p>
+                <p id="confirm-message" data-i18n="dialog.confirm_msg"></p>
             </div>
             <div class="modal-footer">
-                <button id="confirm-cancel-btn" class="btn btn-secondary">取消</button>
-                <button id="confirm-ok-btn" class="btn btn-danger">確定</button>
+                <button id="confirm-cancel-btn" class="btn btn-secondary" data-i18n="dialog.btn_cancel"></button>
+                <button id="confirm-ok-btn" class="btn btn-danger" data-i18n="dialog.btn_ok"></button>
             </div>
         </div>
     </div>
@@ -357,18 +357,18 @@
     <div id="move-modal" class="modal-overlay hidden unselectable">
         <div class="modal-content medium-modal">
             <div class="modal-header">
-                <h2>移動項目</h2>
+                <h2 data-i18n="dialog.move_title"></h2>
                 <button id="move-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <p>請選擇目的地資料夾：</p>
+                <p data-i18n="dialog.move_msg"></p>
                 <div id="move-tree-container" class="folder-tree-container">
                     <!-- Folder tree will be injected here -->
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="move-cancel-btn" class="btn btn-secondary">取消</button>
-                <button id="move-confirm-btn" class="btn">移動到此處</button>
+                <button id="move-cancel-btn" class="btn btn-secondary" data-i18n="dialog.btn_cancel"></button>
+                <button id="move-confirm-btn" class="btn" data-i18n="dialog.btn_move_here"></button>
             </div>
         </div>
     </div>
@@ -376,14 +376,14 @@
     <div id="alert-modal" class="modal-overlay hidden unselectable">
         <div class="modal-content small-modal">
             <div class="modal-header">
-                <h2 id="alert-title">提示</h2>
+                <h2 id="alert-title" data-i18n="dialog.alert_title"></h2>
                 <button id="alert-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <p id="alert-message"></p>
             </div>
             <div class="modal-footer">
-                <button id="alert-ok-btn" class="btn">確定</button>
+                <button id="alert-ok-btn" class="btn" data-i18n="dialog.btn_ok"></button>
             </div>
         </div>
     </div>
@@ -391,17 +391,17 @@
     <div id="prompt-modal" class="modal-overlay hidden">
         <div class="modal-content small-modal">
             <div class="modal-header">
-                <h2 id="prompt-title">請輸入</h2>
+                <h2 id="prompt-title" data-i18n="dialog.prompt_title"></h2>
                 <button id="prompt-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <p id="prompt-message">請輸入新的名稱：</p>
+                <p id="prompt-message" data-i18n="dialog.prompt_msg"></p>
                 <input type="text" id="prompt-input" class="modal-input" spellcheck="false" autocomplete="off">
                 <p id="prompt-error" class="modal-error hidden"></p>
             </div>
             <div class="modal-footer">
-                <button id="prompt-cancel-btn" class="btn btn-secondary">取消</button>
-                <button id="prompt-ok-btn" class="btn">確定</button>
+                <button id="prompt-cancel-btn" class="btn btn-secondary" data-i18n="dialog.btn_cancel"></button>
+                <button id="prompt-ok-btn" class="btn" data-i18n="dialog.btn_ok"></button>
             </div>
         </div>
     </div>
@@ -423,10 +423,10 @@
             </div>
             <div class="item-status"></div>
             <div class="item-actions">
-                <button class="action-btn pause-item" title="暫停"><i class="fas fa-pause"></i></button>
-                <button class="action-btn resume-item" title="繼續"><i class="fas fa-play"></i></button>
-                <button class="action-btn cancel-item" title="取消"><i class="fas fa-times"></i></button>
-                <button class="action-btn retry-item" title="重試"><i class="fas fa-sync-alt"></i></button>
+                <button class="action-btn pause-item" data-i18n-title="transfer.btn_pause"><i class="fas fa-pause"></i></button>
+                <button class="action-btn resume-item" data-i18n-title="transfer.btn_resume"><i class="fas fa-play"></i></button>
+                <button class="action-btn cancel-item" data-i18n-title="transfer.btn_cancel"><i class="fas fa-times"></i></button>
+                <button class="action-btn retry-item" data-i18n-title="transfer.btn_retry"><i class="fas fa-sync-alt"></i></button>
             </div>
         </div>
     </template>
@@ -456,12 +456,13 @@
     <div id="connection-lost-overlay" class="modal-overlay hidden" style="z-index: 10000; background-color: rgba(0, 0, 0, 0.6);">
         <div class="loading-content" style="color: white; text-align: center;">
             <i class="fas fa-wifi-slash" style="font-size: 48px; margin-bottom: 20px;"></i>
-            <p style="font-size: 20px; font-weight: 500;">連線中斷</p>
-            <p style="font-size: 16px; color: #ccc; margin-top: 8px;">正在嘗試重新連線，請稍候...</p>
+            <p style="font-size: 20px; font-weight: 500;"><span data-i18n="main.conn_lost"></span></p>
+            <p style="font-size: 16px; color: #ccc; margin-top: 8px;"><span data-i18n="main.conn_reconnecting"></span></p>
         </div>
     </div>
 
     <div id="interaction-lock-overlay"></div>
+    <script type="text/javascript" src="js/i18n.js"></script>
     <script type="text/javascript" src="js/core/state.js"></script>
     <script type="text/javascript" src="js/core/api_service.js"></script>
     <script type="text/javascript" src="js/utils/ui_modals.js"></script>

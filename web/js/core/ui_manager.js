@@ -42,29 +42,29 @@ const UIManager = {
     },
 
     getFileTypeDescription(fileName, isFolder) {
-        if (isFolder) return '資料夾';
+        if (isFolder) return window.t('file_list.type_folder');
         const extension = fileName.split('.').pop().toLowerCase();
-        if (!fileName.includes('.')) return '檔案';
+        if (!fileName.includes('.')) return window.t('file_list.type_file');
         switch (extension) {
-            case 'txt': return '文字文件';
-            case 'md': return 'Markdown 文件';
-            case 'pdf': return 'PDF 文件';
-            case 'doc': case 'docx': return 'Word 文件';
-            case 'xls': case 'xlsx': return 'Excel 試算表';
-            case 'ppt': case 'pptx': return 'PowerPoint 簡報';
-            case 'zip': case 'rar': case '7z': case 'tar': return `${extension.toUpperCase()} 壓縮檔`;
-            case 'jpg': case 'jpeg': return 'JPEG 圖片';
-            case 'png': return 'PNG 圖片';
-            case 'gif': return 'GIF 圖片';
-            case 'mp3': case 'wav': case 'aac': return `${extension.toUpperCase()} 音訊`;
-            case 'mp4': case 'mov': case 'avi': case 'mkv': return `${extension.toUpperCase()} 影片`;
-            case 'py': return 'Python 腳本';
-            case 'js': return 'JavaScript 檔案';
-            case 'html': return 'HTML 文件';
-            case 'css': return '樣式表';
-            case 'json': return 'JSON 檔案';
-            case 'exe': return '應用程式';
-            default: return `${extension.toUpperCase()} 檔案`;
+            case 'txt': return window.t('file_list.type_txt');
+            case 'md': return window.t('file_list.type_md');
+            case 'pdf': return window.t('file_list.type_pdf');
+            case 'doc': case 'docx': return window.t('file_list.type_doc');
+            case 'xls': case 'xlsx': return window.t('file_list.type_xls');
+            case 'ppt': case 'pptx': return window.t('file_list.type_ppt');
+            case 'zip': case 'rar': case '7z': case 'tar': return (extension.toUpperCase() + ' ' + window.t('file_list.type_zip'));
+            case 'jpg': case 'jpeg': return window.t('file_list.type_jpg');
+            case 'png': return window.t('file_list.type_png');
+            case 'gif': return window.t('file_list.type_gif');
+            case 'mp3': case 'wav': case 'aac': return (extension.toUpperCase() + ' ' + window.t('file_list.type_audio'));
+            case 'mp4': case 'mov': case 'avi': case 'mkv': return (extension.toUpperCase() + ' ' + window.t('file_list.type_video'));
+            case 'py': return window.t('file_list.type_py');
+            case 'js': return window.t('file_list.type_js');
+            case 'html': return window.t('file_list.type_html');
+            case 'css': return window.t('file_list.type_css');
+            case 'json': return window.t('file_list.type_json');
+            case 'exe': return window.t('file_list.type_exe');
+            default: return (extension.toUpperCase() + ' ' + window.t('file_list.type_unknown'));
         }
     },
 
@@ -83,11 +83,11 @@ const UIManager = {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
             const { name, phone, username } = AppState.userInfo;
-            contentEl.innerHTML = `<p><strong>名稱：</strong> <span>${name}</span></p>
-                                   <p><strong>電話：</strong> <span>${phone}</span></p>
-                                   <p><strong>使用者名稱：</strong> <span>${username}</span></p>`;
+            contentEl.innerHTML = `<p><strong data-i18n="dialog.info_name"></strong> <span>${name}</span></p>
+                                   <p><strong data-i18n="dialog.info_phone"></strong> <span>${phone}</span></p>
+                                   <p><strong data-i18n="dialog.info_username"></strong> <span>${username}</span></p>`;
         } else {
-            contentEl.innerHTML = '<p>載入中...</p>';
+            contentEl.innerHTML = window.t('file_list.loading');
         }
     },
 
@@ -114,28 +114,28 @@ const UIManager = {
     },
 
     handleBackendError(response) {
-        let title = '錯誤';
-        let message = response.message || '發生未知的內部錯誤，請稍後再試。';
+        let title = window.t('dialog.err_title');
+        let message = response.message || window.t('dialog.err_internal');
 
         switch (response.error_code) {
             case 'ITEM_ALREADY_EXISTS':
-                title = '操作失敗';
+                title = window.t('dialog.err_op_failed');
                 break;
             case 'PATH_NOT_FOUND':
-                title = '項目不存在';
+                title = window.t('dialog.err_item_not_found');
                 break;
             case 'CONNECTION_FAILED':
-                title = '連線錯誤';
-                message = '無法連線至伺服器，請檢查您的網路連線並重試。';
+                title = window.t('dialog.err_conn');
+                message = window.t('dialog.err_conn_msg');
                 break;
             case 'FLOOD_WAIT_ERROR':
-                title = '請求過於頻繁';
+                title = window.t('dialog.err_too_frequent');
                 break;
             case 'INVALID_OPERATION':
-                title = '無效操作';
+                title = window.t('dialog.err_invalid_op');
                 break;
             case 'INTERNAL_ERROR':
-                title = '系統錯誤';
+                title = window.t('dialog.err_sys');
                 break;
         }
         UIModals.showAlert(title, message, 'btn-primary');
