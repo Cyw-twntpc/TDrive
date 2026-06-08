@@ -16,9 +16,11 @@ function initWebChannel() {
             if (window.tdrive_bridge && window.tdrive_bridge.login_event) {
                 window.tdrive_bridge.login_event.connect(on_login_event);
             }
+            document.dispatchEvent(new Event("TDriveBridgeReady"));
         });
     } else {
         console.warn("QWebChannel object 'qt' not found. Running in UI testing mode.");
+        document.dispatchEvent(new Event("TDriveBridgeReady"));
     }
 }
 

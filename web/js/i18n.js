@@ -6,10 +6,39 @@ class I18nManager {
     }
 
     async init(defaultLocale = 'zh-TW') {
-        this.locale = defaultLocale;
+        let savedLocale = defaultLocale;
+        if (window.tdrive_bridge && window.tdrive_bridge.get_settings) {
+            const settingsStr = await new Promise(resolve => window.tdrive_bridge.get_settings(resolve));
+            try {
+                const settings = JSON.parse(settingsStr);
+                if (settings.language) savedLocale = settings.language;
+            } catch (e) {
+                console.error('Failed to parse settings', e);
+            }
+        }
+        this.locale = savedLocale || defaultLocale;
         await this.loadTranslations(this.locale);
         this.translateDOM();
         this.loaded = true;
+    }
+    
+    async changeLanguage(newLocale) {
+        if (this.locale === newLocale) return;
+        this.locale = newLocale;
+        if (window.tdrive_bridge && window.tdrive_bridge.save_setting) {
+            window.tdrive_bridge.save_setting('language', newLocale);
+        }
+        await this.loadTranslations(this.locale);
+        this.translateDOM();
+        
+        // Re-translate document title if set
+        const titleEl = document.querySelector('title[data-i18n]');
+        if (titleEl) {
+            document.title = window.t(titleEl.getAttribute('data-i18n'));
+        }
+        
+        // Dispatch event so other modules can re-render dynamic text
+        document.dispatchEvent(new CustomEvent('i18nChanged', { detail: { locale: newLocale } }));
     }
 
     async loadTranslations(locale) {
@@ -80,8 +109,8 @@ class I18nManager {
 window.i18n = new I18nManager();
 window.t = (key) => window.i18n.t(key);
 
-// Auto initialize on DOM load
-document.addEventListener('DOMContentLoaded', () => {
+// Auto initialize on Bridge Ready
+document.addEventListener('TDriveBridgeReady', () => {
     window.i18n.init().then(() => {
         // Re-translate document title if set
         const titleEl = document.querySelector('title[data-i18n]');

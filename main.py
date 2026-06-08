@@ -81,6 +81,13 @@ def main():
 
     app = QApplication(sys.argv)
     
+    # Configure persistent web storage
+    from PySide6.QtWebEngineCore import QWebEngineProfile
+    import os
+    storage_path = os.path.join(os.getcwd(), "data", "web_storage")
+    profile = QWebEngineProfile.defaultProfile()
+    profile.setPersistentStoragePath(storage_path)
+    profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
     # Show the custom animated splash screen
     splash = SplashScreen()
     splash.show()

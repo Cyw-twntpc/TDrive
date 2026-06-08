@@ -40,6 +40,9 @@ class Bridge(QObject):
         # Connect Folder Refresh Signal
         self._service._transfer_service.set_refresh_callback(self.folder_content_refresh_required.emit)
         
+        from core_app.common.settings_manager import SettingsManager
+        self._settings_manager = SettingsManager()
+        
         logger.debug("Bridge initialized.")
 
     def _run_background_task(self, coro, result_signal, request_id):
@@ -327,3 +330,23 @@ class Bridge(QObject):
     @Slot(result=dict)
     def get_initial_stats(self):
         return self._service.get_transfer_config()
+    # --- Settings Management ---
+    @Slot(result=str)
+    def get_settings(self):
+        import json
+        settings = self._settings_manager.get_all()
+        return json.dumps(settings)
+
+    @Slot(str, str)
+    def save_setting(self, key: str, value: str):
+        # Value is passed as a JSON string from JS for simplicity
+        import json
+        try:
+            val = json.loads(value)
+        except:
+            val = value
+        self._settings_manager.set(key, val)
+
+    @Slot()
+    def restore_default_settings(self):
+        self._settings_manager.restore_defaults()

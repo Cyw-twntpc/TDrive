@@ -403,3 +403,9 @@ function setupGlobalDragAndDrop() {
         }
     });
 }
+// Auto-refresh dynamic views on language change
+document.addEventListener('i18nChanged', () => {
+    if (typeof ActionHandler !== 'undefined' && ActionHandler._appState && ActionHandler._appState.currentFolderId) {
+        window.tdrive_bridge.list_directory(ActionHandler._appState.currentFolderId, ActionHandler._appState.currentViewRequestId);
+    }
+});

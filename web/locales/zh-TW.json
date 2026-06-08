@@ -285,6 +285,7 @@
     "select_default_dl": "選擇預設下載資料夾",
     "restore_failed": "還原失敗",
     "delete_failed": "刪除失敗",
-    "empty_failed": "清空失敗"
+    "empty_failed": "清空失敗",
+    "settings_language": "顯示語言"
   }
 }

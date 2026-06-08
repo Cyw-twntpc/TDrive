@@ -462,7 +462,8 @@ const ActionHandler = {
             this._uiManager.setInteractionLock(true);
             try {
                 await this._apiService.logout();
-                localStorage.clear();
+                // Bridge settings are persistent, no need to clear localStorage anymore
+                // localStorage.clear();
                 window.location.href = 'login.html';
             } catch (error) {
                 console.error("Logout operation failed:", error);

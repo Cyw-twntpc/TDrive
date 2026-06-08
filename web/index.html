@@ -10,10 +10,16 @@
     <script type="text/javascript" src="js/qwebchannel.js"></script>
     <script type="text/javascript">
         window.addEventListener('load', function() {
-            new QWebChannel(qt.webChannelTransport, function(channel) {
-                window.tdrive_bridge = channel.objects.tdrive_bridge;
-                console.log("QWebChannel bridge initialized.");
-            });
+            if (typeof qt !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    window.tdrive_bridge = channel.objects.tdrive_bridge;
+                    console.log("QWebChannel bridge initialized.");
+                    document.dispatchEvent(new Event("TDriveBridgeReady"));
+                });
+            } else {
+                console.warn("QWebChannel object 'qt' not found. Running in UI testing mode.");
+                document.dispatchEvent(new Event("TDriveBridgeReady"));
+            }
         });
     </script>
 </head>
@@ -312,6 +318,13 @@
     <div id="settings-popover" class="popover hidden unselectable">
         <h3 data-i18n="dialog.settings_title"></h3>
         <div class="setting-item">
+            <label for="language-select" data-i18n="dialog.settings_language"></label>
+            <select id="language-select">
+                <option value="zh-TW">繁體中文</option>
+                <option value="en-US">English</option>
+            </select>
+        </div>
+        <div class="setting-item">
             <label for="theme-select" data-i18n="dialog.settings_theme"></label>
             <select id="theme-select">
                 <option value="light" data-i18n="dialog.theme_light"></option>
@@ -330,6 +343,7 @@
         </div>
         <div id="default-download-path-display" class="setting-path-display"><span data-i18n="dialog.path_not_set"></span></div>
         <button id="save-settings-btn" class="btn" style="margin-top: 20px; width: 100%;" data-i18n="dialog.btn_save_settings"></button>
+        <button id="restore-settings-btn" class="btn btn-danger" style="margin-top: 10px; width: 100%;" data-i18n="dialog.btn_restore_settings">恢復預設值</button>
     </div>
 
     <div id="user-popover" class="popover hidden unselectable">
