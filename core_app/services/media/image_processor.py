@@ -59,13 +59,13 @@ class ImageProcessor:
     @staticmethod
     def _generate_thumbnail(image: QImage) -> Optional[bytes]:
         try:
-            # Scale down to max 200x200, keeping aspect ratio
-            if image.width() > 200 or image.height() > 200:
-                thumb_img = image.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # Scale down to max 400x400, keeping aspect ratio
+            if image.width() > 400 or image.height() > 400:
+                thumb_img = image.scaled(400, 400, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             else:
                 thumb_img = image # Use original if small enough
 
-            return ImageProcessor._qimage_to_bytes(thumb_img, "JPG", quality=70)
+            return ImageProcessor._qimage_to_bytes(thumb_img, "JPG", quality=80)
         except Exception as e:
             logger.error(f"Thumbnail generation failed: {e}")
             return None
@@ -92,3 +92,48 @@ class ImageProcessor:
         buffer.open(QIODevice.WriteOnly)
         image.save(buffer, format_str, quality)
         return  byte_array.data()
+
+    @staticmethod
+    def process_video(file_path: str) -> Tuple[Optional[bytes], Optional[bytes]]:
+        """
+        Extracts a frame from a video to use as a thumbnail.
+        Always returns None for preview_bytes to save space.
+        """
+        try:
+            import cv2
+            cap = cv2.VideoCapture(file_path)
+            if not cap.isOpened():
+                return None, None
+            
+            # Try to get a frame at 10% of the video to avoid black screens
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            target_frame = int(frame_count * 0.1) if frame_count > 0 else 30
+            
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+            ret, frame = cap.read()
+            if not ret:
+                # Fallback to the first frame
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = cap.read()
+                
+            cap.release()
+            
+            if not ret or frame is None:
+                return None, None
+                
+            # Convert OpenCV frame (BGR) to QImage (RGB)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            
+            thumb_bytes = ImageProcessor._generate_thumbnail(qimg)
+            
+            # No preview image generated for videos to save cloud space
+            return thumb_bytes, None
+            
+        except ImportError:
+            return None, None
+        except Exception as e:
+            logger.error(f"Error processing video {file_path}: {e}", exc_info=True)
+            return None, None

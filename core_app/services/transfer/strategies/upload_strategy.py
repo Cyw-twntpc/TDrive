@@ -364,6 +364,8 @@ class UploadStrategy(TransferStrategy):
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.tiff'}:
                     thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
+                elif ext in {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv'}:
+                    thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_video, file_path)
                 
                 preview_msg_id = None
                 preview_hash = None
