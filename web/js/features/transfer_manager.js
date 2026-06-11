@@ -372,7 +372,6 @@ const TransferManager = {
     renderDashboard() {
         const container = document.getElementById('page-transfer');
         if (!container || container.classList.contains('hidden')) {
-            this.stopValidityChecker();
             return;
         }
 
