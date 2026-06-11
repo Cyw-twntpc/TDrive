@@ -195,7 +195,7 @@ const TransferManager = {
         
         if (data.speed !== undefined) task.speed = data.speed;
         if (data.total !== undefined && data.total > 0) task.size = data.total;
-        if (data.error_message) task.message = data.error_message;
+        if (data.error_code) task.message = window.t('errors.' + data.error_code);
 
         if (task.status === 'failed' && !task.alertShown) {
             this.UIManager.handleBackendError({

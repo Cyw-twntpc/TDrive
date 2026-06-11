@@ -120,7 +120,7 @@ const UIHandler = {
         }
     },
     handleBackendError: (response) => {
-        alert(response.message || window.t('errors.UNKNOWN'));
+        alert(response.error_code ? window.t('errors.' + response.error_code) : window.t('errors.UNKNOWN'));
     }
 };
 

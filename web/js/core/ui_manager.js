@@ -115,7 +115,7 @@ const UIManager = {
 
     handleBackendError(response) {
         let title = window.t('dialog.err_title');
-        let message = response.message || window.t('dialog.err_internal');
+        let message = response.error_code ? window.t('errors.' + response.error_code) : window.t('dialog.err_internal');
 
         switch (response.error_code) {
             case 'ITEM_ALREADY_EXISTS':

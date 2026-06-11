@@ -55,7 +55,7 @@ class Bridge(QObject):
             except Exception as e:
                 logger.error(f"Background task failed (request_id: {request_id}): {e}", exc_info=True)
                 error_payload = {
-                    'data': {"success": False, "error_code": "TASK_FAILED", "message": str(e)},
+                    'data': {"success": False, "error_code": ErrorCode.TASK_FAILED},
                     'request_id': request_id
                 }
                 result_signal.emit(error_payload)
@@ -66,7 +66,7 @@ class Bridge(QObject):
         """Synchronously waits for an async coroutine using a local event loop."""
         if self._is_busy:
             logger.warning("BUSY: A critical operation was rejected because a previous one is still in progress.")
-            return {"success": False, "error_code": "BUSY", "message": "另一個關鍵操作正在進行中，請稍候。"}
+            return {"success": False, "error_code": ErrorCode.BUSY}
 
         # If the main asyncio loop isn't running, we can run the coroutine directly.
         if not self._loop.is_running():
@@ -94,7 +94,7 @@ class Bridge(QObject):
             return self._wait_for_async(coro)
         except Exception as e:
             logger.error(f"Error during async call: {e}", exc_info=True)
-            return {"success": False, "error_code": "ASYNC_CALL_FAILED", "message": str(e)}
+            return {"success": False, "error_code": ErrorCode.ASYNC_CALL_FAILED}
 
     # --- Window Control Slots ---
     @Slot()
@@ -209,7 +209,7 @@ class Bridge(QObject):
             except Exception as e:
                 logger.error(f"Play video failed (request_id: {request_id}): {e}", exc_info=True)
                 error_payload = {
-                    'data': {"success": False, "error_code": "TASK_FAILED", "message": str(e)},
+                    'data': {"success": False, "error_code": ErrorCode.TASK_FAILED},
                     'request_id': request_id
                 }
                 self.queryResultReady.emit(error_payload)
@@ -236,7 +236,8 @@ class Bridge(QObject):
     @Slot(int, result=dict)
     def get_folder_contents_recursive(self, folder_id):
         return self._async_call(self._service.get_folder_contents_recursive(folder_id))
-    @Slot(int, result=str)
+
+    @Slot(int, result=str)
     def get_file_extended_details(self, file_id: int) -> str:
         import json
         async def _get_details():
@@ -252,19 +253,19 @@ class Bridge(QObject):
                 """, (file_id,))
                 row = cur.fetchone()
                 if not row or not row['map_id']:
-                    return json.dumps({"success": False, "message": "Map file not found."})
+                    return json.dumps({"success": False})
                 
                 real_file_id = row['real_file_id']
                 
                 # 2. Fetch the map file
                 map_info = self._service.db_handler.get_map_file_info(row['map_id'])
                 if not map_info or not map_info['msg_id']:
-                    return json.dumps({"success": False, "message": "Map file message ID missing."})
+                    return json.dumps({"success": False})
                 
                 from core_app.services.common.utils import ensure_client_connected
                 client = await ensure_client_connected(self._service._shared_state)
                 if not client:
-                    return json.dumps({"success": False, "message": "Client not connected."})
+                    return json.dumps({"success": False})
                 
                 map_data = await self._service.metadata_manager.fetch_map_file(
                     client, self._service._shared_state.group_id, 
@@ -276,16 +277,16 @@ class Bridge(QObject):
                     if isinstance(file_info, dict) and 'm' in file_info:
                         return json.dumps({"success": True, "metadata": file_info['m']})
                 
-                return json.dumps({"success": False, "message": "No extended details found."})
+                return json.dumps({"success": False})
             except Exception as e:
                 import traceback
                 logger.error(f"Error fetching extended details for file {file_id}: {traceback.format_exc()}")
-                return json.dumps({"success": False, "message": str(e)})
+                return json.dumps({"success": False})
 
         res_dict = self._wait_for_async(_get_details())
         if isinstance(res_dict, str):
             return res_dict
-        return json.dumps({"success": False, "message": "Unknown error"})
+        return json.dumps({"success": False})
 
     @Slot(int, str, result=dict)
     def create_folder(self, parent_id, folder_name):
@@ -341,7 +342,7 @@ class Bridge(QObject):
                 logger.error(f"Error cancelling task {task_id}: {e}")
 
         asyncio.create_task(_do_cancel())
-        return {"success": True, "message": "已排程取消請求。"}
+        return {"success": True}
 
     @Slot(str, result=dict)
     def pause_transfer(self, task_id):
@@ -352,7 +353,7 @@ class Bridge(QObject):
                 logger.error(f"Error pausing task {task_id}: {e}")
 
         asyncio.create_task(_do_pause())
-        return {"success": True, "message": "已排程暫停請求。"}
+        return {"success": True}
 
     @Slot(str, result=dict)
     def resume_transfer(self, task_id):
@@ -363,7 +364,7 @@ class Bridge(QObject):
                  logger.error(f"Error resuming task {task_id}: {e}")
 
         asyncio.create_task(_do_resume())
-        return {"success": True, "message": "已排程恢復請求。"}
+        return {"success": True}
 
     @Slot(str, result=dict)
     def remove_transfer_history(self, task_id):

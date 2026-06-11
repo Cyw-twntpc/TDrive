@@ -131,7 +131,7 @@ const UIModals = {
                         okBtn.disabled = false;
 
                         if (result && !result.success) {
-                            showError(result.message || window.t('dialog.val_err_unknown'));
+                            showError(result.error_code ? window.t('errors.' + result.error_code) : window.t('dialog.val_err_unknown'));
                             input.focus();
                             return; // Keep the prompt open
                         }

@@ -203,7 +203,7 @@ class TDriveService:
             
         url = self.streaming_service.get_stream_url(file_id)
         if not url:
-            return {"success": False, "message": "Failed to generate stream URL"}
+            return {"success": False}
             
         # Fetch file name
         loop = asyncio.get_running_loop()
@@ -216,7 +216,7 @@ class TDriveService:
             
         file_name = await loop.run_in_executor(None, get_name)
             
-        return {"success": True, "stream_url": url, "file_name": file_name, "message": "影片已就緒"}
+        return {"success": True, "stream_url": url, "file_name": file_name}
 
     # --- Authentication Service ---
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
@@ -314,19 +314,19 @@ class TDriveService:
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.upload_files(parent_id, files, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "開始上傳。"}
+        return {"success": True}
 
     def upload_folder(self, parent_id: int, folder_path: str, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.upload_folder_recursive(parent_id, folder_path, task_id, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "開始上傳資料夾。"}
+        return {"success": True}
 
     def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable) -> Dict[str, Any]:
         adapter = self._create_progress_adapter(progress_callback)
         task_coro = self._transfer_service.download_items(items, destination_dir, adapter)
         self._schedule_background_task(task_coro)
-        return {"success": True, "message": "開始下載。"}
+        return {"success": True}
 
     def cancel_transfer(self, task_id: str) -> Dict[str, Any]:
         return self._transfer_service.cancel_transfer(task_id)
@@ -338,7 +338,7 @@ class TDriveService:
         adapter = self._create_progress_adapter(progress_callback)
         adapter(task_id, '', -1, -1, 'paused', 0)
         
-        return {"success": True, "message": "已請求暫停任務。"}
+        return {"success": True}
 
     def resume_transfer(self, task_id: str, progress_callback: Callable) -> Dict[str, Any]:
         adapter = self._create_progress_adapter(progress_callback)
@@ -350,7 +350,7 @@ class TDriveService:
         task_coro = self._transfer_service.resume_transfer(task_id, adapter)
         self._schedule_background_task(task_coro)
         
-        return {"success": True, "message": "正在恢復傳輸..."}
+        return {"success": True}
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:
         return self._transfer_service.controller.get_incomplete_transfers()

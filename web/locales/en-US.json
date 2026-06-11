@@ -50,6 +50,11 @@
         "login_failed_desc": "Login failed, please try again."
     },
     "errors": {
+        "SEARCH_FAILED": "An unknown error occurred during the search.",
+        "AVATAR_NOT_FOUND": "User avatar not found.",
+        "TASK_FAILED": "Task execution failed.",
+        "ASYNC_CALL_FAILED": "Asynchronous call failed.",
+        "BUSY": "System is busy, please wait.",
         "INVALID_API_CREDENTIALS": "Invalid API ID or API Hash.",
         "CONNECTION_FAILED": "Connection failed, please check your network status.",
         "CLIENT_NOT_CONNECTED": "The application has not finished initializing.",
@@ -260,7 +265,6 @@
         "ul_failed": "Upload Failed",
         "file_exists": "An item named \"{name}\" already exists in this folder.",
         "select_ul_folder": "Select folder to upload",
-        "search_err": "An unknown error occurred during the search.",
         "confirm_logout": "Confirm Logout",
         "confirm_logout_msg": "Are you sure you want to log out? This action will clear all local data and settings.",
         "logout_err": "An error occurred during logout, please try again.",

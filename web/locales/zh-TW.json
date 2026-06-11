@@ -50,6 +50,11 @@
         "login_failed_desc": "登入失敗，請重試。"
     },
     "errors": {
+        "SEARCH_FAILED": "搜尋過程中發生未知錯誤。",
+        "AVATAR_NOT_FOUND": "找不到使用者頭像。",
+        "TASK_FAILED": "任務執行失敗。",
+        "ASYNC_CALL_FAILED": "非同步呼叫失敗。",
+        "BUSY": "系統忙碌中，請稍候。",
         "INVALID_API_CREDENTIALS": "無效的 API ID 或 API Hash。",
         "CONNECTION_FAILED": "連線失敗，請檢查網路狀態。",
         "CLIENT_NOT_CONNECTED": "應用程式尚未初始化完成。",
@@ -259,7 +264,6 @@
         "ul_failed": "上傳失敗",
         "file_exists": "此資料夾中已存在名為 \"{name}\" 的項目。",
         "select_ul_folder": "選擇要上傳的資料夾",
-        "search_err": "搜尋過程中發生未知錯誤。",
         "confirm_logout": "確認登出",
         "confirm_logout_msg": "您確定要登出嗎？此動作將清除所有本機資料和設定。",
         "logout_err": "登出過程中發生錯誤，請重試。",

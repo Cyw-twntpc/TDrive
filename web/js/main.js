@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ApiService.getFolderContents(folderId).then(response => {
             if (!response || !response.success) {
-                UIModals.showAlert(window.t('dialog.load_failed'), response?.message || window.t('file_list.empty_text'), 'btn-primary');
+                UIModals.showAlert(window.t('dialog.load_failed'), response?.error_code ? window.t('errors.' + response.error_code) : window.t('file_list.empty_text'), 'btn-primary');
                 return;
             }
 

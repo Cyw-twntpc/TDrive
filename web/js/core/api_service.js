@@ -4,7 +4,7 @@ const ApiService = {
             if (window.tdrive_bridge && typeof window.tdrive_bridge[functionName] === 'function') {
                 window.tdrive_bridge[functionName](...args, function(result) {
                     if (result && result.success === false) {
-                        console.warn(`Bridge call '${functionName}' reported a failure:`, result.message);
+                        console.warn(`Bridge call '${functionName}' reported a failure:`, result.error_code);
                     }
                     resolve(result);
                 });
@@ -31,7 +31,7 @@ const ApiService = {
                     if (result && result.request_id === requestId) {
                         window.tdrive_bridge[signalName].disconnect(handler);
                         if (result.data && result.data.success === false) {
-                            console.warn(`Bridge call '${functionName}' reported a failure:`, result.data.message);
+                            console.warn(`Bridge call '${functionName}' reported a failure:`, result.data.error_code);
                         }
                         resolve(result.data);
                     }
@@ -64,7 +64,7 @@ const ApiService = {
                             resolve({ success: true, request_id: requestId });
                         } else if (result.type === 'error') {
                             window.tdrive_bridge.queryResultReady.disconnect(handler);
-                            resolve({ success: false, message: result.data?.message || window.t('dialog.search_err') });
+                            resolve({ success: false, error_code: result.data?.error_code || 'SEARCH_FAILED' });
                         }
                     }
                 };

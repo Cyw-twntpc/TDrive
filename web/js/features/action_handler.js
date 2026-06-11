@@ -361,7 +361,7 @@ const ActionHandler = {
                         await this._refreshAllCallback();
                         return { success: true };
                     } else {
-                        return { success: false, message: result.message };
+                        return { success: false, error_code: result.error_code };
                     }
                 } catch (error) {
                     console.error("Rename operation failed:", error);
@@ -408,7 +408,7 @@ const ActionHandler = {
                         await this._refreshAllCallback();
                         return { success: true };
                     } else {
-                        return { success: false, message: result.message };
+                        return { success: false, error_code: result.error_code };
                     }
                 } catch (error) {
                     console.error("Create folder operation failed:", error);
@@ -586,7 +586,7 @@ const ActionHandler = {
             if (this._appState.currentViewRequestId !== requestId) return;
             this._uiManager.stopProgress();
             if (!response.success) {
-                this._uiManager.handleBackendError({ message: response.message || window.t('dialog.search_err') });
+                this._uiManager.handleBackendError({ error_code: response.error_code || 'SEARCH_FAILED' });
             } else {
                 console.log(`Search complete for request_id: ${requestId}`);
             }
