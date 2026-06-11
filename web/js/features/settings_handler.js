@@ -35,8 +35,8 @@ const SettingsHandler = {
                 pathDisplay.textContent = savedPath;
                 pathDisplay.title = savedPath;
             } else {
-                pathDisplay.textContent = window.t('dialog.path_not_set_val') || 'Not Set';
-                pathDisplay.title = window.t('dialog.path_not_set_msg') || 'Click set path';
+                pathDisplay.textContent = window.t('dialog.path_not_set_val');
+                pathDisplay.title = window.t('dialog.path_not_set_msg');
             }
             
             // Enable or disable the "Set Path" button based on the toggle.
@@ -108,7 +108,7 @@ const SettingsHandler = {
                             if (langSelect) langSelect.value = window.i18n.locale;
                         });
                     }
-                    UIModals.showAlert('Settings Restored', 'Default settings have been restored.', 'btn-primary');
+                    UIModals.showAlert(window.t('dialog.settings_restored'), window.t('dialog.settings_restored_msg'), 'btn-primary');
                     document.getElementById('settings-popover').classList.add('hidden');
                 }
             });

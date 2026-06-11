@@ -262,7 +262,7 @@ const ActionHandler = {
                 </table>
                 <div id="adv-details-container" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; min-height: 40px;">
                     <div id="adv-details-spinner" style="text-align: center; color: #999;">
-                        <i class="fas fa-spinner fa-spin"></i> ${window.t('main.loading') || 'Loading...'}
+                        <i class="fas fa-spinner fa-spin"></i> ${window.t('main.loading')}
                     </div>
                     <table id="adv-details-table" style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem; display: none;">
                         <!-- Advanced metadata rows will be injected here -->

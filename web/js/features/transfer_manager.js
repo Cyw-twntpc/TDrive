@@ -97,7 +97,7 @@ const TransferManager = {
 
             const task = {
                 id: taskId,
-                name: (type === 'upload') ? info.file_path.split(/[\\/]/).pop() : (info.file_details?.name || 'Unknown'),
+                name: (type === 'upload') ? info.file_path.split(/[\\/]/).pop() : (info.file_details?.name || window.t('transfer.unknown_name')),
                 size: info.total_size || 0,
                 progress: estimatedProgress,
                 status: info.status === 'transferring' ? 'paused' : info.status,

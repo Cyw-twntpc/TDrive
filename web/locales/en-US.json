@@ -161,6 +161,7 @@
         "confirm_delete_single": "Are you sure you want to permanently delete \"{name}\"?"
     },
     "transfer": {
+        "unknown_name": "Unknown",
         "total_speed": "Total Speed",
         "daily_traffic": "Daily Traffic",
         "eta": "Estimated Time Remaining",
@@ -212,6 +213,8 @@
         "no_transfers": "No active transfers"
     },
     "dialog": {
+        "settings_restored": "Settings Restored",
+        "settings_restored_msg": "Default settings have been restored.",
         "help_title": "Help Center",
         "help_intro": "Welcome to TDrive! A secure cloud storage tool based on Telegram.",
         "help_tips": "Operation Tips:",

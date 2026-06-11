@@ -120,7 +120,7 @@ const UIHandler = {
         }
     },
     handleBackendError: (response) => {
-        alert(response.message || window.t('errors.UNKNOWN') || 'Error');
+        alert(response.message || window.t('errors.UNKNOWN'));
     }
 };
 
@@ -241,7 +241,7 @@ function on_login_event(event) {
             if (hasQrBeenGeneratedSuccessfullyOnce) {
                 handleQrExpired();
             } else {
-                const errorMessage = event.error || 'Login failed. Please try again.';
+                const errorMessage = event.error || window.t('errors.UNKNOWN');
                 showErrorScreen('Login Failed', errorMessage);
             }
             break;

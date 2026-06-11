@@ -161,6 +161,7 @@
         "confirm_delete_single": "確定要永久刪除 \"{name}\" 嗎？"
     },
     "transfer": {
+        "unknown_name": "未知檔案",
         "total_speed": "即時總速度",
         "daily_traffic": "今日總流量",
         "eta": "剩餘預估時間",
@@ -212,6 +213,8 @@
         "no_transfers": "尚無傳輸"
     },
     "dialog": {
+        "settings_restored": "設定已還原",
+        "settings_restored_msg": "已成功還原為預設設定。",
         "help_title": "幫助中心",
         "help_intro": "歡迎使用 TDrive！這是一個基於 Telegram 的安全雲端儲存工具。",
         "help_tips": "操作提示：",
