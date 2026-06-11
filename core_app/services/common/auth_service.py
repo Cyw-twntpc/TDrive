@@ -8,6 +8,7 @@ import io
 import shutil
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, ApiIdInvalidError, PasswordHashInvalidError, PhoneNumberInvalidError
+from core_app.common.errors import ErrorCode
 
 from typing import TYPE_CHECKING, Dict, Any, Optional, Callable
 if TYPE_CHECKING:

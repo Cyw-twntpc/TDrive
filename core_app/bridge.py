@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, Slot, Signal, QEventLoop as QtEventLoop
 from .main_service import TDriveService
 from .ui.gui_utils import core_select_files, core_select_directory, reveal_in_explorer
 from core_app.services import check_path_exists
+from core_app.common.errors import ErrorCode
 
 logger = logging.getLogger(__name__)
 

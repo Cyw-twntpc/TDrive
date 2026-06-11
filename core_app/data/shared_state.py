@@ -7,7 +7,7 @@ such as the Telegram client instance, authentication details, and active tasks.
 """
 import asyncio
 import threading
-from typing import Dict, Optional, Callable
+from typing import Dict, Optional, Callable, Any
 from telethon import TelegramClient
 
 
