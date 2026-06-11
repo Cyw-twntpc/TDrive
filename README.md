@@ -1,7 +1,5 @@
 # 🚀 TDrive: Telegram-Powered Unlimited Cloud Storage
 
-[**繁體中文 (Traditional Chinese)**](./docs/README_zh.md) | [**Developer Documentation**](./docs/DEVELOPER.md)
-
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/framework-PySide6-green.svg)](https://www.qt.io/qt-for-python)
@@ -29,7 +27,7 @@
 
 ## 🚀 Quick Start
 
-TDrive is distributed as a standalone executable. No Python environment setup is required.
+TDrive is distributed as a standalone executable. No Python environment setup or package installation is required.
 
 ### 1. Download
 Download the latest version of `TDrive.exe` from the [Releases](https://github.com/yourusername/TDrive/releases) page.
@@ -40,20 +38,29 @@ To use TDrive, you must obtain your own API credentials from Telegram:
 2.  Click on **"API development tools"**.
 3.  Fill out the form to create a new application (the title and short name can be anything, e.g., "MyTDrive").
 4.  You will receive an **`App api_id`** and **`App api_hash`**.
-5.  Launch `TDrive.exe` and enter these credentials when prompted.
+5.  Launch `TDrive.exe`, choose to login via QR Code or Phone Number, and enter these credentials when prompted.
 
 ---
 
 ## 🏗️ Technical Architecture
 
-TDrive uses a sophisticated "Stateless-to-Stateful" architecture to turn a messaging platform into a robust file system.
+TDrive uses a hybrid PySide6 (WebEngine) and Python asynchronous architecture, implementing a sophisticated "Stateless-to-Stateful" model to turn a messaging platform into a robust file system.
 
-### The "Cloud-as-Database" Model
-1.  **In-Memory DB**: All folder structures and file metadata are managed in a high-speed, in-memory SQLite database.
-2.  **Cloud Snapshots**: Periodically, the database state is dumped, compressed, encrypted, and "snapshotted" to a private Telegram group.
-3.  **Instant Recovery**: When logging in from any device, TDrive fetches the latest snapshot to instantly restore your entire drive directory.
+### 1. The "Cloud-as-Database" Model
+*   **In-Memory DB (`DatabaseHandler`)**: All folder structures and file metadata are managed in a high-speed, in-memory SQLite database. This ensures instant file queries and UI responsiveness.
+*   **Cloud Snapshots (`MetadataManager`)**: Periodically, and gracefully upon application exit, the entire database state is serialized, AES-GCM encrypted, and "snapshotted" to a private Telegram group.
+*   **Instant Recovery**: When logging in from any device, TDrive fetches the latest snapshot from the cloud to instantly restore your entire drive directory in milliseconds.
 
-### System Flow
+### 2. Frontend-Backend Bridge Layer
+The user interface is built with standard web technologies (HTML/JS/CSS) and runs within a Qt WebEngine view.
+*   **QWebChannel Integration**: Python exposes asynchronous backend services to JavaScript via the `bridge.py` slots.
+*   **Thread-Safe Async Handling**: To allow synchronous Qt UI signals to wait for Python `asyncio` tasks, the bridge employs custom local event loops (`QtEventLoop`) and an `_is_busy` mutex lock, preventing re-entrant async calls that could destabilize the state.
+
+### 3. Media Streaming & Transfer Controls
+*   **Local HTTP Proxy (`StreamingService`)**: For video playback, TDrive hosts a local `aiohttp` server supporting HTTP Range requests. When a media player (e.g., VLC) requests a video segment, `StreamBuffer` dynamically fetches and decrypts the precise MTProto chunks from Telegram, enabling instant seek functionality without downloading the entire file.
+*   **UI Progress Throttling (`_create_progress_adapter`)**: To prevent high-speed file transfers from overwhelming the UI render thread, progress updates from `TransferService` are throttled (maximum once per 0.03 seconds), while guaranteeing critical state transitions (e.g., 'completed', 'failed') are always emitted.
+
+### System Flow Diagram
 ```mermaid
 graph TD
     subgraph Frontend_WebUI [Web-Based Interface]
@@ -61,9 +68,9 @@ graph TD
         UI --> API_JS[ApiService]
     end
 
-    subgraph Python_Bridge [Async/Sync Bridge]
-        API_JS -- QWebChannel --> Bridge[bridge.py]
-        Bridge -- Signal/Slot --> MS[MainService]
+    subgraph Python_Bridge [PySide6 Bridge Layer]
+        API_JS -- QWebChannel --> Bridge[bridge.py Slots]
+        Bridge -- Signal/Slot --> MS[MainService Orchestrator]
     end
 
     subgraph Core_Services [Business Logic]
@@ -77,7 +84,6 @@ graph TD
         FS & TS --> DB[(In-Memory SQLite)]
         DB -- Snapshot --> MM[MetadataManager]
         MM -- AES-GCM --> TG_API[Telegram Comms]
-        DB -- Log --> TL[TransactionLogger]
     end
 
     subgraph Telegram_Cloud [Cloud Storage]
@@ -104,6 +110,3 @@ Your data privacy is our absolute priority:
 ## 📄 License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
----
-*For internal implementation details, please refer to [DEVELOPER.md](./DEVELOPER.md)*
