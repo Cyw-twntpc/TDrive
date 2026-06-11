@@ -99,7 +99,7 @@ class TDriveService:
                         "status": args[4],
                         "speed": args[5] if len(args) > 5 else 0,
                         "is_folder": kwargs.get("is_folder", False),
-                        "error_message": kwargs.get("message", ""),
+                        "error_code": kwargs.get("error_code", ""),
                         "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
                     
@@ -203,6 +203,7 @@ class TDriveService:
             
         url = self.streaming_service.get_stream_url(file_id)
         if not url:
+            logger.error("Failed to generate stream URL")
             return {"success": False}
             
         # Fetch file name

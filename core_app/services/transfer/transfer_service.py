@@ -145,7 +145,7 @@ class TransferService:
         if task_info:
             asyncio.run_coroutine_threadsafe(self._cleanup_task_data(task_info), self.shared_state.loop)
 
-        return {"success": True, "message": "任務已取消並開始背景清理。"}
+        return {"success": True}
 
     async def _cleanup_task_data(self, task_info: Dict[str, Any]):
         task_type = task_info.get('type')
@@ -287,7 +287,7 @@ class TransferService:
     def remove_transfer_history(self, task_id: str) -> Dict[str, Any]:
         self.controller.remove_task(task_id)
         self.watcher.remove_watch(task_id)
-        return {"success": True, "message": "歷史項目已移除。"}
+        return {"success": True}
 
     def get_transfer_config(self) -> Dict[str, Any]:
         return {

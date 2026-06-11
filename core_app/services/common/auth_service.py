@@ -188,11 +188,13 @@ class AuthService:
             event_callback({"status": "password_needed"})
         except Exception as e:
             logger.warning(f"Error during QR login wait: {e}")
-            event_callback({"status": "failed", "error": str(e)})
+            event_callback({"status": "failed", "error_code": ErrorCode.INTERNAL_ERROR})
 
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
+        if not client:
+            logger.error("用戶端尚未初始化。")
+            return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             sent_code = await client.send_code_request(phone_number)
             self.shared_state.phone = phone_number
@@ -207,7 +209,9 @@ class AuthService:
 
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
+        if not client:
+            logger.error("用戶端尚未初始化。")
+            return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
             self.shared_state.is_logged_in = True
@@ -224,7 +228,9 @@ class AuthService:
 
     async def submit_password(self, password: str) -> Dict[str, Any]:
         client = self.shared_state.client
-        if not client: return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
+        if not client:
+            logger.error("用戶端尚未初始化。")
+            return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             await client.sign_in(password=password)
             self.shared_state.is_logged_in = True
@@ -285,7 +291,9 @@ class AuthService:
 
     async def get_user_info(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
+        if not client:
+            logger.error("連線失敗")
+            return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
         try:
             me = await client.get_me()
             return {
@@ -300,7 +308,9 @@ class AuthService:
 
     async def get_user_avatar(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
-        if not client: return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
+        if not client:
+            logger.error("連線失敗")
+            return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
         
         avatar_path = './file/user_avatar.jpg'
         try:
@@ -330,8 +340,6 @@ class AuthService:
                 logger.info("Successfully cleaned up local file cache.")
         except Exception as e:
             logger.error(f"Error during local file cleanup on logout: {e}", exc_info=True)
-            return {"success": True, "warning": "登出完成，但無法清除部分本機檔案。"}
-        
         self.shared_state.client = None
         self.shared_state.api_id = None
         self.shared_state.api_hash = None

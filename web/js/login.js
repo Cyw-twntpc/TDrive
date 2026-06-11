@@ -121,6 +121,10 @@ const UIHandler = {
     },
     handleBackendError: (response) => {
         alert(response.error_code ? window.t('errors.' + response.error_code) : window.t('errors.UNKNOWN'));
+    },
+    getErrorMessage: (response) => {
+        if (!response) return window.t('errors.UNKNOWN');
+        return response.error_code ? window.t('errors.' + response.error_code) : window.t('errors.UNKNOWN');
     }
 };
 
@@ -241,8 +245,8 @@ function on_login_event(event) {
             if (hasQrBeenGeneratedSuccessfullyOnce) {
                 handleQrExpired();
             } else {
-                const errorMessage = event.error || window.t('errors.UNKNOWN');
-                showErrorScreen('Login Failed', errorMessage);
+                const errorMessage = event.error_code ? window.t('errors.' + event.error_code) : window.t('errors.UNKNOWN');
+                showErrorScreen(window.t('login.login_failed_title'), errorMessage);
             }
             break;
     }

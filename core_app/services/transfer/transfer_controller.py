@@ -172,17 +172,17 @@ class TransferController:
             current_status = self.db.get_main_task_status(main_task_id)
             self.db.update_main_task_status(main_task_id, current_status or "transferring", time.time())
 
-    def mark_sub_task_failed(self, main_task_id: str, sub_task_id: str, error_msg: str):
+    def mark_sub_task_failed(self, main_task_id: str, sub_task_id: str, error_code: str):
         self.db.update_sub_task_status(sub_task_id, "failed")
-        self.db.update_main_task_status(main_task_id, "failed", time.time(), error_msg=error_msg)
+        self.db.update_main_task_status(main_task_id, "failed", time.time(), error_code=error_code)
 
     # --- State Management ---
 
     def mark_paused(self, task_id: str):
         self.db.update_main_task_status(task_id, "paused", time.time())
 
-    def mark_failed(self, task_id: str, error_msg: str = ""):
-        self.db.update_main_task_status(task_id, "failed", time.time(), error_msg=error_msg)
+    def mark_failed(self, task_id: str, error_code: str = ""):
+        self.db.update_main_task_status(task_id, "failed", time.time(), error_code=error_code)
 
     def mark_resumed(self, task_id: str):
         self.db.update_main_task_status(task_id, "queued", time.time())

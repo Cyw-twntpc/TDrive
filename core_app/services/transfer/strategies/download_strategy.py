@@ -1,3 +1,4 @@
+from core_app.common.errors import ErrorCode
 import os
 import uuid
 import time
@@ -37,7 +38,7 @@ class DownloadStrategy(TransferStrategy):
                 # Fetch basic details from DB
                 file_details_basic = await loop.run_in_executor(None, self.context.db.get_file_details, db_id)
                 if not file_details_basic: 
-                    progress_callback(task_id, item['name'], 0, 0, 'failed', 0, message="找不到檔案資訊")
+                    progress_callback(task_id, item['name'], 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)
                     continue
 
                 # Fetch Chunks from Metadata Manager (Cloud Map)
@@ -152,7 +153,7 @@ class DownloadStrategy(TransferStrategy):
 
         except Exception as e:
             logger.error(f"Download folder failed: {e}", exc_info=True)
-            self.context.controller.mark_failed(main_task_id, str(e))
+            self.context.controller.mark_failed(main_task_id, ErrorCode.TASK_FAILED)
         finally:
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
@@ -245,7 +246,7 @@ class DownloadStrategy(TransferStrategy):
                 raise
             except Exception as e:
                 logger.error(f"Download failed {save_path}: {e}")
-                self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, str(e))
+                self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
             finally:
                 if sub_task_id in self.context.shared_state.active_tasks:
                     del self.context.shared_state.active_tasks[sub_task_id]
@@ -271,4 +272,5 @@ class DownloadStrategy(TransferStrategy):
             if os.path.exists(path):
                 try:
                     os.remove(path)
-                except OSError: pass
+                except OSError:
+                    pass

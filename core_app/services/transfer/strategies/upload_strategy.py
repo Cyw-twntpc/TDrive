@@ -1,3 +1,4 @@
+from core_app.common.errors import ErrorCode
 import os
 import time
 import uuid
@@ -107,7 +108,7 @@ class UploadStrategy(TransferStrategy):
             loop = asyncio.get_running_loop()
             client = await utils.ensure_client_connected(self.context.shared_state)
             if not client: 
-                self.context.controller.mark_failed(main_task_id, "Client disconnected")
+                self.context.controller.mark_failed(main_task_id, ErrorCode.CLIENT_NOT_CONNECTED)
                 progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message="連線失敗")
                 return
 
@@ -249,8 +250,8 @@ class UploadStrategy(TransferStrategy):
                     logger.info(f"Folder upload cancelled/paused: {main_task_id}")
                     raise
                 logger.error(f"Folder upload failed: {e}", exc_info=True)
-                self.context.controller.mark_failed(main_task_id, str(e))
-                progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message=str(e))
+                self.context.controller.mark_failed(main_task_id, ErrorCode.TASK_FAILED)
+                progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)
         finally:
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
@@ -281,7 +282,8 @@ class UploadStrategy(TransferStrategy):
             if sub_status == 'completed':
                 try:
                     last_uploaded = os.path.getsize(file_path)
-                except OSError: last_uploaded = 0
+                except OSError:
+                    last_uploaded = 0
             elif resume_context:
                 last_uploaded = len(resume_context) * fp.CHUNK_SIZE
         except Exception as e:
@@ -355,7 +357,7 @@ class UploadStrategy(TransferStrategy):
                             
                         return None
                     except errors.ItemAlreadyExistsError:
-                        self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, "檔案已存在")
+                        self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, ErrorCode.ITEM_ALREADY_EXISTS)
                         return
 
                 progress_callback(main_task_id, file_name, -1, -1, 'transferring', 0, is_folder=False)
@@ -448,7 +450,7 @@ class UploadStrategy(TransferStrategy):
                 raise
             except Exception as e:
                 logger.error(f"File upload error '{file_name}': {e}", exc_info=True)
-                self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, str(e))
+                self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
             finally:
                 if sub_task_id in self.context.shared_state.active_tasks:
                     del self.context.shared_state.active_tasks[sub_task_id]
@@ -509,7 +511,8 @@ class UploadStrategy(TransferStrategy):
                             elif artifact['artifact_type'] == 'folder':
                                 res_list = self.context.db.remove_folder(artifact['db_id'])
                                 results.extend(res_list)
-                        except Exception: pass
+                        except Exception:
+                            pass
                     return results
 
                 deletion_results = await self.context.shared_state.loop.run_in_executor(None, _cleanup_db_items)

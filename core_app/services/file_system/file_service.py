@@ -107,11 +107,13 @@ class FileService:
             info = await asyncio.to_thread(_get_file_preview_info)
             
             if not info:
+                logger.error("File not found")
                 return {"success": False}
 
             # 3. Download
             client = await utils.ensure_client_connected(self.shared_state)
             if not client:
+                logger.error("Client not connected")
                 return {"success": False}
 
             preview_bytes = None
@@ -150,6 +152,7 @@ class FileService:
                 b64_str = base64.b64encode(preview_bytes).decode('utf-8')
                 return {"success": True, "preview": b64_str}
             
+            logger.error("Download failed")
             return {"success": False}
 
         except Exception as e:
@@ -191,6 +194,7 @@ class FileService:
             
             return await asyncio.to_thread(_sync_db_op)
         except errors.PathNotFoundError:
+            logger.error("資料夾不存在。")
             return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND}
         except Exception as e:
             logger.error(f"Error getting folder contents for id {folder_id}: {e}", exc_info=True)
@@ -228,19 +232,20 @@ class FileService:
                 logger.info(f"Streaming search completed for request_id: {request_id}.")
             except Exception as e:
                 logger.error(f"Critical error in background search thread: {e}", exc_info=True)
-                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '搜尋過程中發生嚴重錯誤。', 'error_code': errors.ErrorCode.INTERNAL_ERROR}}
+                error_payload = {'request_id': request_id, 'type': 'error', 'data': {'error_code': errors.ErrorCode.INTERNAL_ERROR}}
                 result_signal_emitter(error_payload)
 
         try:
             await asyncio.to_thread(db_search_sync)
         except Exception as e:
             logger.error(f"Failed to start background search thread: {e}", exc_info=True)
-            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'message': '無法啟動背景搜尋任務。', 'error_code': errors.ErrorCode.ASYNC_CALL_FAILED}}
+            error_payload = {'request_id': request_id, 'type': 'error', 'data': {'error_code': errors.ErrorCode.ASYNC_CALL_FAILED}}
             result_signal_emitter(error_payload)
 
     async def create_folder(self, parent_id: int, folder_name: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
         
         try:
@@ -263,6 +268,7 @@ class FileService:
     async def rename_item(self, item_id: int, new_name: str, item_type: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
             
         try:
@@ -288,6 +294,7 @@ class FileService:
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:
@@ -303,8 +310,10 @@ class FileService:
             return {"success": True}
         
         except errors.PathNotFoundError as e:
+            logger.error(f"Exception: {e}")
             return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND}
         except errors.InvalidOperationError as e:
+            logger.warning(f"Invalid operation during soft delete: {e}")
             return {"success": False, "error_code": errors.ErrorCode.INVALID_OPERATION}
         except Exception as e:
             logger.error(f"Error soft deleting items: {e}", exc_info=True)
@@ -313,6 +322,7 @@ class FileService:
     async def restore_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:
@@ -331,6 +341,7 @@ class FileService:
             return {"success": True}
 
         except errors.PathNotFoundError as e:
+            logger.error(f"Exception: {e}")
             return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND}
         except Exception as e:
             logger.error(f"Error restoring items: {e}", exc_info=True)
@@ -339,9 +350,11 @@ class FileService:
     async def delete_items_permanently(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         if not self.shared_state.metadata_manager:
+             logger.error("MetadataManager 未初始化。")
              return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
 
         try:
@@ -399,9 +412,11 @@ class FileService:
     async def empty_trash(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         if not self.shared_state.metadata_manager:
+             logger.error("MetadataManager 未初始化。")
              return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
 
         try:
@@ -473,6 +488,7 @@ class FileService:
     async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
+            logger.error("連線失敗，請檢查網路或重新登入。")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:
@@ -494,10 +510,13 @@ class FileService:
             return {"success": True}
 
         except errors.PathNotFoundError as e:
+            logger.error(f"Exception: {e}")
             return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND}
         except errors.ItemAlreadyExistsError as e:
+            logger.warning(f"Item already exists during move: {e}")
             return {"success": False, "error_code": errors.ErrorCode.ITEM_ALREADY_EXISTS}
         except errors.InvalidNameError as e: # Catch circular dependency error
+            logger.error(f"Exception: {e}")
             return {"success": False, "error_code": errors.ErrorCode.INVALID_OPERATION}
         except Exception as e:
             logger.error(f"Unknown error moving items: {e}", exc_info=True)
