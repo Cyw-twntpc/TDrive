@@ -1,0 +1,41 @@
+class TDriveError(Exception):
+    """Base exception class."""
+
+class PathNotFoundError(TDriveError):
+    """Path does not exist."""
+
+class ItemAlreadyExistsError(TDriveError):
+    """Item already exists."""
+
+class InvalidNameError(TDriveError):
+    """Invalid name used."""
+
+class InvalidOperationError(TDriveError):
+    """Operation is not allowed."""
+
+class ErrorCode:
+    """Standardized error codes for frontend communication."""
+    PATH_NOT_FOUND = "PATH_NOT_FOUND"
+    ITEM_ALREADY_EXISTS = "ITEM_ALREADY_EXISTS"
+    INVALID_OPERATION = "INVALID_OPERATION"
+    DB_READ_FAILED = "DB_READ_FAILED"
+    CONNECTION_FAILED = "CONNECTION_FAILED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    FLOOD_WAIT_ERROR = "FLOOD_WAIT_ERROR"
+    TASK_FAILED = "TASK_FAILED"
+    ASYNC_CALL_FAILED = "ASYNC_CALL_FAILED"
+    SEARCH_FAILED = "SEARCH_FAILED"
+    BUSY = "BUSY"
+    
+    # Auth & Initialization
+    INVALID_API_CREDENTIALS = "INVALID_API_CREDENTIALS"
+    CLIENT_NOT_CONNECTED = "CLIENT_NOT_CONNECTED"
+    QR_GENERATION_FAILED = "QR_GENERATION_FAILED"
+    PHONE_NUMBER_INVALID = "PHONE_NUMBER_INVALID"
+    SEND_CODE_FAILED = "SEND_CODE_FAILED"
+    INVALID_VERIFICATION_CODE = "INVALID_VERIFICATION_CODE"
+    INVALID_PASSWORD = "INVALID_PASSWORD"
+    INITIALIZATION_FAILED = "INITIALIZATION_FAILED"
+    DRIVE_INITIALIZATION_TIMEOUT = "DRIVE_INITIALIZATION_TIMEOUT"
+    DRIVE_INITIALIZATION_FAILED = "DRIVE_INITIALIZATION_FAILED"
+    AVATAR_NOT_FOUND = "AVATAR_NOT_FOUND"

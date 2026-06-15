@@ -218,6 +218,9 @@
         "no_transfers": "No active transfers"
     },
     "dialog": {
+        "info_name": "Name",
+        "info_phone": "Phone",
+        "info_username": "Username",
         "settings_restored": "Settings Restored",
         "settings_restored_msg": "Default settings have been restored.",
         "help_title": "Help Center",

@@ -5,18 +5,17 @@ import sys
 import ctypes
 import asyncio
 import logging
-from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 from qasync import QEventLoop
 
-from core_app.common import logger_config
-from core_app.main_service import TDriveService
-from core_app.ui.windows.login_window import LoginWindow
-from core_app.ui.windows.main_window import MainWindow
-from core_app.ui.windows.splash_screen import SplashScreen
+from core_app.core import logger_config
+from core_app.presentation.web_bridge.app_service import TDriveService
+from core_app.presentation.native_ui.windows.login_window import LoginWindow
+from core_app.presentation.native_ui.windows.main_window import MainWindow
+from core_app.presentation.native_ui.windows.splash_screen import SplashScreen
 
 logger = logging.getLogger(__name__)
 

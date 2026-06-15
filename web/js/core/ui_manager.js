@@ -83,11 +83,11 @@ const UIManager = {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
             const { name, phone, username } = AppState.userInfo;
-            contentEl.innerHTML = `<p><strong data-i18n="dialog.info_name"></strong> <span>${name}</span></p>
-                                   <p><strong data-i18n="dialog.info_phone"></strong> <span>${phone}</span></p>
-                                   <p><strong data-i18n="dialog.info_username"></strong> <span>${username}</span></p>`;
+            contentEl.innerHTML = `<p><strong data-i18n="dialog.info_name">${window.t('dialog.info_name')}</strong> <span>${name}</span></p>
+                                   <p><strong data-i18n="dialog.info_phone">${window.t('dialog.info_phone')}</strong> <span>${phone}</span></p>
+                                   <p><strong data-i18n="dialog.info_username">${window.t('dialog.info_username')}</strong> <span>${username}</span></p>`;
         } else {
-            contentEl.innerHTML = window.t('file_list.loading');
+            contentEl.innerHTML = `<div data-i18n="file_list.loading">${window.t('file_list.loading')}</div>`;
         }
     },
 

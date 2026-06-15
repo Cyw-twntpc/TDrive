@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderListAndSyncManager() {
         FileListHandler.sortAndRender(AppState);
-        TransferManager.updateMainFileListUI();
+        TransferView.updateMainFileListUI();
     }
     
     function updateNavState() {
@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateNavState();
         
         if (pageId === 'transfer') {
-             TransferManager.updateAllUI();
+             TransferView.updateAllUI();
         } else if (pageId === 'trash') {
              TrashHandler.loadTrashItems();
         }
@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function navigateTo(folderId) {
-        if (AppState.isSearching) ActionHandler.exitSearchMode();
+        if (AppState.isSearching) ActionController.exitSearchMode();
 
         if (!AppState.folderMap.has(folderId)) {
             await UIModals.showAlert(window.t('dialog.err_title'), window.t('dialog.target_not_found'), 'btn-primary');
@@ -136,8 +136,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         FileTreeHandler.compareAndSwitch(targetPathIds, AppState);
-        FileTreeHandler.updateSelection(AppState);
-        FileListHandler.updateBreadcrumb(AppState, navigateTo);
+        FileTreeView.updateSelection(AppState);
+        FileListView.updateBreadcrumb(AppState, navigateTo);
 
         ApiService.getFolderContents(folderId).then(response => {
             if (!response || !response.success) {
@@ -160,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function refreshAll() {
         if (AppState.isSearching) {
-            ActionHandler.handleSearch(AppState.searchTerm);
+            ActionController.handleSearch(AppState.searchTerm);
             return;
         }
 
@@ -202,22 +202,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setupEventListeners() {
-        document.getElementById('logout-btn').addEventListener('click', () => ActionHandler.handleLogout());
+        document.getElementById('logout-btn').addEventListener('click', () => ActionController.handleLogout());
         
         document.getElementById('new-upload-file-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
-            ActionHandler.handleFileUpload();
+            ActionController.handleFileUpload();
         });
         document.getElementById('new-upload-folder-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
-            ActionHandler.handleFolderUpload();
+            ActionController.handleFolderUpload();
         });
         document.getElementById('new-create-folder-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
-            ActionHandler.handleNewFolder();
+            ActionController.handleNewFolder();
         });
 
         document.querySelectorAll('.nav-item').forEach(item => {
@@ -248,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
         searchScopeToggle.addEventListener('click', () => {
             AppState.searchScope = (AppState.searchScope === 'all') ? 'current' : 'all';
             searchScopeToggle.textContent = (AppState.searchScope === 'all') ? window.t('main.search_scope_all') : window.t('main.search_scope_current');
-            if (AppState.isSearching) ActionHandler.handleSearch(AppState.searchTerm);
+            if (AppState.isSearching) ActionController.handleSearch(AppState.searchTerm);
         });
 
         document.getElementById('view-toggle-btn')?.addEventListener('click', (e) => {
@@ -270,25 +270,25 @@ document.addEventListener('DOMContentLoaded', () => {
         let searchTimeout;
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => ActionHandler.handleSearch(e.target.value), 300);
+            searchTimeout = setTimeout(() => ActionController.handleSearch(e.target.value), 300);
         });    
 
-        fileListBodyEl.addEventListener('item-rename', e => ActionHandler.handleRename(e.detail));
+        fileListBodyEl.addEventListener('item-rename', e => ActionController.handleRename(e.detail));
         fileListBodyEl.addEventListener('item-move', e => {
             document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
             e.target.closest('.file-item')?.classList.add('selected');
             AppState.selectedItems = [e.detail];
-            ActionHandler.handleMove();
+            ActionController.handleMove();
         });
         fileListBodyEl.addEventListener('item-download', e => {
             document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
             e.target.closest('.file-item')?.classList.add('selected');
             AppState.selectedItems = [e.detail];
-            ActionHandler.handleDownload();
+            ActionController.handleDownload();
         });
         fileListBodyEl.addEventListener('item-delete', e => {
             AppState.selectedItems = [e.detail];
-            ActionHandler.handleDelete();
+            ActionController.handleDelete();
         });
         fileListBodyEl.addEventListener('folder-dblclick', e => navigateTo(e.detail.id));
         
@@ -297,7 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         document.addEventListener('play-video', (e) => {
-            ActionHandler.handlePlayVideo(e.detail.id);
+            ActionController.handlePlayVideo(e.detail.id);
         });
     }
 
@@ -355,7 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         console.log("Successfully connected to backend signals.");
 
-        ActionHandler.init({
+        ActionController.init({
             appState: AppState, apiService: ApiService, uiModals: UIModals,
             transferManager: TransferManager, refreshAllCallback: refreshAll,
             navigateToCallback: navigateTo, uiManager: UIManager
@@ -399,16 +399,16 @@ function setupGlobalDragAndDrop() {
         e.stopPropagation();
 
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            ActionHandler.handleFileUpload(e.dataTransfer.files);
+            ActionController.handleFileUpload(e.dataTransfer.files);
         }
     });
 }
 // Auto-refresh dynamic views on language change
 document.addEventListener('i18nChanged', () => {
-    if (typeof ActionHandler !== 'undefined' && ActionHandler._appState) {
+    if (typeof ActionController !== 'undefined' && ActionController._appState) {
         // Re-render file list using cached data
-        if (typeof FileListHandler !== 'undefined' && ActionHandler._appState.currentFolderContents) {
-            FileListHandler.sortAndRender(ActionHandler._appState);
+        if (typeof FileListHandler !== 'undefined' && ActionController._appState.currentFolderContents) {
+            FileListHandler.sortAndRender(ActionController._appState);
         }
         // Re-render trash list using cached data
         if (typeof TrashHandler !== 'undefined' && TrashHandler._trashItems && TrashHandler._trashItems.length > 0) {
