@@ -8,7 +8,6 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,6 @@ class FolderService:
         self.file_repo = FileRepository(self.db)
         self.folder_repo = FolderRepository(self.db)
         self.trash_repo = TrashRepository(self.db)
-        self.map_repo = MapRepository(self.db)
 
     def get_folder_tree_data(self) -> List[Dict[str, Any]]:
         logger.info("Fetching flat folder tree from the database.")

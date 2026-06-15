@@ -37,13 +37,13 @@ class DatabaseConnection:
         If db_path is provided (e.g. for checking old file DBs), we create a new connection.
         """
         if db_path and db_path != ':memory:':
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, cached_statements=0)
             conn.row_factory = sqlite3.Row
             conn.execute('PRAGMA journal_mode=WAL;')
             return conn
 
         if self._connection is None:
-            self._connection = sqlite3.connect(':memory:', check_same_thread=False)
+            self._connection = sqlite3.connect(':memory:', check_same_thread=False, cached_statements=0)
             self._connection.row_factory = sqlite3.Row
             self._connection.execute('PRAGMA foreign_keys = ON')
             self._connection.execute('PRAGMA journal_mode=WAL;')
@@ -66,16 +66,6 @@ class DatabaseConnection:
         conn = self._get_conn()
         cursor = conn.cursor()
 
-        # Map Files Table (New Middleware Table)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS map_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            msg_id INTEGER, -- Cloud Message ID
-            folder_id INTEGER, -- If aggregated, belongs to this folder
-            ref_count INTEGER DEFAULT 0 -- Garbage collection helper
-        )
-        ''')
-
         # Folder hierarchy table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS folders (
@@ -86,9 +76,7 @@ class DatabaseConnection:
             modif_date REAL,
             thumbs_db_msg_id INTEGER,
             thumbs_db_hash TEXT,
-            active_map_id INTEGER, -- Points to map_files.id (Current aggregated map for writing)
             FOREIGN KEY (parent_id) REFERENCES folders (id) ON DELETE CASCADE,
-            FOREIGN KEY (active_map_id) REFERENCES map_files (id) ON DELETE SET NULL,
             UNIQUE (parent_id, name)
         )
         ''')
@@ -101,8 +89,7 @@ class DatabaseConnection:
             size REAL NOT NULL,
             preview_msg_id INTEGER,
             preview_hash TEXT,
-            map_id INTEGER, -- Reference to map_files table
-            FOREIGN KEY (map_id) REFERENCES map_files (id) ON DELETE SET NULL
+            map_msg_id INTEGER
         )
         ''')
 
@@ -185,7 +172,6 @@ class DatabaseConnection:
             WHERE item_type='folder' AND item_id=new.id;
         END;
         ''')
-
         # Triggers for Files (file_folder_map)
         cursor.execute('''
         CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON file_folder_map BEGIN

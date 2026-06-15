@@ -179,8 +179,7 @@ class UploadStrategy(TransferStrategy):
                             self._upload_single_file(
                                 client, main_task_id, sub_task_id,
                                 file_path, target_parent_id,
-                                progress_callback,
-                                defer_map_processing=True
+                                progress_callback
                             )
                         )
                     else:
@@ -197,46 +196,13 @@ class UploadStrategy(TransferStrategy):
                 
                 results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
                 
-                logger.info(f"Processing batch map updates for task {main_task_id}...")
-                
-                transfers_by_folder = defaultdict(dict)
-                
                 for res in results:
                     if isinstance(res, Exception):
                         logger.error(f"Sub-task failed: {res}")
                         continue
-                    if res is None:
-                        continue 
-                    
-                    fid, chunks, sub_id = res
-                    if not chunks: continue
-                    
-                    file_details = None
-                    task_data = self.context.controller.get_task(main_task_id)
-                    if task_data and task_data.get('is_folder'):
-                        child = task_data.get('child_tasks', {}).get(sub_id)
-                        if child:
-                            file_details = child.get('file_details')
-                    
-                    def _get_fid_parent():
-                        conn = self.context.db._get_conn()
-                        cur = conn.cursor()
-                        cur.execute("SELECT folder_id FROM file_folder_map WHERE file_id = ?", (fid,))
-                        row = cur.fetchone()
-                        return row['folder_id'] if row else None
-                    
-                    folder_id = await loop.run_in_executor(None, _get_fid_parent)
-                    if folder_id:
-                        transfers_by_folder[folder_id][fid] = {'c': chunks, 'm': file_details or {}}
-
-                for folder_id, file_map in transfers_by_folder.items():
-                    if file_map:
-                        await self.context.metadata_manager.batch_process_file_transfers(
-                            client, self.context.shared_state.group_id, self.context.shared_state.api_id,
-                            folder_id, file_map
-                        )
                 
-                self.context._trigger_folder_refresh(list(transfers_by_folder.keys()) + [parent_id])
+                affected_folders = list(set(path_to_remote_id.values())) + [parent_id]
+                self.context._trigger_folder_refresh(affected_folders)
                 
                 await self._finalize_thumbnails(client, main_task_id)
                 
@@ -262,8 +228,7 @@ class UploadStrategy(TransferStrategy):
     async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
                                   file_path: str, parent_id: int, 
                                   progress_callback: Callable,
-                                  resume_context: List = None, pre_calculated_hash: str = None,
-                                  defer_map_processing: bool = False):
+                                  resume_context: List = None, pre_calculated_hash: str = None):
         file_name = os.path.basename(file_path)
         
         def chunk_cb(part_num, msg_id, part_hash):
@@ -404,7 +369,7 @@ class UploadStrategy(TransferStrategy):
                             parent_id, file_name, time.time(), 
                             file_hash=original_file_hash, size=total_size, 
                             preview_msg_id=preview_msg_id, preview_hash=preview_hash,
-                            map_id=None 
+                            map_msg_id=None 
                         )
                     except (sqlite3.IntegrityError, errors.ItemAlreadyExistsError):
                         # Race condition detected: File was added by another task concurrently.
@@ -423,9 +388,6 @@ class UploadStrategy(TransferStrategy):
                 
                 self.context.controller.mark_sub_task_completed(main_task_id, sub_task_id)
 
-                if defer_map_processing:
-                    return (fid, split_files_info, sub_task_id)
-                    
                 task_data = self.context.controller.get_task(main_task_id)
                 file_details = None
                 if task_data:

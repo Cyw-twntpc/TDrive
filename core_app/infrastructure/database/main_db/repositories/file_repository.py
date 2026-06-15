@@ -18,7 +18,7 @@ class FileRepository(BaseRepository):
     def add_file(self, folder_id: int, name: str, modif_date_ts: float, 
                  file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
                  preview_msg_id: int | None = None, preview_hash: str | None = None,
-                 map_id: int | None = None):
+                 map_msg_id: int | None = None):
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
 
@@ -41,13 +41,10 @@ class FileRepository(BaseRepository):
                         raise ValueError("file_hash and size are required when creating new file content.")
                     
                     self._execute_write(cursor,
-                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_id) VALUES (?, ?, ?, ?, ?)",
-                        (file_hash, size, preview_msg_id, preview_hash, map_id), score=1
+                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_msg_id) VALUES (?, ?, ?, ?, ?)",
+                        (file_hash, size, preview_msg_id, preview_hash, map_msg_id), score=1
                     )
                     target_file_id = cursor.lastrowid
-                    
-                    if map_id is not None:
-                        self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count + 1 WHERE id = ?", (map_id,), score=0)
                 else:
                     cursor.execute("SELECT size FROM files WHERE id = ?", (target_file_id,))
                     row = cursor.fetchone()
@@ -69,10 +66,9 @@ class FileRepository(BaseRepository):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash,
-                   mp.msg_id as map_msg_id, f.map_id as map_ref_id
+                   f.map_msg_id as map_msg_id
             FROM file_folder_map m
             JOIN files f ON m.file_id = f.id
-            JOIN map_files mp ON f.map_id = mp.id
             WHERE m.id = ?
         """, (map_id,))
         row = cursor.fetchone()
@@ -86,9 +82,14 @@ class FileRepository(BaseRepository):
             "hash": row['hash'],
             "preview_msg_id": row['preview_msg_id'],
             "preview_hash": row['preview_hash'],
-            "map_msg_id": row['map_msg_id'],
-            "map_ref_id": row['map_ref_id']
+            "map_msg_id": row['map_msg_id']
         }
+
+    def update_file_map_msg_id(self, file_id: int, msg_id: int | None):
+        with self._db_lock:
+            conn = self._get_conn()
+            with conn:
+                self._execute_write(conn, "UPDATE files SET map_msg_id = ? WHERE id = ?", (msg_id, file_id), score=1)
 
     def rename_file(self, map_id: int, new_name: str):
         if not self._is_valid_item_name(new_name): raise errors.InvalidNameError(f"Invalid name '{new_name}'")

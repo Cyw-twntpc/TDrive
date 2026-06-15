@@ -14,7 +14,6 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,6 @@ class FileService:
                     FileRepository(db)
                     FolderRepository(db)
                     TrashRepository(db)
-                    MapRepository(db)
                     conn = db._get_conn()
                     cur = conn.cursor()
                     cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
@@ -64,7 +62,6 @@ class FileService:
                     FileRepository(db)
                     FolderRepository(db)
                     TrashRepository(db)
-                    MapRepository(db)
                     conn = db._get_conn()
                     cur = conn.cursor()
                     # Get map_id (id) and content_id (file_id) for items in this folder
@@ -106,7 +103,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 conn = db._get_conn()
                 
                 cur = conn.cursor()
@@ -174,6 +170,46 @@ class FileService:
             logger.error(f"Error fetching preview: {e}", exc_info=True)
             return {"success": False}
 
+    async def get_file_extended_details(self, file_id: int) -> Dict[str, Any]:
+        try:
+            def _get_db_info():
+                db = DatabaseConnection()
+                conn = db._get_conn()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT f.map_msg_id, f.id as real_file_id 
+                    FROM file_folder_map m 
+                    JOIN files f ON m.file_id = f.id 
+                    WHERE m.id = ?
+                """, (file_id,))
+                return cur.fetchone()
+                
+            row = await asyncio.to_thread(_get_db_info)
+            if not row or not row['map_msg_id']:
+                return {"success": False}
+            
+            real_file_id = row['real_file_id']
+            map_msg_id = row['map_msg_id']
+            
+            client = await utils.ensure_client_connected(self.shared_state)
+            if not client:
+                return {"success": False}
+            
+            map_data = await self.shared_state.metadata_manager.fetch_map_file(
+                client, self.shared_state.group_id, 
+                self.shared_state.api_id, map_msg_id
+            )
+            
+            if str(real_file_id) in map_data:
+                file_info = map_data[str(real_file_id)]
+                if isinstance(file_info, dict) and 'm' in file_info:
+                    return {"success": True, "metadata": file_info['m']}
+            
+            return {"success": False}
+        except Exception as e:
+            logger.error(f"Error fetching extended details for file {file_id}: {e}", exc_info=True)
+            return {"success": False}
+
     async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
         logger.info(f"Fetching contents for folder_id: {folder_id} from database.")
         try:
@@ -182,7 +218,6 @@ class FileService:
                 FileRepository(db)
                 folder_repo = FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 contents = folder_repo.get_folder_contents(folder_id)
                 
                 # Integrate active uploads from TransferDB
@@ -229,7 +264,6 @@ class FileService:
                 FileRepository(db)
                 folder_repo = FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 return folder_repo.get_folder_contents_recursive(folder_id)
             
             return await asyncio.to_thread(_sync_db_op)
@@ -280,7 +314,6 @@ class FileService:
                 FileRepository(db)
                 folder_repo = FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 folder_repo.add_folder(parent_id, folder_name)
             
             await asyncio.to_thread(_sync_create)
@@ -307,7 +340,6 @@ class FileService:
                 file_repo = FileRepository(db)
                 folder_repo = FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 if item_type == 'folder':
                     folder_repo.rename_folder(item_id, new_name)
                 else:
@@ -337,7 +369,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 for item in items:
                     trash_repo.soft_delete_item(item['id'], item['type'])
             
@@ -369,7 +400,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 restored_names = []
                 for item in items:
                     name = trash_repo.restore_item(item['id'], item['type'])
@@ -406,7 +436,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 deletion_results = []
                 for item in items:
                     item_id, item_type = item['id'], item['type']
@@ -471,7 +500,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 return trash_repo.empty_trash()
 
             deletion_results = await asyncio.to_thread(_sync_empty)
@@ -508,7 +536,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 return trash_repo.get_trashed_items()
             
             return await asyncio.to_thread(_sync_get)
@@ -528,7 +555,6 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                MapRepository(db)
                 return trash_repo.get_expired_items()
 
             expired_items = await self.shared_state.loop.run_in_executor(None, _get_expired)
@@ -555,7 +581,6 @@ class FileService:
                 file_repo = FileRepository(db)
                 folder_repo = FolderRepository(db)
                 TrashRepository(db)
-                MapRepository(db)
                 count = 0
                 for item in items:
                     item_id, item_type = item['id'], item['type']

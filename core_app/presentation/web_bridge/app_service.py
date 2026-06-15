@@ -8,7 +8,6 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
 from core_app.infrastructure.telegram.metadata_manager import MetadataManager
 
 from core_app.application.auth.auth_service import AuthService
@@ -43,7 +42,6 @@ class TDriveService:
         self.file_repo = FileRepository(self.db_handler)
         self.folder_repo = FolderRepository(self.db_handler)
         self.trash_repo = TrashRepository(self.db_handler)
-        self.map_repo = MapRepository(self.db_handler) # Singleton, In-Memory
         self.metadata_manager = MetadataManager(self.db_handler, self._shared_state)
         self._shared_state.metadata_manager = self.metadata_manager
         
@@ -271,7 +269,6 @@ class TDriveService:
         self.file_repo = FileRepository(self.db_handler)
         self.folder_repo = FolderRepository(self.db_handler)
         self.trash_repo = TrashRepository(self.db_handler)
-        self.map_repo = MapRepository(self.db_handler) # Re-init? 
         # Since it's Singleton, we might need a reset method if we want to clear data.
         # But restarting app is standard for logout.
         return await self._auth_service.perform_logout()
@@ -289,6 +286,9 @@ class TDriveService:
 
     async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
         return await self._file_service.get_folder_contents_recursive(folder_id)
+
+    async def get_file_extended_details(self, file_id: int) -> Dict[str, Any]:
+        return await self._file_service.get_file_extended_details(file_id)
 
     async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter: Callable, request_id: str):
         await self._file_service.search_db_items(base_folder_id, search_term, result_signal_emitter, request_id)

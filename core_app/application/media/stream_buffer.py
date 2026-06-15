@@ -10,7 +10,6 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,6 @@ class StreamBuffer:
         FileRepository(self._db)
         FolderRepository(self._db)
         TrashRepository(self._db)
-        MapRepository(self._db)
         
         # Locks for concurrent access to same chunk
         self._locks: Dict[str, asyncio.Lock] = {}

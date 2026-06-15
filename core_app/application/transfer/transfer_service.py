@@ -17,7 +17,7 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
+
 from core_app.infrastructure.local_fs import file_processor as fp
 
 # Import Strategies
@@ -35,7 +35,7 @@ class TransferService:
         self.file_repo = FileRepository(self.db)
         self.folder_repo = FolderRepository(self.db)
         self.trash_repo = TrashRepository(self.db)
-        self.map_repo = MapRepository(self.db)
+
         self.metadata_manager = metadata_manager
         self.controller = TransferController()
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.folder_repo, status_change_callback=lambda x: None)

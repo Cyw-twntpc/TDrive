@@ -241,53 +241,8 @@ class Bridge(QObject):
     @Slot(int, result=str)
     def get_file_extended_details(self, file_id: int) -> str:
         import json
-        async def _get_details():
-            try:
-                # 1. Look up the file in the DB to find its map_id and real file data id
-                conn = self._service.db_handler._get_conn()
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT f.map_id, f.id as real_file_id 
-                    FROM file_folder_map m 
-                    JOIN files f ON m.file_id = f.id 
-                    WHERE m.id = ?
-                """, (file_id,))
-                row = cur.fetchone()
-                if not row or not row['map_id']:
-                    return json.dumps({"success": False})
-                
-                real_file_id = row['real_file_id']
-                
-                # 2. Fetch the map file
-                map_info = self._service.db_handler.get_map_file_info(row['map_id'])
-                if not map_info or not map_info['msg_id']:
-                    return json.dumps({"success": False})
-                
-                from core_app.core.utils import ensure_client_connected
-                client = await ensure_client_connected(self._service._shared_state)
-                if not client:
-                    return json.dumps({"success": False})
-                
-                map_data = await self._service.metadata_manager.fetch_map_file(
-                    client, self._service._shared_state.group_id, 
-                    self._service._shared_state.api_id, map_info['msg_id']
-                )
-                
-                if str(real_file_id) in map_data:
-                    file_info = map_data[str(real_file_id)]
-                    if isinstance(file_info, dict) and 'm' in file_info:
-                        return json.dumps({"success": True, "metadata": file_info['m']})
-                
-                return json.dumps({"success": False})
-            except Exception as e:
-                import traceback
-                logger.error(f"Error fetching extended details for file {file_id}: {traceback.format_exc()}")
-                return json.dumps({"success": False})
-
-        res_dict = self._wait_for_async(_get_details())
-        if isinstance(res_dict, str):
-            return res_dict
-        return json.dumps({"success": False})
+        res_dict = self._async_call(self._service.get_file_extended_details(file_id))
+        return json.dumps(res_dict)
 
     @Slot(int, str, result=dict)
     def create_folder(self, parent_id, folder_name):

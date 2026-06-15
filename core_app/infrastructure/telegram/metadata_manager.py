@@ -1,5 +1,7 @@
 import json
 import gzip
+import zlib
+import base64
 import logging
 import asyncio
 import io
@@ -14,11 +16,10 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
-from core_app.infrastructure.database.main_db.repositories.map_repository import MapRepository
 # Avoid circular import if SharedState is only for typing
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .shared_state import SharedState
+    from core_app.core.shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,6 @@ class MetadataManager:
     def __init__(self, db_handler: DatabaseConnection, shared_state: 'SharedState'):
         self.db = db_handler
         self.shared_state = shared_state
-        self.map_repo = MapRepository(self.db)
         self.folder_repo = FolderRepository(self.db)
         self.file_repo = FileRepository(self.db)
         self.trash_repo = TrashRepository(self.db)
@@ -42,6 +42,7 @@ class MetadataManager:
         
         # Folder-level locks for map file updates
         self._folder_locks = defaultdict(asyncio.Lock)
+        self._last_snapshot_msg_id = None
         
         # Setup SyncManager callback
         # SyncManager is initialized in DatabaseConnection
@@ -88,6 +89,7 @@ class MetadataManager:
             conn = self.db._get_conn()
             
             if snapshot_msg:
+                self._last_snapshot_msg_id = snapshot_msg.id
                 logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
                 
                 # Download encrypted blob
@@ -120,7 +122,7 @@ class MetadataManager:
                         self.db._create_tables()
                         
                         # 4. Smart Import: Execute INSERTs only for allowed core tables
-                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'map_files', 'trash_metadata'}
+                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata'}
                         sql_dump = sql_dump.replace('\r\n', '\n')
                         statements = sql_dump.split(';\n')
                         
@@ -227,11 +229,15 @@ class MetadataManager:
                 if hasattr(self.db, 'transaction_logger'):
                     self.db.transaction_logger.clear()
                 
-                # Cleanup old snapshots
+                # Cleanup old snapshots reliably using in-memory tracker
                 try:
-                    # Search logic for deletion remains useful to clean up old clutter
+                    if self._last_snapshot_msg_id and self._last_snapshot_msg_id != msg.id:
+                        await client.delete_messages(group_id, [self._last_snapshot_msg_id])
+                    self._last_snapshot_msg_id = msg.id
+                    
+                    # Fallback Search logic for deletion remains useful to clean up old clutter
                     old_msgs = await client.get_messages(group_id, limit=10, search='#tdrive_db_snapshot')
-                    ids_to_del = [m.id for m in old_msgs if m.id != msg.id]
+                    ids_to_del = [m.id for m in old_msgs if m.id != msg.id and m.id != self._last_snapshot_msg_id]
                     if ids_to_del:
                         await client.delete_messages(group_id, ids_to_del)
                 except: pass
@@ -250,12 +256,19 @@ class MetadataManager:
             msgs = await client.get_messages(group_id, ids=[map_msg_id])
             if not msgs or not msgs[0]: return {}
             
-            enc_data = await msgs[0].download_media(file=bytes)
+            msg = msgs[0]
             key = cr.generate_key_from_api_id(str(api_id))
             
-            decrypted = cr.decrypt(enc_data, key)
-            decompressed = gzip.decompress(decrypted)
-            json_data = json.loads(decompressed.decode('utf-8'))
+            if msg.text and msg.text.startswith("TDM:"):
+                encoded_data = msg.text[4:]
+                compressed_data = base64.b64decode(encoded_data)
+                decrypted = cr.decrypt(compressed_data, key)
+                json_data = json.loads(zlib.decompress(decrypted).decode('utf-8'))
+            else:
+                enc_data = await msg.download_media(file=bytes)
+                decrypted = cr.decrypt(enc_data, key)
+                decompressed = gzip.decompress(decrypted)
+                json_data = json.loads(decompressed.decode('utf-8'))
             
             # Normalize structure for backward compatibility
             for k, v in json_data.items():
@@ -277,15 +290,22 @@ class MetadataManager:
         Compresses, Encrypts (API_ID Key), Uploads Map. Returns msg_id.
         """
         try:
-            json_str = json.dumps(map_data)
-            compressed = gzip.compress(json_str.encode('utf-8'))
+            json_str = json.dumps(map_data, separators=(',', ':'))
+            compressed = zlib.compress(json_str.encode('utf-8'))
             key = cr.generate_key_from_api_id(str(api_id))
             encrypted = cr.encrypt(compressed, key)
             
-            f = io.BytesIO(encrypted)
-            f.name = "map.bin"
+            b64_encoded = base64.b64encode(encrypted).decode('utf-8')
+            text_payload = f"TDM:{b64_encoded}"
             
-            msg = await client.send_file(group_id, file=f, force_document=True)
+            if len(text_payload) < 4000:
+                msg = await client.send_message(group_id, text_payload)
+            else:
+                legacy_compressed = gzip.compress(json_str.encode('utf-8'))
+                legacy_encrypted = cr.encrypt(legacy_compressed, key)
+                f = io.BytesIO(legacy_encrypted)
+                f.name = "map.bin"
+                msg = await client.send_file(group_id, file=f, force_document=True)
             
             # Cache the result immediately
             if len(self._map_cache) >= self._cache_size:
@@ -304,15 +324,14 @@ class MetadataManager:
         conn = self.db._get_conn()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT mp.msg_id 
-            FROM files f 
-            JOIN map_files mp ON f.map_id = mp.id 
-            WHERE f.id = ?
+            SELECT map_msg_id 
+            FROM files 
+            WHERE id = ?
         """, (file_id,))
         row = cursor.fetchone()
         
-        if not row: return []
-        map_msg_id = row['msg_id']
+        if not row or not row['map_msg_id']: return []
+        map_msg_id = row['map_msg_id']
         
         map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
         file_data = map_data.get(str(file_id))
@@ -322,156 +341,77 @@ class MetadataManager:
 
     # --- Transfer Integration Logic ---
 
-    async def batch_process_file_transfers(self, client, group_id: int, api_id: int, 
-                                           folder_id: int, file_data_map: Dict[int, Dict]):
-        """
-        Batch processes multiple files for a single folder to minimize IO.
-        """
-        async with self._folder_locks[folder_id]:
-            active_map_id = self.map_repo.get_folder_active_map(folder_id)
-            
-            current_map_data = {}
-            current_cloud_msg_id = None
-            current_db_map_id = active_map_id
-            
-            # Load active map
-            if active_map_id:
-                map_info = self.map_repo.get_map_file_info(active_map_id)
-                if map_info and map_info['msg_id']:
-                    current_map_data = await self.fetch_map_file(client, group_id, api_id, map_info['msg_id'])
-                    current_cloud_msg_id = map_info['msg_id']
-                else:
-                    current_db_map_id = None
-            
-            total_chunks = sum(len(v.get('c', [])) if isinstance(v, dict) else len(v) for v in current_map_data.values())
-            files_in_current_batch = []
 
-            async def _flush():
-                nonlocal files_in_current_batch
-                
-                if not files_in_current_batch and not current_map_data: return
-
-                new_msg_id = await self.save_map_file(client, group_id, api_id, current_map_data)
-                
-                saved_db_map_id = current_db_map_id
-                if saved_db_map_id:
-                    self.map_repo.update_map_file_msg_id(saved_db_map_id, new_msg_id)
-                    if current_cloud_msg_id and current_cloud_msg_id != new_msg_id:
-                        try: await client.delete_messages(group_id, [current_cloud_msg_id])
-                        except: pass
-                        self._map_cache.pop(current_cloud_msg_id, None)
-                else:
-                    saved_db_map_id = self.map_repo.create_map_file_record(new_msg_id, folder_id)
-                    self.map_repo.set_folder_active_map(folder_id, saved_db_map_id)
-                
-                # Update DB for files in this batch
-                conn = self.db._get_conn()
-                for fid in files_in_current_batch:
-                    # Update map_id linkage for the file
-                    self.db._execute_write(conn.cursor(), 
-                                           "UPDATE files SET map_id = ? WHERE id = ?", 
-                                           (saved_db_map_id, fid), score=1)
-                    
-                    self.map_repo.increment_map_ref(saved_db_map_id)
-                
-                files_in_current_batch = []
-                return saved_db_map_id
-
-            for fid, data_dict in file_data_map.items():
-                chunks = data_dict.get('c', [])
-                if total_chunks + len(chunks) > 1000:
-                    await _flush()
-                    # Rotate
-                    current_map_data = {}
-                    current_cloud_msg_id = None
-                    current_db_map_id = None
-                    total_chunks = 0
-                
-                current_map_data[str(fid)] = data_dict
-                files_in_current_batch.append(fid)
-                total_chunks += len(chunks)
-            
-            await _flush()
 
     async def process_file_transfer(self, client, group_id: int, api_id: int, 
                                     folder_id: int, file_id: int, chunks: List[List], metadata: Dict = None):
         """
-        Saves file chunk mapping and metadata to a Map File, updating active map.
+        Saves file chunk mapping and metadata to an independent Map File.
         """
-        await self.batch_process_file_transfers(client, group_id, api_id, folder_id, {file_id: {'c': chunks, 'm': metadata or {}}})
+        map_data = {str(file_id): {'c': chunks, 'm': metadata or {}}}
+        new_msg_id = await self.save_map_file(client, group_id, api_id, map_data)
+        self.file_repo.update_file_map_msg_id(file_id, new_msg_id)
 
     async def handle_deletion(self, client, group_id: int, api_id: int, deletion_results: List[Dict]):
         """
-        Process deletion results from DB.
+        Process deletion results from DB. Independent Maps mean we must fetch the map, 
+        extract chunk and preview IDs, and delete them along with the map itself.
         """
-        # Group by map_id to minimize downloads
-        tasks_by_map = {} # { map_id: { "msg_id": 123, "files_to_remove": [fid1, fid2] } }
+        messages_to_delete = set()
         maps_to_delete_cloud_ids = set()
         
         for res in deletion_results:
             if not res.get('orphan'): continue
             
-            mid = res['map_id']
-            
-            # Case 1: The entire map is deleted (ref_count <= 0)
-            if res.get('map_msg_id_to_delete'):
-                cloud_msg_id = res['map_msg_id_to_delete']
+            cloud_msg_id = res.get('map_msg_id_to_delete')
+            if cloud_msg_id:
                 maps_to_delete_cloud_ids.add(cloud_msg_id)
+                messages_to_delete.add(cloud_msg_id)
                 self._map_cache.pop(cloud_msg_id, None)
-                # No need to process file removals for this map since it's gone
-                continue
 
-            # Case 2: Partial removal from map
-            if mid not in tasks_by_map:
-                info = self.map_repo.get_map_file_info(mid)
-                if info and info['msg_id']:
-                    tasks_by_map[mid] = {"msg_id": info['msg_id'], "files": []}
-            
-            if mid in tasks_by_map:
-                tasks_by_map[mid]["files"].append(str(res['file_id']))
-
-        # Execute Cloud Deletions for dead maps
         if maps_to_delete_cloud_ids:
             try:
-                await client.delete_messages(group_id, list(maps_to_delete_cloud_ids))
-                logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} empty map files from cloud.")
+                for map_msg_id in maps_to_delete_cloud_ids:
+                    try:
+                        map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
+                        for file_key, file_info in map_data.items():
+                            if isinstance(file_info, dict):
+                                if 'c' in file_info:
+                                    # Handle chunk lists (list of lists)
+                                    for chunk_batch in file_info['c']:
+                                        if isinstance(chunk_batch, list):
+                                            if len(chunk_batch) >= 2:
+                                                messages_to_delete.add(chunk_batch[1])
+                                            elif len(chunk_batch) == 1:
+                                                messages_to_delete.add(chunk_batch[0])
+                                        else:
+                                            messages_to_delete.add(chunk_batch)
+                                            
+                                # Check for preview inside 'm' just in case
+                                if 'm' in file_info and isinstance(file_info['m'], dict):
+                                    m_data = file_info['m']
+                                    if 'p' in m_data and m_data['p']:
+                                        messages_to_delete.add(m_data['p'])
+                                    # Legacy fallback: some old maps had c inside m
+                                    if 'c' in m_data:
+                                        for chunk_batch in m_data['c']:
+                                            if isinstance(chunk_batch, list):
+                                                if len(chunk_batch) >= 2:
+                                                    messages_to_delete.add(chunk_batch[1])
+                                                elif len(chunk_batch) == 1:
+                                                    messages_to_delete.add(chunk_batch[0])
+                                            else:
+                                                messages_to_delete.add(chunk_batch)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch map {map_msg_id} during deletion: {e}")
+
+                if messages_to_delete:
+                    msgs_list = list(messages_to_delete)
+                    for i in range(0, len(msgs_list), 100):
+                        await client.delete_messages(group_id, msgs_list[i:i+100])
+                    logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} independent map files and {len(msgs_list) - len(maps_to_delete_cloud_ids)} content chunks from cloud.")
             except Exception as e:
-                logger.error(f"Failed to delete empty map files: {e}")
-
-        # Process Updates (Partial removals)
-        for map_id, task in tasks_by_map.items():
-            msg_id = task['msg_id']
-            
-            # Skip if this map was already marked for full deletion (defensive check)
-            if msg_id in maps_to_delete_cloud_ids: continue
-
-            files_to_remove = task['files']
-            
-            # Fetch
-            map_data = await self.fetch_map_file(client, group_id, api_id, msg_id)
-            if not map_data: continue
-            
-            # Modify
-            dirty = False
-            for fid in files_to_remove:
-                if fid in map_data:
-                    del map_data[fid]
-                    dirty = True
-            
-            if not dirty: continue
-            
-            if not map_data:
-                # Empty Map -> Delete Cloud Message (Should be handled by DB ref_count logic, but double check)
-                await client.delete_messages(group_id, [msg_id])
-                self._map_cache.pop(msg_id, None)
-                self.map_repo.update_map_file_msg_id(map_id, None) 
-            else:
-                # Re-upload
-                new_msg_id = await self.save_map_file(client, group_id, api_id, map_data)
-                self.map_repo.update_map_file_msg_id(map_id, new_msg_id)
-                
-                await client.delete_messages(group_id, [msg_id])
-                self._map_cache.pop(msg_id, None)
+                logger.error(f"Failed to delete map files and chunks: {e}")
 
     async def update_folder_thumbnails(self, client, group_id: int, folder_id: int, new_thumbs_map: Dict[int, bytes], gallery_manager: Any):
         """

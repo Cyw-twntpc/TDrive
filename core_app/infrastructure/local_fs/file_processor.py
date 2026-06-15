@@ -89,3 +89,13 @@ def prepare_download_file(file_path: str, expected_size: int):
     except IOError as e:
         logger.error(f"Failed to prepare download file '{file_path}': {e}")
         raise
+
+def write_chunk_to_file(file_path: str, offset: int, data: bytes):
+    """Writes a byte chunk to a specific offset in a file (Thread-safe)."""
+    try:
+        with open(file_path, 'r+b') as f_out:
+            f_out.seek(offset)
+            f_out.write(data)
+    except IOError as e:
+        logger.error(f"Failed to write chunk to {file_path} at offset {offset}: {e}")
+        raise

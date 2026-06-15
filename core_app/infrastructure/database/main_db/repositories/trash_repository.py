@@ -18,7 +18,7 @@ class TrashRepository(BaseRepository):
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT m.folder_id, m.file_id, f.size, f.preview_msg_id, f.map_id 
+                    SELECT m.folder_id, m.file_id, f.size, f.preview_msg_id, f.map_msg_id 
                     FROM file_folder_map m
                     JOIN files f ON m.file_id = f.id
                     WHERE m.id = ?
@@ -31,7 +31,7 @@ class TrashRepository(BaseRepository):
                 folder_id = map_info['folder_id']
                 file_id = map_info['file_id']
                 size = map_info['size']
-                used_map_id = map_info['map_id']
+                used_map_msg_id = map_info['map_msg_id']
 
                 self._execute_write(cursor, "DELETE FROM file_folder_map WHERE id = ?", (map_id,), score=5)
                 self._execute_write(cursor, "DELETE FROM trash_metadata WHERE item_id = ? AND item_type = 'file'", (map_id,), score=0)
@@ -44,7 +44,7 @@ class TrashRepository(BaseRepository):
                 result = {
                     "orphan": False, 
                     "file_id": file_id, 
-                    "map_id": used_map_id,
+                    "map_msg_id": used_map_msg_id,
                     "parent_id": folder_id,
                     "msg_ids_to_delete": [],
                     "map_msg_id_to_delete": None
@@ -57,16 +57,8 @@ class TrashRepository(BaseRepository):
                     
                     self._execute_write(cursor, "DELETE FROM files WHERE id = ?", (file_id,), score=1)
                     
-                    # Decrement map ref count
-                    self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (used_map_id,), score=0)
-
-                    # Check if map is dead
-                    cursor.execute("SELECT ref_count, msg_id FROM map_files WHERE id = ?", (used_map_id,))
-                    map_row = cursor.fetchone()
-                    if map_row and map_row['ref_count'] <= 0:
-                        self._execute_write(cursor, "DELETE FROM map_files WHERE id = ?", (used_map_id,), score=1)
-                        if map_row['msg_id']:
-                             result["map_msg_id_to_delete"] = map_row['msg_id']
+                    if used_map_msg_id:
+                        result["map_msg_id_to_delete"] = used_map_msg_id
 
                 return result
 
@@ -109,7 +101,7 @@ class TrashRepository(BaseRepository):
                 if msgs_to_delete:
                     results.append({"msg_ids_to_delete": msgs_to_delete, "parent_id": folder_info['parent_id']})
                 
-                cursor.execute(f"SELECT m.file_id, f.size, f.preview_msg_id, f.map_id FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.folder_id IN ({f_placeholders})", all_folder_ids)
+                cursor.execute(f"SELECT m.file_id, f.size, f.preview_msg_id, f.map_msg_id FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.folder_id IN ({f_placeholders})", all_folder_ids)
                 files_info = cursor.fetchall()
                 
                 # Delete maps (Path mappings)
@@ -123,29 +115,18 @@ class TrashRepository(BaseRepository):
                 # Check orphans & Cleanup Map Files
                 for finfo in files_info:
                     fid = finfo['file_id']
-                    mid = finfo['map_id']
+                    map_msg_id = finfo['map_msg_id']
 
                     cursor.execute("SELECT 1 FROM file_folder_map WHERE file_id = ?", (fid,))
                     if not cursor.fetchone():
                         # It's an orphan
                         self._execute_write(cursor, "DELETE FROM files WHERE id = ?", (fid,), score=1)
-                        self._execute_write(cursor, "UPDATE map_files SET ref_count = ref_count - 1 WHERE id = ?", (mid,), score=0)
-                        
-                        # Check Map Liveness
-                        cursor.execute("SELECT ref_count, msg_id FROM map_files WHERE id = ?", (mid,))
-                        map_row = cursor.fetchone()
-                        
-                        map_msg_id_del = None
-                        if map_row and map_row['ref_count'] <= 0:
-                            self._execute_write(cursor, "DELETE FROM map_files WHERE id = ?", (mid,), score=1)
-                            map_msg_id_del = map_row['msg_id']
                         
                         res = {
                             "orphan": True,
                             "file_id": fid,
-                            "map_id": mid,
                             "msg_ids_to_delete": [],
-                            "map_msg_id_to_delete": map_msg_id_del
+                            "map_msg_id_to_delete": map_msg_id
                         }
                         if finfo['preview_msg_id']:
                             res['msg_ids_to_delete'].append(finfo['preview_msg_id'])
