@@ -1,6 +1,7 @@
 import asyncio
 import time
 import logging
+import random
 from typing import List, Callable, Set
 import os
 
@@ -84,6 +85,9 @@ class TransferDispatcher:
                 try:
                     cb = get_progress_callback(part_num)
                     part_hash = await loop.run_in_executor(None, cr.hash_bytes, part_bytes)
+                    
+                    # Humanized delay to prevent Telegram Anti-Spam FloodWait
+                    await asyncio.sleep(random.uniform(0.1, 0.5))
                     
                     message = await telegram_comms.upload_single_chunk(client, group_id, part_bytes, cb)
                     

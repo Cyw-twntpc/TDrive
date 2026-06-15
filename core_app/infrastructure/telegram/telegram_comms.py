@@ -87,11 +87,15 @@ async def get_group_id(client, group_name: str = "TDrive") -> int | None:
         return None
 
 async def upload_single_chunk(client, group_id: int, part_bytes: bytes, progress_callback: Callable | None = None):
-    """Uploads a single byte sequence with backoff and retry."""
+    """Uploads a single byte sequence with backoff and retry, disguised as an mp4."""
     async def _upload_chunk():
+        import io
+        f = io.BytesIO(part_bytes)
+        f.name = "chunk.txt"
         return await client.send_file(
             group_id,
-            file=part_bytes,
+            file=f,
+            force_document=True,
             progress_callback=progress_callback
         )
     return await _retry_with_backoff(_upload_chunk)
@@ -120,9 +124,13 @@ async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original
             part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_chunk)
             
             async def _upload_chunk():
+                import io
+                f = io.BytesIO(encrypted_chunk)
+                f.name = "chunk.txt"
                 return await client.send_file(
                     group_id,
-                    file=encrypted_chunk,
+                    file=f,
+                    force_document=True,
                     progress_callback=lambda c, t: progress_callback(c, total_size) if progress_callback else None
                 )
 
