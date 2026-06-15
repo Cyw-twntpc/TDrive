@@ -47,7 +47,8 @@ const TrashView = {
             el.innerHTML = `
                 <div class="trash-col-name">
                     <div class="trash-col-main">
-                        <i class="${iconClass}"></i>
+                        <i class="${iconClass} list-thumb-icon"></i>
+                        <img class="list-thumb-img hidden" draggable="false" />
                         <span title="${item.name}">${item.name}</span>
                     </div>
                     <div class="trash-col-actions">

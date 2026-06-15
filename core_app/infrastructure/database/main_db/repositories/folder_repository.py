@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Optional
 from core_app.core import errors
 from .base_repository import BaseRepository
 
@@ -178,7 +179,77 @@ class FolderRepository(BaseRepository):
         with self._db_lock:
             conn = self._get_conn()
             with conn:
-                self._execute_write(conn, "UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?", (msg_id, hash_val, folder_id), score=1)
+                self._execute_write(conn.cursor(), "UPDATE folders SET thumbs_db_msg_id = ?, thumbs_db_hash = ? WHERE id = ?", 
+                                    (msg_id, hash_val, folder_id), score=1)
+
+    def get_fragmented_folders(self, folder_ids: list[int]) -> list[int]:
+        """
+        Evaluates the given folders and returns a list of folder IDs that meet the fragmentation condition:
+        1. Fragment sources > 3 OR
+        2. Fragmented files >= 50% of total files
+        """
+        if not folder_ids:
+            return []
+            
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        placeholders = ','.join(['?'] * len(folder_ids))
+        
+        # We use a single query grouping by folder_id
+        query = f"""
+            SELECT m.folder_id, 
+                   COUNT(f.id) as total_files,
+                   COUNT(f.thumb_src_folder_id) as frag_count,
+                   COUNT(DISTINCT f.thumb_src_folder_id) as source_count
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            WHERE m.folder_id IN ({placeholders})
+            GROUP BY m.folder_id
+        """
+        cursor.execute(query, folder_ids)
+        
+        fragmented = []
+        for row in cursor.fetchall():
+            f_id = row['folder_id']
+            total = row['total_files']
+            frag_count = row['frag_count']
+            source_count = row['source_count']
+            
+            if total == 0:
+                continue
+                
+            if source_count > 3 or (frag_count / total) >= 0.5:
+                fragmented.append(f_id)
+                
+        return fragmented
+
+    def mark_files_thumb_src(self, file_ids: list, src_folder_id: Optional[int]):
+        """Marks or clears the thumb_src_folder_id for moved files."""
+        if not file_ids: return
+        with self._db_lock:
+            conn = self._get_conn()
+            with conn:
+                placeholders = ",".join("?" for _ in file_ids)
+                query = f"UPDATE files SET thumb_src_folder_id = ? WHERE id IN ({placeholders})"
+                params = [src_folder_id] + file_ids
+                self._execute_write(conn, query, tuple(params), score=1)
+
+    def get_thumb_src_folders(self, file_ids: list) -> dict:
+        """Returns a mapping of src_folder_id -> list of file_ids"""
+        if not file_ids: return {}
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in file_ids)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id, thumb_src_folder_id FROM files WHERE id IN ({placeholders}) AND thumb_src_folder_id IS NOT NULL", file_ids)
+        
+        result = {}
+        for row in cursor.fetchall():
+            src = row['thumb_src_folder_id']
+            if src not in result:
+                result[src] = []
+            result[src].append(row['id'])
+        return result
 
     def check_folder_exists(self, folder_id: int) -> bool:
         conn = self._get_conn()

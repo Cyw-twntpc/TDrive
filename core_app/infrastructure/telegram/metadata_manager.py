@@ -468,8 +468,16 @@ class MetadataManager:
                         # 5. Update Metadata
                         self.folder_repo.update_folder_thumbs_info(folder_id, new_msg_id, db_hash)
                         
-                        # 6. Delete Old Cloud Message
-                        if old_msg_id and old_msg_id != new_msg_id:
+                        # 6. Clear thumb_src_folder_id ONLY for files currently in this folder.
+                        # Since this folder is uploading a new package, all files in it will naturally
+                        # be included. Thus, they no longer need to rely on their old source folders.
+                        cur.execute('''
+                            UPDATE files SET thumb_src_folder_id = NULL 
+                            WHERE id IN (SELECT file_id FROM file_folder_map WHERE folder_id = ?)
+                        ''', (folder_id,))
+                        conn.commit()
+                        # 7. Delete Old Cloud Message
+                        if old_msg_id and old_msg_id != new_msg_id and old_msg_id != 0:
                             try:
                                 await client.delete_messages(group_id, [old_msg_id])
                             except Exception as e:

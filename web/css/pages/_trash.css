@@ -226,6 +226,10 @@
 
 .trash-col-main i.folder-icon { color: var(--primary-color); }
 
+.trash-col-main .list-thumb-img {
+    margin-right: 0;
+}
+
 .trash-col-main span {
     white-space: nowrap;
     overflow: hidden;

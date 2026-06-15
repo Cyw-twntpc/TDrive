@@ -89,7 +89,8 @@ class DatabaseConnection:
             size REAL NOT NULL,
             preview_msg_id INTEGER,
             preview_hash TEXT,
-            map_msg_id INTEGER
+            map_msg_id INTEGER,
+            thumb_src_folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
         )
         ''')
 

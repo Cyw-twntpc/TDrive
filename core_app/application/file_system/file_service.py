@@ -15,63 +15,85 @@ from core_app.infrastructure.database.main_db.repositories.file_repository impor
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
 
+from core_app.application.file_system.defrag_worker import DefragWorker
+
 logger = logging.getLogger(__name__)
 
 class FileService:
     def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager'):
         self.shared_state = shared_state
         self.gallery_manager = gallery_manager
+        self.defrag_worker = DefragWorker(shared_state, self)
+        self.defrag_worker.start()
 
     # --- Gallery Integration ---
 
-    async def get_thumbnails(self, folder_id: int) -> Dict[str, Any]:
+    async def get_thumbnails(self, folder_id: int, return_file_id_keys: bool = False) -> Dict[str, Any]:
         """Returns base64 thumbnails for the folder. Downloads DB if not in memory."""
         try:
-            if not self.gallery_manager.has_db(folder_id):
-                # Try to load from cloud
-                def _get_db_info():
-                    db = DatabaseConnection()
-                    FileRepository(db)
-                    FolderRepository(db)
-                    TrashRepository(db)
-                    conn = db._get_conn()
-                    cur = conn.cursor()
-                    cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
-                    return cur.fetchone()
-
-                db_info = await asyncio.to_thread(_get_db_info)
+            # 1. Get all file_ids in this folder and their map_ids
+            def _get_folder_files_info():
+                db = DatabaseConnection()
+                conn = db._get_conn()
+                cur = conn.cursor()
+                cur.execute('''
+                    SELECT m.id as map_id, m.file_id, f.thumb_src_folder_id 
+                    FROM file_folder_map m
+                    JOIN files f ON m.file_id = f.id 
+                    WHERE m.folder_id = ?
+                ''', (folder_id,))
                 
-                if db_info and db_info['thumbs_db_msg_id']:
+                # Also include files from Recycle Bin or global map logic if necessary
+                # But to correctly handle Trash thumbnails, we should use the item mapping.
+                # Actually, Trash is just a folder.
+                return cur.fetchall()
+
+            files_info = await asyncio.to_thread(_get_folder_files_info)
+            if not files_info:
+                return {"success": True, "thumbnails": {}}
+
+            file_ids = [row['file_id'] for row in files_info]
+            id_map = {row['file_id']: row['map_id'] for row in files_info}
+            
+            # 2. Local-First Cache Retrieval
+            thumbs = self.gallery_manager.get_thumbnails(file_ids)
+            
+            # 3. Check for missing thumbnails and download their packages
+            missing_file_ids = set(file_ids) - {int(k) for k in thumbs.keys()}
+            if missing_file_ids:
+                # Find which source folders we need to download from
+                # If thumb_src_folder_id is NULL, the thumbnail is in the CURRENT folder's package
+                needed_folders = {row['thumb_src_folder_id'] if row['thumb_src_folder_id'] else folder_id for row in files_info if row['file_id'] in missing_file_ids}
+                
+                if needed_folders:
+                    def _get_package_cloud_info(f_ids):
+                        db = DatabaseConnection()
+                        conn = db._get_conn()
+                        cur = conn.cursor()
+                        placeholders = ",".join("?" for _ in f_ids)
+                        cur.execute(f"SELECT id, thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id IN ({placeholders})", list(f_ids))
+                        return cur.fetchall()
+                    
+                    cloud_packages = await asyncio.to_thread(_get_package_cloud_info, needed_folders)
+                    
                     client = await utils.ensure_client_connected(self.shared_state)
                     if client:
-                        logger.info(f"Downloading thumbs.db for folder {folder_id}...")
-                        db_bytes = await telegram_comms.download_data_as_bytes(
-                            client, self.shared_state.group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
-                        )
-                        if db_bytes:
-                            self.gallery_manager.load_thumbs_db_from_bytes(folder_id, db_bytes)
-            
-            thumbs = self.gallery_manager.get_folder_thumbnails(folder_id)
-            
-            # [Fix] Convert Content IDs to Map IDs for frontend consistency.
-            # The frontend uses Map ID (file_folder_map.id) for data-id attributes,
-            # but thumbs.db stores Content ID (files.id). We must map them.
-            if thumbs:
-                def _get_id_mapping():
-                    db = DatabaseConnection()
-                    FileRepository(db)
-                    FolderRepository(db)
-                    TrashRepository(db)
-                    conn = db._get_conn()
-                    cur = conn.cursor()
-                    # Get map_id (id) and content_id (file_id) for items in this folder
-                    cur.execute("SELECT id, file_id FROM file_folder_map WHERE folder_id = ?", (folder_id,))
-                    return {row['file_id']: row['id'] for row in cur.fetchall()}
+                        for pkg in cloud_packages:
+                            if pkg['thumbs_db_msg_id'] and pkg['thumbs_db_msg_id'] != 0:
+                                logger.info(f"Downloading thumbs package for folder {pkg['id']} (msg_id: {pkg['thumbs_db_msg_id']})...")
+                                db_bytes = await telegram_comms.download_data_as_bytes(
+                                    client, self.shared_state.group_id, [pkg['thumbs_db_msg_id']], pkg['thumbs_db_hash']
+                                )
+                                if db_bytes:
+                                    self.gallery_manager.import_package_bytes(db_bytes)
+                        
+                        # Re-fetch from local cache after importing missing packages
+                        thumbs = self.gallery_manager.get_thumbnails(file_ids)
 
-                # Run DB query in thread pool
-                id_map = await asyncio.to_thread(_get_id_mapping)
-                
-                # Re-key the thumbnails dictionary
+            # 4. Convert Content IDs (file_id) to Map IDs (file_folder_map.id) for frontend
+            if return_file_id_keys:
+                mapped_thumbs = thumbs
+            else:
                 mapped_thumbs = {}
                 for content_id_str, b64_data in thumbs.items():
                     try:
@@ -81,8 +103,8 @@ class FileService:
                             mapped_thumbs[str(map_id)] = b64_data
                     except ValueError:
                         pass
-                
-                thumbs = mapped_thumbs
+            
+            thumbs = mapped_thumbs
 
             logger.info(f"FileService returning {len(thumbs)} thumbnails for {folder_id} (Mapped IDs)")
             return {"success": True, "thumbnails": thumbs}
@@ -369,10 +391,38 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
+                
+                old_parent_ids = set()
+                conn = db._get_conn()
+                cursor = conn.cursor()
+                
                 for item in items:
-                    trash_repo.soft_delete_item(item['id'], item['type'])
+                    item_id, item_type = item['id'], item['type']
+                    if item_type == 'folder':
+                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['parent_id'] is not None:
+                            old_parent_ids.add(row['parent_id'])
+                    else:
+                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['folder_id'] is not None:
+                            old_parent_ids.add(row['folder_id'])
+                    
+                    trash_repo.soft_delete_item(item_id, item_type)
+                    
+                cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
+                rb_row = cursor.fetchone()
+                rb_id = rb_row['id'] if rb_row else None
+                
+                return list(old_parent_ids), rb_id
             
-            await asyncio.to_thread(_sync_soft_delete)
+            old_parent_ids, recycle_bin_id = await asyncio.to_thread(_sync_soft_delete)
+            
+            folders_to_evaluate = old_parent_ids
+            if recycle_bin_id:
+                folders_to_evaluate.append(recycle_bin_id)
+            self.defrag_worker.evaluate_folders(folders_to_evaluate)
             
             logger.info(f"Successfully moved {len(items)} items to Recycle Bin.")
             # Adaptive sync handled by DatabaseConnection
@@ -400,13 +450,40 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
+                
+                new_parent_ids = set()
+                conn = db._get_conn()
+                cursor = conn.cursor()
+                
                 restored_names = []
                 for item in items:
-                    name = trash_repo.restore_item(item['id'], item['type'])
+                    item_id, item_type = item['id'], item['type']
+                    name = trash_repo.restore_item(item_id, item_type)
                     restored_names.append(name)
-                return restored_names
+                    
+                    if item_type == 'folder':
+                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['parent_id'] is not None:
+                            new_parent_ids.add(row['parent_id'])
+                    else:
+                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['folder_id'] is not None:
+                            new_parent_ids.add(row['folder_id'])
+                            
+                cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
+                rb_row = cursor.fetchone()
+                rb_id = rb_row['id'] if rb_row else None
+                            
+                return restored_names, list(new_parent_ids), rb_id
             
-            await asyncio.to_thread(_sync_restore)
+            restored_names, new_parent_ids, recycle_bin_id = await asyncio.to_thread(_sync_restore)
+            
+            folders_to_evaluate = new_parent_ids
+            if recycle_bin_id:
+                folders_to_evaluate.append(recycle_bin_id)
+            self.defrag_worker.evaluate_folders(folders_to_evaluate)
             
             logger.info(f"Successfully restored {len(items)} items.")
             # Adaptive sync handled by DatabaseConnection
@@ -580,18 +657,33 @@ class FileService:
                 db = DatabaseConnection()
                 file_repo = FileRepository(db)
                 folder_repo = FolderRepository(db)
-                TrashRepository(db)
-                count = 0
+                
+                # Fetch old parent IDs before moving
+                old_parent_ids = set()
+                conn = db._get_conn()
+                cursor = conn.cursor()
+                
                 for item in items:
                     item_id, item_type = item['id'], item['type']
                     if item_type == 'folder':
+                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['parent_id'] is not None:
+                            old_parent_ids.add(row['parent_id'])
                         folder_repo.move_folder(item_id, target_folder_id)
                     else:
+                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row['folder_id'] is not None:
+                            old_parent_ids.add(row['folder_id'])
                         file_repo.move_file(item_id, target_folder_id)
-                    count += 1
-                return count
+                return list(old_parent_ids)
 
-            await asyncio.to_thread(_sync_move)
+            old_parent_ids = await asyncio.to_thread(_sync_move)
+            
+            # Evaluate fragmentation for origin and destination folders
+            folders_to_evaluate = old_parent_ids + [target_folder_id]
+            self.defrag_worker.evaluate_folders(folders_to_evaluate)
                 
             # Adaptive sync handled by DatabaseConnection
             return {"success": True}

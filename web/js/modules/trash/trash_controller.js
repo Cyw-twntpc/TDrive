@@ -82,6 +82,10 @@ const TrashHandler = {
 
                 AppState.trashItems = allItems;
                 TrashHandler.sortAndRender();
+
+                if (response.files && response.files.length > 0 && response.recycle_bin_id) {
+                    TrashHandler.loadThumbnails(response.recycle_bin_id);
+                }
             } else {
                 console.error("Invalid trash response:", response);
                 UIManager.handleBackendError(response || { message: window.t('trash.empty_text') });
@@ -91,6 +95,45 @@ const TrashHandler = {
             UIManager.handleBackendError({ message: window.t('dialog.sys_err_retry') });
         } finally {
             UIManager.stopProgress();
+        }
+    },
+
+    async loadThumbnails(recycleBinId) {
+        if (!recycleBinId) return;
+        try {
+            const result = await ApiService.getThumbnails(recycleBinId);
+            if (result && result.success && result.thumbnails) {
+                const entries = Object.entries(result.thumbnails);
+                
+                // Batch process DOM updates using requestAnimationFrame
+                const BATCH_SIZE = 20;
+                let currentIndex = 0;
+
+                const processBatch = () => {
+                    const endIndex = Math.min(currentIndex + BATCH_SIZE, entries.length);
+                    for (let i = currentIndex; i < endIndex; i++) {
+                        const [fileId, b64] = entries[i];
+                        const src = `data:image/jpeg;base64,${b64}`;
+                        
+                        const listItem = TrashView.listBody.querySelector(`.trash-item[data-id="${fileId}"][data-type="file"]`);
+                        const listImg = listItem ? listItem.querySelector('.list-thumb-img') : null;
+
+                        if (listImg) {
+                            listImg.src = src;
+                            listImg.classList.remove('hidden');
+                            const listIcon = listItem.querySelector('.list-thumb-icon');
+                            if (listIcon) listIcon.classList.add('hidden');
+                        }
+                    }
+                    currentIndex = endIndex;
+                    if (currentIndex < entries.length) {
+                        requestAnimationFrame(processBatch);
+                    }
+                };
+                requestAnimationFrame(processBatch);
+            }
+        } catch (e) {
+            console.error("Failed to load trash thumbnails:", e);
         }
     },
 

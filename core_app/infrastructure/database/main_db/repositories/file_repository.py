@@ -127,6 +127,14 @@ class FileRepository(BaseRepository):
                 self._check_name_collision(cursor, new_parent_id, info['name'], 'file')
                 self._execute_write(cursor, "UPDATE file_folder_map SET folder_id = ?, modif_date = ? WHERE id = ?", 
                                (new_parent_id, time.time(), map_id), score=5)
+                
+                # Mark source folder so thumbnails don't break during move gap
+                # ONLY update if it's NULL (meaning this is the first move since the package was created)
+                cursor.execute("SELECT thumb_src_folder_id FROM files WHERE id = ?", (info['file_id'],))
+                curr_src = cursor.fetchone()['thumb_src_folder_id']
+                if curr_src is None:
+                    self._execute_write(cursor, "UPDATE files SET thumb_src_folder_id = ? WHERE id = ?", (old_parent_id, info['file_id']), score=1)
+                
                 self._update_folder_size_recursively(cursor, old_parent_id, -info['size'])
                 self._update_folder_size_recursively(cursor, new_parent_id, info['size'])
 

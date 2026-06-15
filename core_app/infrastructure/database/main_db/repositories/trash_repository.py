@@ -93,6 +93,12 @@ class TrashRepository(BaseRepository):
 
                 f_placeholders = ','.join(['?'] * len(all_folder_ids))
                 
+                # Get thumbs_db_msg_id for all descendant folders
+                cursor.execute(f"SELECT thumbs_db_msg_id FROM folders WHERE id IN ({f_placeholders})", all_folder_ids)
+                for row in cursor.fetchall():
+                    if row['thumbs_db_msg_id'] and row['thumbs_db_msg_id'] != 0:
+                        msgs_to_delete.append(row['thumbs_db_msg_id'])
+                
                 # Find all files in these folders (Need map_ids for trash cleanup)
                 cursor.execute(f"SELECT id FROM file_folder_map WHERE folder_id IN ({f_placeholders})", all_folder_ids)
                 map_ids = [row['id'] for row in cursor.fetchall()]
@@ -181,6 +187,13 @@ class TrashRepository(BaseRepository):
                 else:
                     self._execute_write(cursor, "UPDATE file_folder_map SET folder_id = ?, name = ?, modif_date = ? WHERE id = ?", 
                                    (recycle_bin_id, new_name, time.time(), item_id), score=1)
+                    cursor.execute("SELECT file_id FROM file_folder_map WHERE id = ?", (item_id,))
+                    f_id = cursor.fetchone()['file_id']
+                    
+                    cursor.execute("SELECT thumb_src_folder_id FROM files WHERE id = ?", (f_id,))
+                    curr_src = cursor.fetchone()['thumb_src_folder_id']
+                    if curr_src is None:
+                        self._execute_write(cursor, "UPDATE files SET thumb_src_folder_id = ? WHERE id = ?", (info['parent_id'], f_id), score=1)
                                    
                 self._update_folder_size_recursively(cursor, info['parent_id'], -info['total_size'])
                 self._update_folder_size_recursively(cursor, recycle_bin_id, info['total_size'])
@@ -281,7 +294,7 @@ class TrashRepository(BaseRepository):
                 "original_parent_id": row['original_parent_id'],
                 "type": "file"
             })
-        return {"folders": folders, "files": files}
+        return {"folders": folders, "files": files, "recycle_bin_id": recycle_bin_id}
 
     def empty_trash(self) -> list:
         with self._db_lock:
