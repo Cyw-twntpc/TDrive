@@ -8,6 +8,7 @@ import os
 from core_app.infrastructure.local_fs import file_processor as fp
 from core_app.core import crypto_handler as cr
 from core_app.infrastructure.telegram import telegram_comms
+from core_app.core.shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ CALLBACK_ELAPSED = 0.5
 
 class TransferDispatcher:
     @staticmethod
-    async def dispatch_upload(clients_pool: list, group_id: int, file_path: str, original_file_hash: str, 
+    async def dispatch_upload(shared_state: 'SharedState', group_id: int, file_path: str, original_file_hash: str, 
                               progress_callback: Callable | None = None, resume_context: List = None,
                               chunk_callback: Callable[[int, int, str], None] = None) -> list:
         
@@ -49,7 +50,9 @@ class TransferDispatcher:
                         progress_callback(total_current, total_size)
             return chunk_progress
 
-        queue = asyncio.Queue(maxsize=len(clients_pool) * 2)
+        active_bots = [b for b in getattr(shared_state, 'clients_pool', []) if b and b.is_connected()]
+        MAX_CONCURRENT_WORKERS = len(active_bots) if active_bots else 1
+        queue = asyncio.Queue(maxsize=MAX_CONCURRENT_WORKERS * 2)
 
         async def producer():
             generator = fp.stream_split_and_encrypt(file_path, key, completed_parts)
@@ -68,10 +71,10 @@ class TransferDispatcher:
                     logger.error(f"Error in encryption stream: {e}")
                     raise
             
-            for _ in clients_pool:
+            for _ in range(MAX_CONCURRENT_WORKERS):
                 await queue.put(None)
 
-        async def worker(client):
+        async def worker():
             nonlocal completed_bytes
             while True:
                 item = await queue.get()
@@ -88,6 +91,21 @@ class TransferDispatcher:
                     
                     # Humanized delay to prevent Telegram Anti-Spam FloodWait
                     await asyncio.sleep(random.uniform(0.1, 0.5))
+                    
+                    # LIVE ROUND-ROBIN (Bot First)
+                    available_clients = []
+                    for bot in getattr(shared_state, 'clients_pool', []):
+                        if bot and bot.is_connected():
+                            available_clients.append(bot)
+                            
+                    if not available_clients and shared_state.client and shared_state.client.is_connected():
+                        available_clients.append(shared_state.client)
+                            
+                    if not available_clients:
+                        raise ConnectionError("No connected clients available for transfer.")
+                        
+                    client = available_clients[(part_num - 1) % len(available_clients)]
+                    client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
                     
                     message = await telegram_comms.upload_single_chunk(client, group_id, part_bytes, cb)
                     
@@ -108,7 +126,7 @@ class TransferDispatcher:
                     queue.task_done()
 
         prod_task = asyncio.create_task(producer())
-        worker_tasks = [asyncio.create_task(worker(client)) for client in clients_pool]
+        worker_tasks = [asyncio.create_task(worker()) for _ in range(MAX_CONCURRENT_WORKERS)]
         
         try:
             await asyncio.gather(prod_task, *worker_tasks)
@@ -122,7 +140,7 @@ class TransferDispatcher:
         return split_files_info
 
     @staticmethod
-    async def dispatch_download(clients_pool: list, group_id: int, file_details: dict, download_dir: str, 
+    async def dispatch_download(shared_state: 'SharedState', group_id: int, file_details: dict, download_dir: str, 
                                 progress_callback: Callable | None = None, completed_parts: Set[int] = None,
                                 chunk_callback: Callable[[int], None] = None):
         
@@ -178,16 +196,18 @@ class TransferDispatcher:
         # but client.iter_download requires a Message object or InputFileLocation.
         # Actually, get_messages can be called by each client separately or by one client.
         
-        messages = await clients_pool[0].get_messages(group_id, ids=message_ids)
+        messages = await shared_state.client.get_messages(group_id, ids=message_ids)
         msg_map = {m.id: m for m in messages if m}
         
         if len(msg_map) != len(message_ids):
             raise ValueError(f"Requested {len(message_ids)} chunks but only got {len(msg_map)}. Cloud messages missing.")
 
-        for _ in clients_pool:
+        active_bots = [b for b in getattr(shared_state, 'clients_pool', []) if b and b.is_connected()]
+        MAX_CONCURRENT_WORKERS = len(active_bots) if active_bots else 1
+        for _ in range(MAX_CONCURRENT_WORKERS):
             await queue.put(None)
 
-        async def worker(client):
+        async def worker():
             nonlocal completed_bytes
             while True:
                 item = await queue.get()
@@ -208,8 +228,29 @@ class TransferDispatcher:
                 
                 try:
                     cb = get_progress_callback(part_num)
+                    await asyncio.sleep(random.uniform(0.1, 0.5))
                     
-                    encrypted_bytes = await telegram_comms.download_single_chunk(client, message, cb)
+                    # LIVE ROUND-ROBIN (Bot First)
+                    available_clients = []
+                    for bot in getattr(shared_state, 'clients_pool', []):
+                        if bot and bot.is_connected():
+                            available_clients.append(bot)
+                            
+                    if not available_clients and shared_state.client and shared_state.client.is_connected():
+                        available_clients.append(shared_state.client)
+                            
+                    if not available_clients:
+                        raise ConnectionError("No connected clients available for transfer.")
+                        
+                    client = available_clients[(part_num - 1) % len(available_clients)]
+                    client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
+                    
+                    client_msgs = await client.get_messages(group_id, ids=[msg_id])
+                    if not client_msgs or not client_msgs[0]:
+                        raise ValueError(f"Worker {client_name} could not access message {msg_id}")
+                    worker_message = client_msgs[0]
+                    
+                    encrypted_bytes = await telegram_comms.download_single_chunk(client, worker_message, cb)
                     
                     if not encrypted_bytes:
                         raise ValueError(f"Download failed for chunk {part_num}")
@@ -237,7 +278,7 @@ class TransferDispatcher:
                         del active_chunk_progress[part_num]
                     queue.task_done()
 
-        worker_tasks = [asyncio.create_task(worker(client)) for client in clients_pool]
+        worker_tasks = [asyncio.create_task(worker()) for _ in range(MAX_CONCURRENT_WORKERS)]
         try:
             await asyncio.gather(*worker_tasks)
         except Exception:

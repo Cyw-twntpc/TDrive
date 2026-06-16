@@ -16,6 +16,21 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage()
         }
         return json.dumps(log_object, ensure_ascii=False)
+class OneTimeFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.seen_loggers = set()
+
+    def filter(self, record):
+        # Apply filter only to noisy file parsing modules
+        if record.name.startswith(('pypdf', 'PIL', 'mutagen')):
+            if record.levelno >= logging.WARNING:
+                # Group by logger name (e.g. pypdf._reader) to allow 1 warning per module
+                if record.name not in self.seen_loggers:
+                    self.seen_loggers.add(record.name)
+                    return True
+                return False
+        return True
 
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -54,6 +69,6 @@ def setup_logging():
     logging.getLogger('geventwebsocket').setLevel(logging.ERROR)
     logging.getLogger('qasync').setLevel(logging.ERROR)
 
+    root_logger.addFilter(OneTimeFilter())
+
     root_logger.info("Logging initialized. Logs will be saved to %s", log_filename)
-
-

@@ -156,10 +156,28 @@ class TDriveService:
                 self._shared_state.group_id, 
                 self._shared_state.api_id
             )
-            # Schedule maintenance tasks
-            self._schedule_background_task(self._file_service.cleanup_expired_trash())
         return result
 
+    async def start_background_services(self):
+        """Starts background tasks safely decoupled from synchronous initialization phases."""
+        # Schedule maintenance tasks
+        self._schedule_background_task(self._file_service.cleanup_expired_trash())
+        
+        # --- Start Bot Token Pool provisioning in background ---
+        try:
+            from core_app.infrastructure.telegram.bot_manager import BotManager
+            bot_manager = BotManager()
+            
+            async def setup_worker_bots():
+                import asyncio
+                await bot_manager.init_saved_bots(self._shared_state)
+                await bot_manager.recover_lost_bots(self._shared_state)
+                await bot_manager.provision_missing_bots(self._shared_state, target_count=5)
+            
+            self._schedule_background_task(setup_worker_bots())
+        except Exception as e:
+            logger.error(f"Failed to start bot manager: {e}", exc_info=True)
+            
     async def close(self):
         # Stop the file status watcher
         self._transfer_service.shutdown()
@@ -252,8 +270,8 @@ class TDriveService:
                 self._shared_state.api_id
             )
             
-            # Schedule maintenance tasks
-            self._schedule_background_task(self._file_service.cleanup_expired_trash())
+            # Start background services immediately since the loop is running natively during manual login
+            self._schedule_background_task(self.start_background_services())
             
         return result
 

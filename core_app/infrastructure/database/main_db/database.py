@@ -120,6 +120,16 @@ class DatabaseConnection:
         )
         ''')
         
+        # Worker Bots (Bot Token Pool)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS worker_bots (
+            bot_id INTEGER PRIMARY KEY,
+            token TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            group_joined BOOLEAN DEFAULT 0
+        )
+        ''')
+        
         # --- FTS5 Search Index ---
         # Create virtual table for full-text search
         cursor.execute('''

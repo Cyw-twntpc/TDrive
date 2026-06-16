@@ -352,12 +352,9 @@ class UploadStrategy(TransferStrategy):
                         self.context.controller.set_preview_msg_id(sub_task_id, preview_msg_id)
 
                 from core_app.application.transfer.dispatcher import TransferDispatcher
-                clients_pool = getattr(self.context.shared_state, 'clients_pool', [])
-                if not clients_pool:
-                    clients_pool = [client]
-
+                
                 split_files_info = await TransferDispatcher.dispatch_upload(
-                    clients_pool, self.context.shared_state.group_id, file_path, original_file_hash, 
+                    self.context.shared_state, self.context.shared_state.group_id, file_path, original_file_hash, 
                     progress_callback=ui_cb, 
                     resume_context=split_files_info,
                     chunk_callback=chunk_cb

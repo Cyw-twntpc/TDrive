@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (window.tdrive_bridge.connection_status_changed) {
-            window.tdrive_bridge.connection_status_changed.connect(UIManager.handleConnectionStatus);
+            window.tdrive_bridge.connection_status_changed.connect((status) => UIManager.handleConnectionStatus(status));
         }
         // Removed folderContentsReady and searchResultsReady listeners
         if (window.tdrive_bridge.folder_content_refresh_required) {

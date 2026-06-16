@@ -224,12 +224,9 @@ class DownloadStrategy(TransferStrategy):
                 progress_callback(main_task_id, file_details['name'], -1, -1, 'transferring', 0)
 
                 from core_app.application.transfer.dispatcher import TransferDispatcher
-                clients_pool = getattr(self.context.shared_state, 'clients_pool', [])
-                if not clients_pool:
-                    clients_pool = [client]
-
+                
                 await TransferDispatcher.dispatch_download(
-                    clients_pool, self.context.shared_state.group_id, file_details, os.path.dirname(save_path),
+                    self.context.shared_state, self.context.shared_state.group_id, file_details, os.path.dirname(save_path),
                     progress_callback=ui_cb,
                     completed_parts=resume_parts,
                     chunk_callback=chunk_cb

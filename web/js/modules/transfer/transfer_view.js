@@ -273,9 +273,9 @@ const TransferView = {
         if (!result) return;
         
         if (['paused', 'failed'].includes(result.task.status)) {
-            TransferModel.resumeTask(id);
+            TransferManager.resumeTask(id);
         } else {
-            TransferModel.pauseTask(id);
+            TransferManager.pauseTask(id);
         }
     },
 
@@ -342,7 +342,7 @@ const TransferView = {
     _bindCardActions(el, task) {
         el.querySelector('.btn-cancel')?.addEventListener('click', () => TransferManager.cancelItem(task.id));
         el.querySelector('.btn-toggle')?.addEventListener('click', () => TransferView.toggleTaskState(task.id));
-        el.querySelector('.btn-retry')?.addEventListener('click', () => TransferModel.resumeTask(task.id));
+        el.querySelector('.btn-retry')?.addEventListener('click', () => TransferManager.resumeTask(task.id));
     },
 
     _getCloudPath(folderId) {

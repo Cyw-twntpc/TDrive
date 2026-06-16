@@ -122,7 +122,7 @@ class MetadataManager:
                         self.db._create_tables()
                         
                         # 4. Smart Import: Execute INSERTs only for allowed core tables
-                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata'}
+                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots'}
                         sql_dump = sql_dump.replace('\r\n', '\n')
                         statements = sql_dump.split(';\n')
                         

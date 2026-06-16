@@ -34,6 +34,8 @@ class AppController(QObject):
         
         if login_status.get("logged_in"):
             self.show_main_window(self.tdrive_service)
+            # Queue background services to start safely AFTER the event loop officially runs forever
+            self.loop.create_task(self.tdrive_service.start_background_services())
         else:
             # If the session has expired, pass the existing API credentials
             # to the login window for a smoother re-login experience.
