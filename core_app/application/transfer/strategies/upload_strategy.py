@@ -36,6 +36,7 @@ class UploadStrategy(TransferStrategy):
             return
 
         self.context.db.sync_manager.set_busy(True)
+        setup_done = False
         
         try:
             tasks_to_run = []
@@ -65,13 +66,17 @@ class UploadStrategy(TransferStrategy):
                     )
                 )
                 
+            self.context.db.sync_manager.set_busy(False)
+            setup_done = True
+                
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
             for item in upload_items:
                 await self._finalize_thumbnails(client, item['task_id'])
         
         finally:
-            self.context.db.sync_manager.set_busy(False)
+            if not setup_done:
+                self.context.db.sync_manager.set_busy(False)
             self.context._trigger_folder_refresh([parent_id])
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
@@ -80,6 +85,7 @@ class UploadStrategy(TransferStrategy):
         self.context.shared_state.active_tasks[main_task_id] = asyncio.current_task()
         
         self.context.db.sync_manager.set_busy(True)
+        setup_done = False
 
         try:
             total_size = 0
@@ -194,6 +200,9 @@ class UploadStrategy(TransferStrategy):
 
                 progress_callback(main_task_id, base_folder_name, -1, total_size, 'transferring', 0)
                 
+                self.context.db.sync_manager.set_busy(False)
+                setup_done = True
+                
                 results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
                 
                 for res in results:
@@ -223,7 +232,8 @@ class UploadStrategy(TransferStrategy):
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
             self.context._active_sub_tasks.pop(main_task_id, None)
-            self.context.db.sync_manager.set_busy(False)
+            if not setup_done:
+                self.context.db.sync_manager.set_busy(False)
 
     async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
                                   file_path: str, parent_id: int, 
@@ -340,8 +350,15 @@ class UploadStrategy(TransferStrategy):
 
                 if preview_bytes:
                     preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_bytes)
+                    
+                    last_preview_uploaded = 0
                     def hidden_progress(current, total):
-                        asyncio.create_task(self.context.controller.update_transferred_bytes(current))
+                        nonlocal last_preview_uploaded
+                        if current <= last_preview_uploaded:
+                            return
+                        delta = current - last_preview_uploaded
+                        last_preview_uploaded = current
+                        asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
 
                     preview_upload_info = await telegram_comms.upload_data_as_file(
                         client, self.context.shared_state.group_id, preview_bytes, preview_hash,
@@ -459,7 +476,7 @@ class UploadStrategy(TransferStrategy):
             task_id = task_info.get('task_id')
             logger.info(f"Cleanup: Starting artifact cleanup for task {task_id}")
             if task_id:
-                artifacts = await self.context.shared_state.loop.run_in_executor(None, self.context.controller.get_created_artifacts, task_id)
+                artifacts = task_info.get('created_artifacts', [])
                 
                 def _cleanup_db_items():
                     results = []

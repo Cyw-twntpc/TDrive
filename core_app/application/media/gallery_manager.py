@@ -86,10 +86,13 @@ class GalleryManager:
                 )
             ''')
             
-            placeholders = ",".join("?" for _ in file_ids)
             local_cursor = self.conn.cursor()
-            local_cursor.execute(f"SELECT file_id, thumb_data FROM local_thumbs WHERE file_id IN ({placeholders})", file_ids)
-            rows = local_cursor.fetchall()
+            rows = []
+            for i in range(0, len(file_ids), 900):
+                batch = file_ids[i:i+900]
+                placeholders = ",".join("?" for _ in batch)
+                local_cursor.execute(f"SELECT file_id, thumb_data FROM local_thumbs WHERE file_id IN ({placeholders})", batch)
+                rows.extend(local_cursor.fetchall())
             
             cursor.executemany("INSERT INTO thumbnails (file_id, thumb_data) VALUES (?, ?)", rows)
             temp_conn.commit()
@@ -112,15 +115,15 @@ class GalleryManager:
         """Gets base64 thumbnails for the given file_ids from the local cache."""
         if not file_ids: return {}
         try:
-            placeholders = ",".join("?" for _ in file_ids)
-            cursor = self.conn.cursor()
-            cursor.execute(f"SELECT file_id, thumb_data FROM local_thumbs WHERE file_id IN ({placeholders})", file_ids)
-            rows = cursor.fetchall()
-            
             result = {}
-            for fid, blob in rows:
-                if blob:
-                    result[str(fid)] = base64.b64encode(blob).decode('utf-8')
+            cursor = self.conn.cursor()
+            for i in range(0, len(file_ids), 900):
+                batch = file_ids[i:i+900]
+                placeholders = ",".join("?" for _ in batch)
+                cursor.execute(f"SELECT file_id, thumb_data FROM local_thumbs WHERE file_id IN ({placeholders})", batch)
+                for fid, blob in cursor.fetchall():
+                    if blob:
+                        result[str(fid)] = base64.b64encode(blob).decode('utf-8')
             return result
         except Exception as e:
             logger.error(f"Error reading local thumbs: {e}")
@@ -168,6 +171,15 @@ class GalleryManager:
             return None
 
     # --- Preview Cache Management ---
+
+    def close(self):
+        """Closes the local thumbnail database connection."""
+        try:
+            if hasattr(self, 'conn') and self.conn:
+                self.conn.close()
+                self.conn = None
+        except Exception as e:
+            logger.error(f"Error closing gallery DB: {e}")
 
     def cache_preview(self, file_id: int, image_bytes: bytes):
         self._preview_cache.put(file_id, image_bytes)

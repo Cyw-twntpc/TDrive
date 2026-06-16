@@ -98,11 +98,14 @@ class BotManager:
                 
                 # Verify connection and authorization
                 if await bot_client.is_user_authorized():
-                    # Ensure it's in the group? We assume it is if group_joined=1.
-                    if not hasattr(shared_state, 'clients_pool'):
-                        shared_state.clients_pool = []
-                    shared_state.clients_pool.append(bot_client)
-                    logger.info(f"Worker bot {bot_info['username']} connected successfully.")
+                    # Ensure it's in the group
+                    if bot_info.get('group_joined') == 1:
+                        if not hasattr(shared_state, 'clients_pool'):
+                            shared_state.clients_pool = []
+                        shared_state.clients_pool.append(bot_client)
+                        logger.info(f"Worker bot {bot_info['username']} connected successfully.")
+                    else:
+                        logger.warning(f"Worker bot {bot_info['username']} is authorized but not joined to the group yet. Skipping.")
                 else:
                     logger.warning(f"Bot {bot_info['username']} failed authorization. Token might be revoked.")
             except Exception as e:
@@ -167,7 +170,6 @@ class BotManager:
                                     # 10s timeout for booting
                                     await asyncio.wait_for(bot_client.start(bot_token=token), timeout=10.0)
                                     bot_client.tdrive_worker_name = username
-                                    shared_state.clients_pool.append(bot_client)
                                     
                                     # 10s timeout for inviting and promoting
                                     success = await asyncio.wait_for(
@@ -176,10 +178,12 @@ class BotManager:
                                     )
                                     
                                     if success:
+                                        shared_state.clients_pool.append(bot_client)
                                         self.mark_bot_joined(bot_id)
                                         logger.info(f"Successfully recovered and hot-plugged bot: {username}")
                                     else:
                                         logger.warning(f"Recovered bot {username} but failed to invite to group.")
+                                        await bot_client.disconnect()
                                         
                                     if len(existing_bot_ids) >= target_count:
                                         break
@@ -276,19 +280,22 @@ class BotManager:
                             logger.info(f"Successfully created and registered bot: {username}")
                             
                             # 6. Add bot to TDrive Private Group and Promote
-                            await self._invite_and_promote_bot(shared_state, username)
-                            self.mark_bot_joined(bot_id)
-                            
-                            # 7. Initialize immediately (Hot-plug)
-                            from telethon.sessions import StringSession
-                            bot_client = TelegramClient(StringSession(""), shared_state.api_id, shared_state.api_hash)
-                            await bot_client.start(bot_token=token)
-                            bot_client.tdrive_worker_name = username
-                            if await bot_client.is_user_authorized():
-                                if not hasattr(shared_state, 'clients_pool'):
-                                    shared_state.clients_pool = []
-                                shared_state.clients_pool.append(bot_client)
-                                logger.info(f"Bot {username} hot-plugged into Transfer Pool.")
+                            success = await self._invite_and_promote_bot(shared_state, username)
+                            if success:
+                                self.mark_bot_joined(bot_id)
+                                
+                                # 7. Initialize immediately (Hot-plug)
+                                from telethon.sessions import StringSession
+                                bot_client = TelegramClient(StringSession(""), shared_state.api_id, shared_state.api_hash)
+                                await bot_client.start(bot_token=token)
+                                bot_client.tdrive_worker_name = username
+                                if await bot_client.is_user_authorized():
+                                    if not hasattr(shared_state, 'clients_pool'):
+                                        shared_state.clients_pool = []
+                                    shared_state.clients_pool.append(bot_client)
+                                    logger.info(f"Bot {username} hot-plugged into Transfer Pool.")
+                            else:
+                                logger.error(f"Failed to invite newly created bot {username} to the group. It will not be added to the pool.")
                         else:
                             logger.error(f"Failed to create bot {username}. Response: {resp.text}")
 

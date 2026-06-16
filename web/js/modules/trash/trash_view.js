@@ -42,14 +42,14 @@ const TrashView = {
             
             const iconClass = item.type === 'folder' ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
             
-            const pathName = item.displayPath || window.t('trash.unknown_location');
+            const pathName = UIManager.escapeHtml(item.displayPath || window.t('trash.unknown_location'));
             
             el.innerHTML = `
                 <div class="trash-col-name">
                     <div class="trash-col-main">
                         <i class="${iconClass} list-thumb-icon"></i>
                         <img class="list-thumb-img hidden" draggable="false" />
-                        <span title="${item.name}">${item.name}</span>
+                        <span title="${UIManager.escapeHtml(item.name)}">${UIManager.escapeHtml(item.name)}</span>
                     </div>
                     <div class="trash-col-actions">
                         <button class="trash-action-btn restore-btn" title="${window.t('trash.btn_restore')}"><i class="fas fa-undo-alt"></i></button>

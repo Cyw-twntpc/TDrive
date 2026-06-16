@@ -213,7 +213,7 @@ const FileListView = {
                 <i class="${iconClass} grid-thumb-icon"></i>
                 <img class="grid-thumb-img hidden" draggable="false" />
             </div>
-            <div class="grid-name" title="${item.name}">${item.name}</div>
+            <div class="grid-name" title="${UIManager.escapeHtml(item.name)}">${UIManager.escapeHtml(item.name)}</div>
         `;
 
         FileListHandler._addSelectionListener(itemEl, item, isFolder ? 'folder' : 'file', AppState);
@@ -327,22 +327,22 @@ const FileListView = {
                 }
             }
             if (parentPath.length > 0) {
-                pathHtml = `<div class="search-result-path">${parentPath.join(' / ')}</div>`;
+                pathHtml = `<div class="search-result-path">${parentPath.map(UIManager.escapeHtml).join(' / ')}</div>`;
             }
         }
 
         // [Feature] Smart Filename Truncation (Keep Extension)
         let nameHtml = '';
         if (isFolder) {
-            nameHtml = `<span>${item.name}</span>`;
+            nameHtml = `<span>${UIManager.escapeHtml(item.name)}</span>`;
         } else {
             const lastDotIndex = item.name.lastIndexOf('.');
             if (lastDotIndex > 0 && lastDotIndex < item.name.length - 1) {
-                const baseName = item.name.substring(0, lastDotIndex);
-                const extName = item.name.substring(lastDotIndex);
+                const baseName = UIManager.escapeHtml(item.name.substring(0, lastDotIndex));
+                const extName = UIManager.escapeHtml(item.name.substring(lastDotIndex));
                 nameHtml = `<span class="name-part-base">${baseName}</span><span class="name-part-ext">${extName}</span>`;
             } else {
-                nameHtml = `<span class="name-part-base">${item.name}</span>`;
+                nameHtml = `<span class="name-part-base">${UIManager.escapeHtml(item.name)}</span>`;
             }
         }
 
@@ -413,7 +413,7 @@ const FileListView = {
             // Single item: Show specific icon + name
             const item = items[0];
             const iconClass = item.type === 'folder' ? 'fas fa-folder' : UIManager.getFileTypeIcon(item.name);
-            div.innerHTML = `<i class="${iconClass}"></i> <span>${item.name}</span>`;
+            div.innerHTML = `<i class="${iconClass}"></i> <span>${UIManager.escapeHtml(item.name)}</span>`;
         }
         
         return div;

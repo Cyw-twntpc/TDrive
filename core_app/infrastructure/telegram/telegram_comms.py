@@ -165,11 +165,12 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
         key = cr.generate_key(original_hash[:32], original_hash[-32:])
         final_buffer = io.BytesIO()
         
+        loop = asyncio.get_running_loop()
         for message in messages:
             encrypted_bytes = await message.download_media(file=bytes)
             if not encrypted_bytes: continue
             
-            decrypted_chunk = cr.decrypt(encrypted_bytes, key)
+            decrypted_chunk = await loop.run_in_executor(None, cr.decrypt, encrypted_bytes, key)
             final_buffer.write(decrypted_chunk)
             
         return final_buffer.getvalue()

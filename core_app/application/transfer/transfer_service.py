@@ -148,6 +148,9 @@ class TransferService:
             del self._active_sub_tasks[task_id]
         
         task_info = self.controller.get_task(task_id)
+        if task_info:
+            task_info['created_artifacts'] = self.controller.get_created_artifacts(task_id)
+            
         self.controller.remove_task(task_id)
         
         if task_info:

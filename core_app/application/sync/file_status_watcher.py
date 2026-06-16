@@ -59,37 +59,40 @@ class FileStatusWatcher:
     async def _check_loop(self):
         while self._running:
             try:
-                changes = []
                 items = list(self._watch_list.items())
-                
-                for task_id, info in items:
-                    exists = False
+                if items:
+                    changes = await self._loop.run_in_executor(None, self._run_checks, items)
                     
-                    if info['type'] == 'local':
-                        exists = os.path.exists(info['target'])
-                    elif info['type'] == 'remote':
-                        folder_id = info['target']
-                        exists = await self._loop.run_in_executor(None, self._check_remote_exists, folder_id)
-
-                    previous_state = self._status_cache.get(task_id)
-                    
-                    if previous_state != exists:
-                        self._status_cache[task_id] = exists
-                        changes.append({
-                            "id": task_id,
-                            "exists": exists
-                        })
-
-                if changes:
-                    try:
-                        self._callback(changes)
-                    except Exception as e:
-                        logger.error(f"Error in FileStatusWatcher callback: {e}")
+                    if changes:
+                        try:
+                            self._callback(changes)
+                        except Exception as e:
+                            logger.error(f"Error in FileStatusWatcher callback: {e}")
 
             except Exception as e:
                 logger.error(f"Error in FileStatusWatcher loop: {e}")
             
             await asyncio.sleep(self._interval)
+
+    def _run_checks(self, items: list) -> list:
+        changes = []
+        for task_id, info in items:
+            exists = False
+            
+            if info['type'] == 'local':
+                exists = os.path.exists(info['target'])
+            elif info['type'] == 'remote':
+                exists = self._check_remote_exists(info['target'])
+
+            previous_state = self._status_cache.get(task_id)
+            
+            if previous_state != exists:
+                self._status_cache[task_id] = exists
+                changes.append({
+                    "id": task_id,
+                    "exists": exists
+                })
+        return changes
 
     def _check_remote_exists(self, folder_id: int) -> bool:
         if str(folder_id) in ('root', '0', 'None', ''):

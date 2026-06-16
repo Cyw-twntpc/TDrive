@@ -146,9 +146,11 @@ class DownloadStrategy(TransferStrategy):
             progress_callback(main_task_id, root_folder_name, -1, total_size, 'transferring', 0)
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
-            self.context.controller.mark_sub_task_completed(main_task_id, main_task_id)
-            progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
-            self.context.watcher.add_watch(main_task_id, local_root_path, 'local')
+            task_info = self.context.controller.get_task(main_task_id)
+            if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
+                self.context.controller.mark_sub_task_completed(main_task_id, main_task_id)
+                progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
+                self.context.watcher.add_watch(main_task_id, local_root_path, 'local')
 
         except Exception as e:
             logger.error(f"Download folder failed: {e}", exc_info=True)
@@ -226,7 +228,7 @@ class DownloadStrategy(TransferStrategy):
                 from core_app.application.transfer.dispatcher import TransferDispatcher
                 
                 await TransferDispatcher.dispatch_download(
-                    self.context.shared_state, self.context.shared_state.group_id, file_details, os.path.dirname(save_path),
+                    self.context.shared_state, self.context.shared_state.group_id, file_details, save_path,
                     progress_callback=ui_cb,
                     completed_parts=resume_parts,
                     chunk_callback=chunk_cb

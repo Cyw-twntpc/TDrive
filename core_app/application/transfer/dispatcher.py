@@ -140,17 +140,16 @@ class TransferDispatcher:
         return split_files_info
 
     @staticmethod
-    async def dispatch_download(shared_state: 'SharedState', group_id: int, file_details: dict, download_dir: str, 
+    async def dispatch_download(shared_state: 'SharedState', group_id: int, file_details: dict, save_path: str, 
                                 progress_callback: Callable | None = None, completed_parts: Set[int] = None,
                                 chunk_callback: Callable[[int], None] = None):
         
         if completed_parts is None:
             completed_parts = set()
 
-        file_name = file_details['name']
         chunks = file_details['chunks']
         total_size = int(file_details['size'])
-        final_path = os.path.join(download_dir, file_name)
+        final_path = save_path
         key = cr.generate_key(file_details['hash'][:32], file_details['hash'][-32:])
         
         loop = asyncio.get_running_loop()
@@ -259,9 +258,8 @@ class TransferDispatcher:
                     if actual_hash != part_hash:
                         raise ValueError(f"Hash mismatch for chunk {part_num}. Expected {part_hash}, got {actual_hash}")
                     
-                    decrypted_chunk = cr.decrypt(encrypted_bytes, key)
                     offset = (part_num - 1) * fp.CHUNK_SIZE
-                    await loop.run_in_executor(None, fp.write_chunk_to_file, final_path, offset, decrypted_chunk)
+                    await loop.run_in_executor(None, fp.decrypt_bytes_and_write, encrypted_bytes, final_path, key, offset)
 
                     del active_chunk_progress[part_num]
                     completed_bytes += fp.CHUNK_SIZE

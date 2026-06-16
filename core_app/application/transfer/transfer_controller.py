@@ -54,19 +54,23 @@ class TransferController:
             
             if self._unsaved_traffic >= self._traffic_save_threshold:
                 try:
+                    to_save = self._unsaved_traffic
+                    self._unsaved_traffic = 0
+                    date_str = self._last_date_str
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._persist_traffic_chunk)
+                    await loop.run_in_executor(None, self._persist_traffic_chunk, date_str, to_save)
                 except RuntimeError:
                     pass
 
-    def _persist_traffic_chunk(self):
-        if self._unsaved_traffic > 0:
-            to_save = self._unsaved_traffic
-            self.queue_repo.update_traffic(self._last_date_str, to_save)
-            self._unsaved_traffic -= to_save
+    def _persist_traffic_chunk(self, date_str: str, to_save: int):
+        if to_save > 0:
+            self.queue_repo.update_traffic(date_str, to_save)
 
     def save_pending_traffic_stats(self):
-        self._persist_traffic_chunk()
+        if self._unsaved_traffic > 0:
+            to_save = self._unsaved_traffic
+            self._unsaved_traffic = 0
+            self.queue_repo.update_traffic(self._last_date_str, to_save)
         logger.info("Pending traffic statistics have been persisted.")
 
     # --- Task Registration ---

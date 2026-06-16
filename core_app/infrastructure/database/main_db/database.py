@@ -46,7 +46,6 @@ class DatabaseConnection:
             self._connection = sqlite3.connect(':memory:', check_same_thread=False, cached_statements=0)
             self._connection.row_factory = sqlite3.Row
             self._connection.execute('PRAGMA foreign_keys = ON')
-            self._connection.execute('PRAGMA journal_mode=WAL;')
         
         return self._connection
 
@@ -207,8 +206,16 @@ class DatabaseConnection:
         """Manually rebuilds the FTS5 search index."""
         conn = self._get_conn()
         with conn:
-            conn.execute("INSERT INTO search_index(search_index) VALUES('rebuild')")
-            logger.info("Search index rebuilt.")
+            conn.execute("DELETE FROM search_index")
+            conn.execute("""
+                INSERT INTO search_index(name, item_type, item_id, folder_id)
+                SELECT name, 'folder', id, parent_id FROM folders
+            """)
+            conn.execute("""
+                INSERT INTO search_index(name, item_type, item_id, folder_id)
+                SELECT name, 'file', id, folder_id FROM file_folder_map
+            """)
+            logger.info("Search index rebuilt manually.")
 
     def run_integrity_check(self) -> bool:
         """Executes PRAGMA integrity_check to verify database health."""

@@ -84,14 +84,11 @@ def decrypt_secure_data(encrypted_str: str, api_id: str) -> dict | None:
         return None
 
 def hash_data(data_source: str) -> str:
-    """Computes SHA256 hash of a file or string."""
+    """Computes SHA256 hash of a file."""
     sha256_hash = hashlib.sha256()
-    if os.path.exists(data_source):
-        with open(data_source, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-    else:
-        sha256_hash.update(data_source.encode('utf-8'))
+    with open(data_source, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
 def hash_bytes(b: bytes) -> str:

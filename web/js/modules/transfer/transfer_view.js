@@ -285,13 +285,13 @@ const TransferView = {
         el.dataset.id = task.id;
         el.dataset.type = task.type;
         const pathInfo = (task.type === 'upload') 
-            ? `<i class="fas fa-file-upload"></i> ${task.localPath || window.t('transfer.path_unknown')}` 
-            : `<i class="fas fa-cloud-download-alt"></i> ` + window.t('transfer.download_to').replace('{path}', task.localPath || window.t('transfer.path_default'));
+            ? `<i class="fas fa-file-upload"></i> ${TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_unknown'))}` 
+            : `<i class="fas fa-cloud-download-alt"></i> ` + window.t('transfer.download_to').replace('{path}', TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_default')));
         el.innerHTML = `
             <div class="card-row-main">
                 <div class="file-icon-lg"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="card-content">
-                    <div class="file-title">${task.name}</div>
+                    <div class="file-title">${TransferManager.UIManager.escapeHtml(task.name)}</div>
                     <div class="file-path">${pathInfo}</div>
                     <div class="progress-track"><div class="progress-fill"></div></div>
                     <div class="meta-row"><span class="meta-size"></span><span class="meta-speed"></span></div>
@@ -314,7 +314,7 @@ const TransferView = {
         el.innerHTML = `
             <div style="display:flex; align-items:center; gap:15px;">
                 <div style="color:var(--danger-color); font-size:20px;"><i class="fas fa-exclamation-circle"></i></div>
-                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${task.name}</span><span class="failed-msg">${task.message || window.t('transfer.reason_unknown')}</span></div>
+                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${TransferManager.UIManager.escapeHtml(task.name)}</span><span class="failed-msg">${TransferManager.UIManager.escapeHtml(task.message || window.t('transfer.reason_unknown'))}</span></div>
             </div>
             <div class="card-actions">
                 <button class="icon-btn btn-retry" style="color:var(--primary-color);" title="${window.t('transfer.btn_retry')}"><i class="fas fa-redo"></i></button>
@@ -332,7 +332,7 @@ const TransferView = {
         el.dataset.type = task.type;
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
-            <div class="queued-content"><div class="queued-name">${task.name}</div><div class="queued-size">${TransferManager.UIManager.formatBytes(task.size)}</div></div>
+            <div class="queued-content"><div class="queued-name">${TransferManager.UIManager.escapeHtml(task.name)}</div><div class="queued-size">${TransferManager.UIManager.formatBytes(task.size)}</div></div>
             <button class="icon-btn btn-cancel" title="${window.t('transfer.btn_cancel')}"><i class="fas fa-times"></i></button>`;
         TransferView._bindCardActions(el, task);
         TransferView.renderTaskCard(task, el);
@@ -425,9 +425,9 @@ const TransferView = {
             row.innerHTML = `
                 <div class="sm-icon"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="sm-name">
-                    ${task.name}
+                    ${TransferManager.UIManager.escapeHtml(task.name)}
                     <div style="font-size:12px; color:#9ca3af; margin-top:2px;">
-                        ${isUp ? window.t('transfer.upload_to').replace('{path}', cloudPath) : window.t('transfer.download_to').replace('{path}', task.localPath || window.t('transfer.path_default'))}
+                        ${isUp ? window.t('transfer.upload_to').replace('{path}', TransferManager.UIManager.escapeHtml(cloudPath)) : window.t('transfer.download_to').replace('{path}', TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_default')))}
                     </div>
                 </div>
                 <div class="sm-badge">${isUp ? window.t('transfer.upload_success') : window.t('transfer.download_success')}</div>

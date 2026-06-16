@@ -106,11 +106,15 @@ class StreamingService:
             headers = {
                 'Content-Type': mime_type,
                 'Accept-Ranges': 'bytes',
-                'Content-Range': f'bytes {start_byte}-{end_byte}/{file_size}',
                 'Content-Length': str(chunk_length)
             }
+            
+            status_code = 200
+            if range_header:
+                status_code = 206
+                headers['Content-Range'] = f'bytes {start_byte}-{end_byte}/{file_size}'
 
-            response = web.StreamResponse(status=206, headers=headers)
+            response = web.StreamResponse(status=status_code, headers=headers)
             await response.prepare(request)
 
             # Stream Loop

@@ -124,7 +124,18 @@ class MetadataManager:
                         # 4. Smart Import: Execute INSERTs only for allowed core tables
                         ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots'}
                         sql_dump = sql_dump.replace('\r\n', '\n')
-                        statements = sql_dump.split(';\n')
+                        
+                        import sqlite3
+                        statements = []
+                        current_stmt = []
+                        for line in sql_dump.split('\n'):
+                            if not line.strip() and not current_stmt:
+                                continue
+                            current_stmt.append(line)
+                            stmt_str = '\n'.join(current_stmt)
+                            if sqlite3.complete_statement(stmt_str):
+                                statements.append(stmt_str)
+                                current_stmt = []
                         
                         for statement in statements:
                             stmt = statement.strip()
@@ -198,17 +209,21 @@ class MetadataManager:
                     logger.error("CRITICAL: Database integrity check failed! Aborting cloud sync to protect remote backup.")
                     return
 
-                # 1. Rotate Log: Mark current pending ops as "about to be synced"
-                if hasattr(self.db, 'transaction_logger'):
-                    self.db.transaction_logger.rotate()
+                def _dump_and_rotate():
+                    with self.db._db_lock:
+                        if hasattr(self.db, 'transaction_logger'):
+                            self.db.transaction_logger.rotate()
 
-                conn = self.db._get_conn()
+                        conn = self.db._get_conn()
+                        
+                        # 2. Dump SQL (Captures state including rotated logs)
+                        dump_io = io.StringIO()
+                        for line in conn.iterdump():
+                            dump_io.write('%s\n' % line)
+                        return dump_io.getvalue().encode('utf-8')
                 
-                # 2. Dump SQL (Captures state including rotated logs)
-                dump_io = io.StringIO()
-                for line in conn.iterdump():
-                    dump_io.write('%s\n' % line)
-                sql_data = dump_io.getvalue().encode('utf-8')
+                loop = asyncio.get_running_loop()
+                sql_data = await loop.run_in_executor(None, _dump_and_rotate)
                 
                 # 3. Compress & Encrypt
                 compressed_data = gzip.compress(sql_data)
@@ -374,6 +389,9 @@ class MetadataManager:
                 for map_msg_id in maps_to_delete_cloud_ids:
                     try:
                         map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
+                        if not map_data:
+                            messages_to_delete.discard(map_msg_id)
+                            continue
                         for file_key, file_info in map_data.items():
                             if isinstance(file_info, dict):
                                 if 'c' in file_info:

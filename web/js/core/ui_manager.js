@@ -1,4 +1,14 @@
 const UIManager = {
+    escapeHtml(text) {
+        if (!text) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
     startProgress() {
         document.getElementById('global-progress-bar')?.classList.add('visible');
     },
@@ -83,9 +93,9 @@ const UIManager = {
         const contentEl = document.getElementById('user-info-content');
         if (AppState.userInfo) {
             const { name, phone, username } = AppState.userInfo;
-            contentEl.innerHTML = `<p><strong data-i18n="dialog.info_name">${window.t('dialog.info_name')}</strong> <span>${name}</span></p>
-                                   <p><strong data-i18n="dialog.info_phone">${window.t('dialog.info_phone')}</strong> <span>${phone}</span></p>
-                                   <p><strong data-i18n="dialog.info_username">${window.t('dialog.info_username')}</strong> <span>${username}</span></p>`;
+            contentEl.innerHTML = `<p><strong data-i18n="dialog.info_name">${window.t('dialog.info_name')}</strong> <span>${UIManager.escapeHtml(name)}</span></p>
+                                   <p><strong data-i18n="dialog.info_phone">${window.t('dialog.info_phone')}</strong> <span>${UIManager.escapeHtml(phone)}</span></p>
+                                   <p><strong data-i18n="dialog.info_username">${window.t('dialog.info_username')}</strong> <span>${UIManager.escapeHtml(username)}</span></p>`;
         } else {
             contentEl.innerHTML = `<div data-i18n="file_list.loading">${window.t('file_list.loading')}</div>`;
         }

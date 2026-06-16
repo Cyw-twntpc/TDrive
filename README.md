@@ -47,7 +47,7 @@ To use TDrive, you must obtain your own API credentials from Telegram:
 TDrive uses a hybrid PySide6 (WebEngine) and Python asynchronous architecture, implementing a sophisticated "Stateless-to-Stateful" model to turn a messaging platform into a robust file system.
 
 ### 1. The "Cloud-as-Database" Model
-*   **In-Memory DB (`DatabaseHandler`)**: All folder structures and file metadata are managed in a high-speed, in-memory SQLite database. This ensures instant file queries and UI responsiveness.
+*   **In-Memory DB (`DatabaseConnection`)**: All folder structures and file metadata are managed in a high-speed, in-memory SQLite database. This ensures instant file queries and UI responsiveness.
 *   **Cloud Snapshots (`MetadataManager`)**: Periodically, and gracefully upon application exit, the entire database state is serialized, AES-GCM encrypted, and "snapshotted" to a private Telegram group.
 *   **Instant Recovery**: When logging in from any device, TDrive fetches the latest snapshot from the cloud to instantly restore your entire drive directory in milliseconds.
 
@@ -70,7 +70,7 @@ graph TD
 
     subgraph Python_Bridge [PySide6 Bridge Layer]
         API_JS -- QWebChannel --> Bridge[bridge.py Slots]
-        Bridge -- Signal/Slot --> MS[MainService Orchestrator]
+        Bridge -- Signal/Slot --> MS[TDriveService Orchestrator]
     end
 
     subgraph Core_Services [Business Logic]

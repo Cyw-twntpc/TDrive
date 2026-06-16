@@ -66,6 +66,7 @@ class TDriveService:
         """Normalizes TransferService callbacks for Bridge signals."""
         last_emit_time = {}
         last_status = {} # Track status changes to bypass throttle
+        accumulated_deltas = {}
 
         def adapter(*args, **kwargs):
             current_time = time.time()
@@ -90,6 +91,7 @@ class TDriveService:
                     if status in ['completed', 'failed', 'cancelled']:
                         last_emit_time.pop(task_id, None)
                         last_status.pop(task_id, None)
+                        accumulated_deltas.pop(task_id, None)
                     else:
                         last_status[task_id] = status
                 else:
@@ -115,15 +117,19 @@ class TDriveService:
 
             # Type 2: Delta Update (Progress)
             elif len(args) == 3:
+                delta = args[1]
+                accumulated_deltas[task_id] = accumulated_deltas.get(task_id, 0) + delta
+                
                 if task_id in last_emit_time and (current_time - last_emit_time[task_id] < 0.03):
                     should_emit = False
                 else:
                     data = {
                         "id": args[0],
-                        "delta": args[1],
+                        "delta": accumulated_deltas[task_id],
                         "speed": args[2],
                         "todayTraffic": self._transfer_service.controller.get_today_traffic()
                     }
+                    accumulated_deltas[task_id] = 0
             
             if should_emit and data:
                 last_emit_time[task_id] = current_time
@@ -282,13 +288,12 @@ class TDriveService:
         return await self._auth_service.get_user_avatar()
 
     async def logout(self) -> Dict[str, Any]:
-        # Clear Memory DB on logout?
-        # self.db_handler = DatabaseConnection()
-        self.file_repo = FileRepository(self.db_handler)
-        self.folder_repo = FolderRepository(self.db_handler)
-        self.trash_repo = TrashRepository(self.db_handler)
-        # Since it's Singleton, we might need a reset method if we want to clear data.
-        # But restarting app is standard for logout.
+        logger.info("Logging out, shutting down services...")
+        self._transfer_service.shutdown()
+        
+        if hasattr(self, 'gallery_manager') and hasattr(self.gallery_manager, 'close'):
+            self.gallery_manager.close()
+            
         return await self._auth_service.perform_logout()
 
     async def reset_client_for_new_login_method(self) -> Dict[str, bool]:

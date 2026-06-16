@@ -250,7 +250,7 @@ const ActionController = {
                     ActionController._appState.currentFolderContents.folders.some(f => f.name === fileName);
 
                 if (isDuplicate) {
-                    ActionController._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', fileName));
+                    ActionController._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', UIManager.escapeHtml(fileName)));
                     return;
                 }
 
@@ -286,7 +286,7 @@ const ActionController = {
                 ActionController._appState.currentFolderContents.folders.some(f => f.name === folderName);
 
             if (isDuplicate) {
-                ActionController._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', folderName));
+                ActionController._uiModals.showAlert(window.t('dialog.ul_failed'), window.t('dialog.file_exists').replace('{name}', UIManager.escapeHtml(folderName)));
                 return;
             }
 

@@ -31,8 +31,8 @@ class StreamBuffer:
         FolderRepository(self._db)
         TrashRepository(self._db)
         
-        # Locks for concurrent access to same chunk
-        self._locks: Dict[str, asyncio.Lock] = {}
+        # Track active downloads to prevent duplicate requests and memory leaks
+        self._active_downloads: Dict[str, asyncio.Future] = {}
         
         # Tracking for dynamic readahead
         self._active_readaheads: Dict[Tuple[int, int], asyncio.Task] = {}
@@ -80,7 +80,6 @@ class StreamBuffer:
             
             # Calculate intersection of requested range and current chunk
             chunk_start = chunk_idx * self.chunk_size
-            chunk_start + len(chunk_data)
             
             # Intersection relative to chunk
             slice_start = max(0, current_read_pos - chunk_start)
@@ -91,8 +90,8 @@ class StreamBuffer:
                 current_read_pos += (slice_end - slice_start)
 
             # Trigger dynamic readahead (depth = 2)
-            for offset in range(1, 3):
-                target_chunk = chunk_idx + offset
+            for ra_offset in range(1, 3):
+                target_chunk = chunk_idx + ra_offset
                 cache_key = (file_id, target_chunk)
                 
                 # Only schedule if it's not already cached and not currently downloading
@@ -110,17 +109,22 @@ class StreamBuffer:
             self._cache.move_to_end(cache_key)
             return self._cache[cache_key]
 
-        # Use a lock to prevent multiple downloads of the same chunk
+        # Use a Future to prevent multiple downloads of the same chunk without leaking memory
         lock_key = f"{file_id}_{chunk_idx}"
-        if lock_key not in self._locks:
-            self._locks[lock_key] = asyncio.Lock()
-        
-        async with self._locks[lock_key]:
-            # Double check after acquiring lock
+        if lock_key in self._active_downloads:
+            # Wait for the already-in-progress download to finish
+            await self._active_downloads[lock_key]
             if cache_key in self._cache:
                 self._cache.move_to_end(cache_key)
                 return self._cache[cache_key]
+            return b""
 
+        # Create a new Future for this download
+        loop = asyncio.get_running_loop()
+        download_future = loop.create_future()
+        self._active_downloads[lock_key] = download_future
+        
+        try:
             # 2. Download and Decrypt
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
             if not msg_id:
@@ -148,6 +152,12 @@ class StreamBuffer:
             # 3. Update Cache
             self._add_to_cache(cache_key, decrypted_data)
             return decrypted_data
+            
+        finally:
+            # Mark the Future as done and clean it up to prevent memory leaks
+            if not download_future.done():
+                download_future.set_result(True)
+            self._active_downloads.pop(lock_key, None)
 
     def _add_to_cache(self, key, data):
         self._cache[key] = data

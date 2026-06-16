@@ -80,7 +80,7 @@ const FileTreeView = {
             
             const ghost = document.createElement('div');
             ghost.id = 'drag-ghost';
-            ghost.innerHTML = `<i class="fas fa-folder"></i> <span>${folder.name}</span>`;
+            ghost.innerHTML = `<i class="fas fa-folder"></i> <span>${UIManager.escapeHtml(folder.name)}</span>`;
             document.body.appendChild(ghost);
             e.dataTransfer.setDragImage(ghost, 0, 0);
             setTimeout(() => { document.body.removeChild(ghost); }, 0);
@@ -140,7 +140,7 @@ const FileTreeView = {
         const contentDiv = document.createElement('div');
         contentDiv.className = 'folder-content';
         const icon = isRoot ? 'fa-hdd' : 'fa-folder'; 
-        contentDiv.innerHTML = `<i class="fas ${icon} folder-icon"></i><span class="folder-name">${folder.name}</span>`;
+        contentDiv.innerHTML = `<i class="fas ${icon} folder-icon"></i><span class="folder-name">${UIManager.escapeHtml(folder.name)}</span>`;
         
         contentDiv.addEventListener('mouseenter', (e) => {
             const nameSpan = contentDiv.querySelector('.folder-name');
@@ -212,7 +212,7 @@ const FileTreeView = {
         const tooltip = document.getElementById('tree-tooltip');
         if (!tooltip) return;
         const icon = isRoot ? 'fa-hdd' : 'fa-folder';
-        tooltip.innerHTML = `<i class="fas ${icon}"></i><span>${text}</span>`;
+        tooltip.innerHTML = `<i class="fas ${icon}"></i><span>${UIManager.escapeHtml(text)}</span>`;
         isActive ? tooltip.classList.add('active-folder') : tooltip.classList.remove('active-folder');
         const rect = targetEl.getBoundingClientRect();
         tooltip.style.left = `${rect.left}px`;

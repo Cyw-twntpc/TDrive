@@ -47,7 +47,7 @@ const ActionView = {
                     toggleIcon = `<span class="tree-toggle-placeholder"></span>`;
                 }
 
-                contentEl.innerHTML = `${toggleIcon} <i class="fas fa-folder"></i> <span class="folder-name">${folder.name}</span>`;
+                contentEl.innerHTML = `${toggleIcon} <i class="fas fa-folder"></i> <span class="folder-name">${UIManager.escapeHtml(folder.name)}</span>`;
 
                 if (folder.id === appState.currentFolderId) {
                     contentEl.classList.add('current-location');
@@ -168,11 +168,11 @@ const ActionView = {
                     ${visualHtml}
                 </div>
                 <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
-                    <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_name')}</td><td style="word-break: break-all;">${item.name}</td></tr>
+                    <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_name')}</td><td style="word-break: break-all;">${UIManager.escapeHtml(item.name)}</td></tr>
                     <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_type')}</td><td>${typeStr}</td></tr>
                     <tr><td style="color: #666;">${window.t('dialog.detail_size')}</td><td>${sizeStr}</td></tr>
                     <tr><td style="color: #666;">${window.t('dialog.detail_date')}</td><td>${dateStr}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_path')}</td><td style="word-break: break-all;">${pathStr}</td></tr>
+                    <tr><td style="color: #666;">${window.t('dialog.detail_path')}</td><td style="word-break: break-all;">${UIManager.escapeHtml(pathStr)}</td></tr>
                 </table>
                 <div id="adv-details-container" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; min-height: 40px;">
                     <div id="adv-details-spinner" style="text-align: center; color: #999;">
@@ -205,7 +205,7 @@ const ActionView = {
                                 let rows = '';
                                 for (const [key, value] of Object.entries(response.metadata)) {
                                     const translatedKey = window.t(`meta.${key}`) || key;
-                                    rows += `<tr><td style="color: #666; width: 90px;">${translatedKey}:</td><td style="word-break: break-all;">${value}</td></tr>`;
+                                    rows += `<tr><td style="color: #666; width: 90px;">${UIManager.escapeHtml(translatedKey)}:</td><td style="word-break: break-all;">${UIManager.escapeHtml(value)}</td></tr>`;
                                 }
                                 table.innerHTML = rows;
                                 table.style.display = 'table';
