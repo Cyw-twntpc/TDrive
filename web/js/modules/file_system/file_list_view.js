@@ -143,7 +143,7 @@ const FileListView = {
 
     _createGridItemElement(item, isFolder, AppState) {
         const itemEl = document.createElement('div');
-        itemEl.className = 'file-item grid-item';
+        itemEl.className = 'list-item file-item grid-item';
         itemEl.draggable = false;
         itemEl.dataset.id = item.id;
         itemEl.dataset.name = item.name;
@@ -222,7 +222,7 @@ const FileListView = {
 
     _createItemElement(item, isFolder, AppState) {
         const itemEl = document.createElement('div');
-        itemEl.className = 'file-item';
+        itemEl.className = 'list-item file-item';
         itemEl.draggable = false; // [Modified] Default to false to allow click-then-drag
         itemEl.dataset.id = item.id;
         itemEl.dataset.name = item.name;
@@ -347,7 +347,7 @@ const FileListView = {
         }
 
         itemEl.innerHTML = `
-            <div class="file-item-col name">
+            <div class="col file-item-col name">
                 <div class="name-col-main">
                     ${iconHtml}
                     ${thumbHtml}
@@ -362,9 +362,9 @@ const FileListView = {
                     <button class="item-action-btn delete-btn" title="${window.t('menu.move_to_trash')}"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
-            <div class="file-item-col date">${item.modif_date}</div>
-            <div class="file-item-col type">${UIManager.getFileTypeDescription(item.name, isFolder)}</div>
-            <div class="file-item-col size">${item.size}</div>
+            <div class="col file-item-col date">${item.modif_date}</div>
+            <div class="col file-item-col type">${UIManager.getFileTypeDescription(item.name, isFolder)}</div>
+            <div class="col file-item-col size">${item.size}</div>
         `;
         
         // Add a double-click listener for folders to navigate into them.

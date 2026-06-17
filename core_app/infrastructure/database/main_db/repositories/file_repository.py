@@ -186,9 +186,10 @@ class FileRepository(BaseRepository):
         else:
             params = (fts_query, fts_query)
 
+        with_clause = f"WITH RECURSIVE {ancestry_cte}" if not is_global_search else ""
+        
         full_sql = f"""
-        WITH RECURSIVE 
-            {ancestry_cte if not is_global_search else ''}
+        {with_clause}
         SELECT 
             'folder' as type, f.id, f.parent_id, f.name, f.total_size as size, f.modif_date
         FROM search_index s

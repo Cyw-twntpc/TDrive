@@ -28,7 +28,7 @@
     transition: background-color 0.15s;
 }
 
-.tree-item:hover::before { background-color: #f0f6ff; }
+.tree-item:hover::before { background-color: var(--item-hover-bg); }
 .tree-item.active::before { background-color: var(--selected-bg-color); }
 
 /* Active text styling remains on content */
@@ -77,7 +77,7 @@
     border-radius: 50%; 
     flex-shrink: 0; 
 }
-.folder-toggle:hover { background-color: #eef1f5; }
+.folder-toggle:hover { background-color: var(--hover-bg-color); }
 .folder-toggle.open { transform: rotate(90deg); }
 
 /* Placeholder for items without children to maintain alignment */
@@ -142,7 +142,7 @@
     transition: background-color 0.15s;
     color: var(--text-color);
 }
-#move-tree-container .tree-content:hover { background-color: #f5f7fa; }
+#move-tree-container .tree-content:hover { background-color: var(--hover-bg-color); }
 #move-tree-container .tree-content.selected { background-color: var(--selected-bg-color); color: var(--primary-color); font-weight: 500; }
 #move-tree-container .tree-content i.fa-folder { margin-right: 8px; color: var(--primary-color); font-size: 16px; }
 #move-tree-container .tree-toggle { width: 20px; text-align: center; color: #888; margin-right: 4px; font-size: 12px; transition: transform 0.2s; }
@@ -176,7 +176,7 @@
 }
 
 .tree-content:hover {
-    background-color: #f0f2f5;
+    background-color: var(--hover-bg-color);
 }
 
 .tree-content.selected {

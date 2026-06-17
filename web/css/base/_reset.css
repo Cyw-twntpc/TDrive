@@ -1,0 +1,62 @@
+.hidden {
+    display: none !important;
+}
+
+/* Custom Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* For specific containers that need even thinner scrollbars */
+.file-tree-nav::-webkit-scrollbar,
+.content-scroll-area::-webkit-scrollbar {
+    width: 4px;
+}
+
+.unselectable { 
+    user-select: none; 
+}
+
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+    -webkit-app-region: no-drag;
+}
+
+body { 
+    font-family: var(--font-family-main); 
+    background-color: var(--background-color); 
+    color: var(--text-color); 
+    font-size: 16px; 
+    overflow: hidden; 
+    user-select: none; 
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    padding: 0;
+}
+
+input, textarea {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+}
+
+img, svg, .no-drag {
+    -webkit-user-drag: none;
+    pointer-events: none;
+}

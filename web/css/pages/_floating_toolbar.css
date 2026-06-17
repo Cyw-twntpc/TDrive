@@ -46,7 +46,7 @@
 
 .toolbar-btn:hover {
     background-color: rgba(0, 0, 0, 0.05);
-    color: var(--primary-color, #007bff); /* 使用主題色 */
+    color: var(--primary-color);
 }
 
 .toolbar-btn:active {

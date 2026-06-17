@@ -1,12 +1,20 @@
-@import url('base/_base.css');
-@import url('layout/_layout.css');
-@import url('components/_components.css');
+@import url('base/_variables.css');
+@import url('base/_reset.css');
+@import url('layout/_app.css');
+@import url('layout/_sidebar.css');
+@import url('layout/_header.css');
+@import url('components/_buttons.css');
+@import url('components/_forms.css');
+@import url('components/_modals.css');
+@import url('components/_popovers.css');
+@import url('components/_lists.css');
+@import url('components/_gallery.css');
+@import url('components/_global_indicators.css');
 @import url('pages/_file_list.css');
 @import url('pages/_file_tree.css');
 @import url('pages/_trash.css');
 @import url('pages/_floating_toolbar.css');
-@import url('components/_transfer_manager.css');
-@import url('components/_global_indicators.css');
+@import url('pages/_transfer.css');
 /* Drag and Drop Visuals */
 .drop-target {
     background-color: rgba(0, 122, 255, 0.1) !important;

@@ -322,7 +322,7 @@ const ActionController = {
         ActionController._uiManager.startProgress();
         ActionController._appState.currentFolderContents = { folders: [], files: [] }; 
         FileListHandler.sortAndRender(ActionController._appState); 
-        FileListHandler.updateBreadcrumb(ActionController._appState, ActionController._navigateToCallback);
+        FileListView.updateBreadcrumb(ActionController._appState, ActionController._navigateToCallback);
 
         const rootFolder = ActionController._appState.folderTreeData.find(f => f.parent_id === null);
         const baseFolderId = (ActionController._appState.searchScope === 'all' && rootFolder) ? rootFolder.id : ActionController._appState.currentFolderId;

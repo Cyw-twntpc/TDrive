@@ -36,7 +36,7 @@ const TrashView = {
         
         AppState.trashItems.forEach(item => {
             const el = document.createElement('div');
-            el.className = 'trash-item';
+            el.className = 'list-item trash-item';
             el.dataset.id = item.id;
             el.dataset.type = item.type;
             

@@ -1,0 +1,249 @@
+/* Shared Data List Styles for Files and Trash */
+.data-list-header {
+    font-weight: 500;
+    color: var(--text-light-color);
+    background: var(--main-content-bg);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    border-bottom: 2px solid var(--border-color);
+}
+
+/* Base columns for flex layout (File List) */
+.data-list-header .col, .list-item .col {
+    display: flex;
+    align-items: center;
+    padding: 12px 10px;
+}
+
+.list-item .col {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.list-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 6px;
+    transition: background-color 0.1s, opacity 0.3s;
+    position: relative;
+    cursor: pointer;
+}
+
+.list-item:hover {
+    background-color: var(--item-hover-bg);
+    cursor: default;
+}
+
+.list-item.selected {
+    background-color: var(--selected-bg-color);
+}
+
+/* Name Column Main Flex rules */
+.name-col-main {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    position: relative;
+    flex-grow: 1;
+    min-width: 0;
+    gap: 12px;
+}
+
+.name-col-main i {
+    font-size: 20px;
+    width: 24px;
+    text-align: center;
+    pointer-events: none;
+    flex-shrink: 0;
+}
+
+.name-and-path {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex-grow: 1;
+}
+
+.name-wrapper {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.name-part-base {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.name-part-ext {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.folder-icon {
+    color: var(--primary-color);
+}
+
+.file-icon {
+    color: var(--text-light-color);
+}
+
+/* List Thumbnail (Shared) */
+.list-thumb-img {
+    width: 24px;
+    height: 24px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+/* Sorting */
+.data-list-header .sortable {
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 0.2s, color 0.2s;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+}
+
+.data-list-header .sortable:hover {
+    background-color: #f0f6ff;
+    color: var(--primary-color);
+}
+
+.header-name-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sort-icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    position: relative;
+    top: 1px;
+}
+
+.sort-icon::before,
+.sort-icon::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    opacity: 0.4;
+}
+
+.sortable:not(.asc):not(.desc) .sort-icon::before {
+    border-bottom: 6px solid var(--sort-icon-color);
+    top: 0px;
+}
+
+.sortable:not(.asc):not(.desc) .sort-icon::after {
+    border-top: 6px solid var(--sort-icon-color);
+    bottom: -2px;
+}
+
+.sortable.asc .sort-icon::before {
+    border-bottom: 6px solid var(--primary-color);
+    top: 0px;
+    opacity: 1;
+}
+
+.sortable.desc .sort-icon::after {
+    border-top: 6px solid var(--primary-color);
+    bottom: -2px;
+    opacity: 1;
+}
+
+/* Selection Box */
+.selection-box {
+    position: absolute;
+    background: var(--selection-box-bg);
+    border: var(--selection-box-border);
+    z-index: 100;
+    pointer-events: none;
+    display: none;
+}
+
+.is-selecting {
+    user-select: none;
+}
+
+/* Action Buttons */
+.item-action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #b0b8c4;
+    font-size: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.15s ease-in-out, background-color 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+/* This is triggered from the list section wrapper */
+.file-list-section:not(.is-selecting) .list-item:hover .item-action-btn,
+.trash-list-section:not(.is-selecting) .list-item:hover .item-action-btn,
+.list-item:hover .item-action-btn {
+    visibility: visible;
+    opacity: 1;
+}
+
+.item-action-btn:hover {
+    background-color: #e9eef5;
+}
+
+.item-action-btn.rename-btn:hover { color: var(--text-color); }
+.item-action-btn.move-btn:hover { color: var(--primary-color); }
+.item-action-btn.download-btn:hover { color: var(--primary-color); }
+.item-action-btn.delete-btn:hover { color: var(--danger-color); }
+.item-action-btn.restore-btn:hover { color: var(--primary-color); }
+
+/* Empty state shared */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #adb5bd;
+    text-align: center;
+    height: 100%;
+    min-height: 300px;
+}
+
+.empty-state i {
+    font-size: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 18px;
+    font-weight: 500;
+}
