@@ -201,7 +201,9 @@ class DownloadStrategy(TransferStrategy):
             last_downloaded = current
             last_update_time = now
             speed = delta / time_diff if time_diff > 0 else 0
-            asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
+            _t = asyncio.create_task(self.context.controller.update_transferred_bytes(delta))
+            self.context.shared_state.background_tasks.add(_t)
+            _t.add_done_callback(self.context.shared_state.background_tasks.discard)
             progress_callback(main_task_id, delta, speed)
 
         async with self.context._semaphore:

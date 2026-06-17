@@ -33,6 +33,8 @@ class SharedState:
         # --- Task Management ---
         # Stores references to active background tasks to prevent garbage collection.
         self.active_tasks: Dict[str, asyncio.Task] = {}
+        # Stores references to fire-and-forget tasks to prevent GC
+        self.background_tasks: set[asyncio.Task] = set()
         # Timer for debouncing database uploads after modifications.
         self.db_upload_timer: Optional[threading.Timer] = None
         

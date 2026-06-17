@@ -46,6 +46,12 @@ class Bridge(QObject):
         
         logger.debug("Bridge initialized.")
 
+    def _fire_and_forget(self, coro):
+        task = asyncio.create_task(coro)
+        self._service._shared_state.background_tasks.add(task)
+        task.add_done_callback(self._service._shared_state.background_tasks.discard)
+        return task
+
     def _run_background_task(self, coro, result_signal, request_id):
         """Executes a coroutine in background and emits result via signal."""
         async def task_wrapper():
@@ -61,7 +67,7 @@ class Bridge(QObject):
                 }
                 result_signal.emit(error_payload)
         
-        asyncio.create_task(task_wrapper())
+        self._fire_and_forget(task_wrapper())
 
     def _wait_for_async(self, coro):
         """Synchronously waits for an async coroutine using a local event loop."""
@@ -215,7 +221,7 @@ class Bridge(QObject):
                 }
                 self.queryResultReady.emit(error_payload)
         
-        asyncio.create_task(task_wrapper())
+        self._fire_and_forget(task_wrapper())
 
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
@@ -227,7 +233,7 @@ class Bridge(QObject):
     def search_db_items(self, base_folder_id, search_term, request_id):
         emitter = self.queryResultReady.emit
         coro = self._service.search_db_items(base_folder_id, search_term, emitter, request_id)
-        asyncio.create_task(coro)
+        self._fire_and_forget(coro)
 
     # --- File and Folder Service Slots (Async with return) ---
     @Slot(result=list)
@@ -297,7 +303,7 @@ class Bridge(QObject):
             except Exception as e:
                 logger.error(f"Error cancelling task {task_id}: {e}")
 
-        asyncio.create_task(_do_cancel())
+        self._fire_and_forget(_do_cancel())
         return {"success": True}
 
     @Slot(str, result=dict)
@@ -308,7 +314,7 @@ class Bridge(QObject):
             except Exception as e:
                 logger.error(f"Error pausing task {task_id}: {e}")
 
-        asyncio.create_task(_do_pause())
+        self._fire_and_forget(_do_pause())
         return {"success": True}
 
     @Slot(str, result=dict)
@@ -319,7 +325,7 @@ class Bridge(QObject):
             except Exception as e:
                  logger.error(f"Error resuming task {task_id}: {e}")
 
-        asyncio.create_task(_do_resume())
+        self._fire_and_forget(_do_resume())
         return {"success": True}
 
     @Slot(str, result=dict)
@@ -350,7 +356,7 @@ class Bridge(QObject):
         import json
         try:
             val = json.loads(value)
-        except:
+        except json.JSONDecodeError:
             val = value
         self._settings_manager.set(key, val)
 

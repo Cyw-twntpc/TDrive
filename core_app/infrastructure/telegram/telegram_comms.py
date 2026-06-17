@@ -66,7 +66,7 @@ async def _ensure_no_ttl(client, group_id: int):
 async def get_group_id(client, group_name: str = "TDrive") -> int | None:
     """Finds or creates the dedicated storage group on Telegram."""
     try:
-        dialogs = await client.get_dialogs()
+        dialogs = await client.get_dialogs(limit=None)
         for dialog in dialogs:
             if dialog.is_group and dialog.name == group_name:
                 await _ensure_no_ttl(client, dialog.id)
