@@ -51,9 +51,10 @@ class DatabaseConnection:
 
     def _execute_write(self, cursor: sqlite3.Cursor, sql: str, params: tuple, score: int = 1):
         """Executes write operation with Write-Ahead Logging (WAL) pattern."""
-        self.transaction_logger.append(sql, params)
-        cursor.execute(sql, params)
-        self.sync_manager.add_change(score)
+        with self._db_lock:
+            self.transaction_logger.append(sql, params)
+            cursor.execute(sql, params)
+            self.sync_manager.add_change(score)
 
     def _init_db(self):
         logger.debug(f"Initializing database schema in {self.db_path}...")

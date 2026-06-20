@@ -125,6 +125,9 @@ class StreamingService:
             READ_BLOCK = 64 * 1024 # 64KB chunks to socket
 
             while remaining > 0:
+                if request.transport and request.transport.is_closing():
+                    break
+                    
                 # We request from buffer. Buffer handles the big 8MB chunks caching.
                 # Here we just ask for what we need to push to socket.
                 # To avoid blocking loop, we read reasonable amount.

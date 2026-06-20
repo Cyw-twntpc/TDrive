@@ -308,9 +308,19 @@ class TransferService:
         }
 
     def set_concurrency_limit(self, limit: int):
-        """Dynamically update concurrency limit (Note: Only applies to new tasks grabbed by semaphore)"""
+        """Dynamically update concurrency limit without dropping waiting tasks."""
         if limit < 1: limit = 1
+        diff = limit - self.concurrency_limit
         self.concurrency_limit = limit
-        # Re-create semaphore (this will take effect for new transfers waiting for the semaphore)
-        self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        if diff > 0:
+            for _ in range(diff):
+                self._semaphore.release()
+        elif diff < 0:
+            # Drain excess quota asynchronously so we don't block
+            async def drain():
+                for _ in range(abs(diff)):
+                    await self._semaphore.acquire()
+            self.shared_state.loop.create_task(drain())
+            
         logger.info(f"Concurrency limit updated to {self.concurrency_limit}")
