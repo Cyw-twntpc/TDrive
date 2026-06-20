@@ -13,7 +13,7 @@ class SessionManager:
     
     @staticmethod
     def get_session_path(api_id: int) -> str:
-        return f'./file/user_{api_id}.session.enc'
+        return f'./file/user_data/user_{api_id}.session.enc'
 
     @staticmethod
     def load_session(api_id: int) -> StringSession:

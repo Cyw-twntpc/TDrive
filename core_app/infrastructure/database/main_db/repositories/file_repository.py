@@ -18,7 +18,7 @@ class FileRepository(BaseRepository):
     def add_file(self, folder_id: int, name: str, modif_date_ts: float, 
                  file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
                  preview_msg_id: int | None = None, preview_hash: str | None = None,
-                 map_msg_id: int | None = None):
+                 map_msg_id: int | None = None, has_thumb: bool = False):
         if not self._is_valid_item_name(name):
             raise errors.InvalidNameError(f"檔案名稱 '{name}' 包含無效字元。")
 
@@ -41,8 +41,8 @@ class FileRepository(BaseRepository):
                         raise ValueError("file_hash and size are required when creating new file content.")
                     
                     self._execute_write(cursor,
-                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_msg_id) VALUES (?, ?, ?, ?, ?)",
-                        (file_hash, size, preview_msg_id, preview_hash, map_msg_id), score=1
+                        "INSERT INTO files (hash, size, preview_msg_id, preview_hash, map_msg_id, has_thumb) VALUES (?, ?, ?, ?, ?, ?)",
+                        (file_hash, size, preview_msg_id, preview_hash, map_msg_id, 1 if has_thumb else 0), score=1
                     )
                     target_file_id = cursor.lastrowid
                 else:

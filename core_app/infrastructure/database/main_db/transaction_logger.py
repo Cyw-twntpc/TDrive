@@ -9,7 +9,7 @@ from typing import Tuple, Any
 logger = logging.getLogger(__name__)
 
 class TransactionLogger:
-    def __init__(self, log_path: str = './file/pending_ops.bin'):
+    def __init__(self, log_path: str = './file/user_data/pending_ops.bin'):
         self.log_path = log_path
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
 

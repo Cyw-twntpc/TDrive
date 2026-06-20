@@ -37,7 +37,7 @@ class FileService:
                 conn = db._get_conn()
                 cur = conn.cursor()
                 cur.execute('''
-                    SELECT m.id as map_id, m.file_id, f.thumb_src_folder_id 
+                    SELECT m.id as map_id, m.file_id, f.thumb_src_folder_id, f.has_thumb
                     FROM file_folder_map m
                     JOIN files f ON m.file_id = f.id 
                     WHERE m.folder_id = ?
@@ -59,7 +59,10 @@ class FileService:
             thumbs = self.gallery_manager.get_thumbnails(file_ids)
             
             # 3. Check for missing thumbnails and download their packages
-            missing_file_ids = set(file_ids) - {int(k) for k in thumbs.keys()}
+            # Absolutely strictly ONLY consider files that are explicitly marked with has_thumb=1
+            expecting_thumb_file_ids = {row['file_id'] for row in files_info if row['has_thumb'] == 1}
+            missing_file_ids = expecting_thumb_file_ids - {int(k) for k in thumbs.keys()}
+            
             if missing_file_ids:
                 # Find which source folders we need to download from
                 # If thumb_src_folder_id is NULL, the thumbnail is in the CURRENT folder's package

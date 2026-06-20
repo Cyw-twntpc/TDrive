@@ -387,7 +387,7 @@ class UploadStrategy(TransferStrategy):
                             parent_id, file_name, time.time(), 
                             file_hash=original_file_hash, size=total_size, 
                             preview_msg_id=preview_msg_id, preview_hash=preview_hash,
-                            map_msg_id=None 
+                            map_msg_id=None, has_thumb=bool(thumb_bytes)
                         )
                     except (sqlite3.IntegrityError, errors.ItemAlreadyExistsError):
                         # Race condition detected: File was added by another task concurrently.

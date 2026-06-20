@@ -89,7 +89,8 @@ class DatabaseConnection:
             preview_msg_id INTEGER,
             preview_hash TEXT,
             map_msg_id INTEGER,
-            thumb_src_folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
+            thumb_src_folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+            has_thumb BOOLEAN DEFAULT 0
         )
         ''')
 

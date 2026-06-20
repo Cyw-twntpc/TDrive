@@ -22,7 +22,7 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
 
     api_id = shared_state.api_id
     api_hash = shared_state.api_hash
-    session_file = f'./file/user_{api_id}.session'
+    session_file = f'./file/user_data/user_{api_id}.session'
 
     if not (api_id and api_hash):
         logger.error("Cannot reconnect: API credentials not found in SharedState.")

@@ -14,7 +14,7 @@ class SettingsManager:
         "useDefaultDownloadPath": False
     }
 
-    def __init__(self, settings_dir="file", settings_filename="settings.json"):
+    def __init__(self, settings_dir="file/user_data", settings_filename="settings.json"):
         # Resolve the absolute path based on the current working directory
         self.settings_dir = os.path.abspath(os.path.join(os.getcwd(), settings_dir))
         self.settings_file = os.path.join(self.settings_dir, settings_filename)

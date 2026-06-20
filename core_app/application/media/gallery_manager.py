@@ -37,7 +37,7 @@ class GalleryManager:
     """
     Manages global local disk thumbnail database and preview image caching.
     """
-    def __init__(self, db_path: str = "./file/local_thumbs.db"):
+    def __init__(self, db_path: str = "./file/user_data/local_thumbs.db"):
         self.db_path = db_path
         self._db_handler = DatabaseConnection()
         self._init_local_db()

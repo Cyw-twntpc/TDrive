@@ -30,7 +30,7 @@ class AuthService:
 
     def _get_saved_api_credentials(self) -> Optional[tuple[int, str]]:
         try:
-            info_path = './file/info.json'
+            info_path = './file/user_data/info.json'
             if not os.path.exists(info_path):
                 logger.info("Local credentials file 'info.json' not found.")
                 return None, None
@@ -57,14 +57,14 @@ class AuthService:
 
     def _save_api_credentials(self):
         try:
-            os.makedirs('./file', exist_ok=True)
+            os.makedirs('./file/user_data', exist_ok=True)
             
             api_id_str = str(self.shared_state.api_id)
             secure_data = {"api_hash": self.shared_state.api_hash}
             
-            if os.path.exists('./file/info.json'):
+            if os.path.exists('./file/user_data/info.json'):
                 try:
-                    with open('./file/info.json', 'r') as f:
+                    with open('./file/user_data/info.json', 'r') as f:
                         current_info = json.load(f)
                     decrypted_blob = crypto_handler.decrypt_secure_data(current_info.get("secure_data_blob"), api_id_str)
                     if decrypted_blob and 'group_id' in decrypted_blob:
@@ -75,7 +75,7 @@ class AuthService:
             encrypted_blob = crypto_handler.encrypt_secure_data(secure_data, api_id_str)
             final_info = { "api_id": self.shared_state.api_id, "secure_data_blob": encrypted_blob }
 
-            with open('./file/info.json', 'w') as f:
+            with open('./file/user_data/info.json', 'w') as f:
                 json.dump(final_info, f)
             logger.info("API credentials have been successfully encrypted and saved.")
             
@@ -128,7 +128,7 @@ class AuthService:
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
         client = None
         try:
-            os.makedirs('./file', exist_ok=True)
+            os.makedirs('./file/user_data', exist_ok=True)
             
             # Start with a fresh session for new login attempt
             from telethon.sessions import StringSession
@@ -313,7 +313,7 @@ class AuthService:
             logger.error("連線失敗")
             return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
         
-        avatar_path = './file/user_avatar.jpg'
+        avatar_path = './file/user_data/user_avatar.jpg'
         try:
             path = await client.download_profile_photo('me', file=avatar_path)
             if not path: 
@@ -336,8 +336,8 @@ class AuthService:
             logger.info("Successfully disconnected the client.")
         
         try:
-            if os.path.exists('./file'):
-                shutil.rmtree('./file')
+            if os.path.exists('./file/user_data'):
+                shutil.rmtree('./file/user_data')
                 logger.info("Successfully cleaned up local file cache.")
         except Exception as e:
             logger.error(f"Error during local file cleanup on logout: {e}", exc_info=True)
