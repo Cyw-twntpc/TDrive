@@ -11,7 +11,6 @@ function initWebChannel() {
     if (typeof qt !== 'undefined' && qt.webChannelTransport) {
         new QWebChannel(qt.webChannelTransport, function(channel) {
             window.tdrive_bridge = channel.objects.tdrive_bridge;
-            console.log("QWebChannel bridge initialized on login page.");
             
             if (window.tdrive_bridge && window.tdrive_bridge.login_event) {
                 window.tdrive_bridge.login_event.connect(on_login_event);
@@ -50,7 +49,6 @@ function setupEventListeners() {
             showScreen(targetScreen);
 
             if (targetScreen === 'methodScreen' && window.tdrive_bridge) {
-                console.log("Returning to method screen, resetting client...");
                 window.tdrive_bridge.reset_client_for_new_login_method(result => {
                     if (!result.success) console.error("Failed to reset client on backend.");
                 });
@@ -151,14 +149,12 @@ function showErrorScreen(title, message) {
 }
 
 window.prefill_api_credentials = (apiId, apiHash) => {
-    console.log("Prefilling API credentials from expired session.");
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     
     if (apiIdInput && apiHashInput) {
         apiIdInput.value = apiId;
         apiHashInput.value = apiHash;
-        console.log("Credentials prefilled. Waiting for user submission.");
     } else {
         console.error("Prefill failed: API input fields not found.");
     }
@@ -232,7 +228,6 @@ function handleQrExpired() {
 }
 
 function on_login_event(event) {
-    console.log('Login Event Received:', event);
     switch (event.status) {
         case 'completed': 
             loginSuccess(); 

@@ -38,15 +38,8 @@ class StreamBuffer:
         self._active_readaheads: Dict[Tuple[int, int], asyncio.Task] = {}
         self._last_chunk_requested: Dict[int, int] = {}
 
-    def _cancel_readaheads(self, file_id: int):
-        """Cancels all pending readahead tasks for a specific file to free up bandwidth."""
-        keys_to_cancel = [k for k in self._active_readaheads.keys() if k[0] == file_id]
-        for k in keys_to_cancel:
-            task = self._active_readaheads[k]
-            if not task.done():
-                task.cancel()
-                logger.debug(f"Seek detected: Cancelled readahead task for chunk {k[1]}")
-            del self._active_readaheads[k]
+        # Lock to protect shared mutable state across coroutines
+        self._state_lock = asyncio.Lock()
 
     async def read(self, file_id: int, offset: int, length: int, file_size: int, file_hash: str) -> bytes:
         """
@@ -69,11 +62,18 @@ class StreamBuffer:
         chunk_map = await self._get_chunk_map(file_id)
 
         # Seek Detection: Cancel old readaheads if we jumped more than 1 chunk
-        last_requested = self._last_chunk_requested.get(file_id, -1)
-        if last_requested != -1 and abs(start_chunk_idx - last_requested) > 1:
-            self._cancel_readaheads(file_id)
+        async with self._state_lock:
+            last_requested = self._last_chunk_requested.get(file_id, -1)
+            if last_requested != -1 and abs(start_chunk_idx - last_requested) > 1:
+                keys_to_cancel = [k for k in self._active_readaheads.keys() if k[0] == file_id]
+                for k in keys_to_cancel:
+                    task = self._active_readaheads[k]
+                    if not task.done():
+                        task.cancel()
+                    del self._active_readaheads[k]
         
-        self._last_chunk_requested[file_id] = end_chunk_idx
+        async with self._state_lock:
+            self._last_chunk_requested[file_id] = end_chunk_idx
 
         for chunk_idx in range(start_chunk_idx, end_chunk_idx + 1):
             chunk_data = await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
@@ -97,7 +97,8 @@ class StreamBuffer:
                 # Only schedule if it's not already cached and not currently downloading
                 if cache_key not in self._cache and cache_key not in self._active_readaheads:
                     task = asyncio.create_task(self._readahead(file_id, target_chunk, file_hash, chunk_map))
-                    self._active_readaheads[cache_key] = task
+                    async with self._state_lock:
+                        self._active_readaheads[cache_key] = task
 
         return buffer.getvalue()
 
@@ -128,7 +129,7 @@ class StreamBuffer:
             # 2. Download and Decrypt
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
             if not msg_id:
-                logger.warning(f"Chunk {chunk_idx+1} not found in map for file {file_id}. Map keys: {list(chunk_map.keys())}")
+                logger.warning(f"Chunk {chunk_idx+1} not found in map for file {file_id}")
                 return b""
 
             client = self.shared_state.client
@@ -150,7 +151,7 @@ class StreamBuffer:
                 raise IOError(f"Failed to download chunk {chunk_idx+1}")
 
             # 3. Update Cache
-            self._add_to_cache(cache_key, decrypted_data)
+            await self._add_to_cache(cache_key, decrypted_data)
             return decrypted_data
             
         finally:
@@ -159,26 +160,30 @@ class StreamBuffer:
                 download_future.set_result(True)
             self._active_downloads.pop(lock_key, None)
 
-    def _add_to_cache(self, key, data):
-        self._cache[key] = data
-        self.current_cache_size += len(data)
-        self._cache.move_to_end(key)
+    async def _add_to_cache(self, key, data):
+        async with self._state_lock:
+            self._cache[key] = data
+            self.current_cache_size += len(data)
+            self._cache.move_to_end(key)
 
-        # Evict
-        while self.current_cache_size > self.cache_capacity and self._cache:
-            k, v = self._cache.popitem(last=False)
-            self.current_cache_size -= len(v)
+            # Evict
+            while self.current_cache_size > self.cache_capacity and self._cache:
+                k, v = self._cache.popitem(last=False)
+                self.current_cache_size -= len(v)
 
     async def _readahead(self, file_id: int, chunk_idx: int, file_hash: str, chunk_map: Dict[int, int]):
         """Preloads the next chunk in background."""
         cache_key = (file_id, chunk_idx)
-        if cache_key in self._cache:
-            self._active_readaheads.pop(cache_key, None)
-            return # Already cached
+        async with self._state_lock:
+            if cache_key in self._cache:
+                self._active_readaheads.pop(cache_key, None)
+                return # Already cached
 
         try:
             # Check if this chunk actually exists
             if (chunk_idx + 1) not in chunk_map:
+                async with self._state_lock:
+                    self._active_readaheads.pop(cache_key, None)
                 return
 
             await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
@@ -187,7 +192,8 @@ class StreamBuffer:
         except Exception as e:
             logger.debug(f"Readahead failed for chunk {chunk_idx}: {e}")
         finally:
-            self._active_readaheads.pop(cache_key, None)
+            async with self._state_lock:
+                self._active_readaheads.pop(cache_key, None)
 
     async def _get_chunk_map(self, file_id: int) -> Dict[int, int]:
         """
@@ -206,7 +212,7 @@ class StreamBuffer:
                 client, self.shared_state.group_id, self.shared_state.api_id, file_id
             )
             if not chunks:
-                logger.warning(f"_get_chunk_map: No chunks returned for file_id {file_id} from MetadataManager.")
+                logger.debug(f"_get_chunk_map: No chunks returned for file_id {file_id} from MetadataManager.")
 
             # chunks is list of [part_num, message_id, part_hash]
             return {c[0]: c[1] for c in chunks}

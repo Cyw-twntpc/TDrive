@@ -1,4 +1,6 @@
 import os
+import re
+import zipfile
 import logging
 from typing import Dict, Any
 
@@ -34,8 +36,8 @@ def extract_metadata(file_path: str) -> Dict[str, Any]:
                                 meta['cam_mod'] = str(v).strip().replace('\x00', '')
                             elif tag == 'ISOSpeedRatings':
                                 meta['iso'] = str(v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to extract EXIF metadata: {e}")
         except ImportError:
             pass
         except Exception as e:
@@ -136,8 +138,6 @@ def extract_metadata(file_path: str) -> Dict[str, Any]:
     # Modern Office (.docx, .xlsx, .pptx)
     elif ext in ['.docx', '.xlsx', '.pptx']:
         try:
-            import zipfile
-            import re
             with zipfile.ZipFile(file_path, 'r') as z:
                 if 'docProps/app.xml' in z.namelist():
                     app_xml = z.read('docProps/app.xml').decode('utf-8', errors='ignore')
@@ -159,8 +159,6 @@ def extract_metadata(file_path: str) -> Dict[str, Any]:
     # OpenDocument (.odt, .ods, .odp)
     elif ext in ['.odt', '.ods', '.odp']:
         try:
-            import zipfile
-            import re
             with zipfile.ZipFile(file_path, 'r') as z:
                 if 'meta.xml' in z.namelist():
                     meta_xml = z.read('meta.xml').decode('utf-8', errors='ignore')

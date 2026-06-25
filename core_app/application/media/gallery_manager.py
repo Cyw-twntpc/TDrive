@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 import base64
+import os
 from typing import Dict, Optional
 from collections import OrderedDict
 
@@ -45,7 +46,6 @@ class GalleryManager:
         self._preview_cache = LRUCache(capacity_mb=200) 
 
     def _init_local_db(self):
-        import os
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")

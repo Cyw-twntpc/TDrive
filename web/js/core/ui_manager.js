@@ -152,7 +152,6 @@ const UIManager = {
     },
 
     handleConnectionStatus(status) {
-        console.log(`Connection status changed: ${status}`);
         this.toggleModal('connection-lost-overlay', status === 'lost');
     }
 };

@@ -229,7 +229,6 @@ const TransferModel = {
     },
 
     updateFileExistence(changes) {
-        console.log("[TransferManager] Received existence changes:", changes);
         if (!Array.isArray(changes)) return;
         
         changes.forEach(change => {

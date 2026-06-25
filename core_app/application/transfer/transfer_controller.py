@@ -59,8 +59,8 @@ class TransferController:
                     date_str = self._last_date_str
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, self._persist_traffic_chunk, date_str, to_save)
-                except RuntimeError:
-                    pass
+                except RuntimeError as e:
+                    logger.warning("Failed to persist traffic chunk: %s", e)
 
     def _persist_traffic_chunk(self, date_str: str, to_save: int):
         if to_save > 0:
@@ -71,7 +71,7 @@ class TransferController:
             to_save = self._unsaved_traffic
             self._unsaved_traffic = 0
             self.queue_repo.update_traffic(self._last_date_str, to_save)
-        logger.info("Pending traffic statistics have been persisted.")
+        logger.debug("Pending traffic statistics have been persisted.")
 
     # --- Task Registration ---
 
@@ -213,7 +213,7 @@ class TransferController:
 
     def reset_zombie_tasks(self):
         self.queue_repo.reset_zombie_tasks()
-        logger.info("Reset zombie tasks in SQL database to 'paused' state.")
+        logger.debug("Reset zombie tasks in SQL database to 'paused' state.")
 
     async def pause_all_sub_tasks(self, main_task_id: str):
         loop = asyncio.get_running_loop()
@@ -226,3 +226,63 @@ class TransferController:
 
     def get_created_artifacts(self, task_id: str) -> list:
         return self.queue_repo.get_created_artifacts(task_id)
+
+    # --- Async Wrappers (for calling from async context without blocking event loop) ---
+
+    async def add_upload_task_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.add_upload_task(*args, **kwargs))
+
+    async def add_download_task_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.add_download_task(*args, **kwargs))
+
+    async def add_child_tasks_bulk_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.add_child_tasks_bulk(*args, **kwargs))
+
+    async def mark_sub_task_completed_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.mark_sub_task_completed(*args, **kwargs))
+
+    async def mark_sub_task_failed_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.mark_sub_task_failed(*args, **kwargs))
+
+    async def mark_paused_async(self, *args, **kwargs):
+        # Reserved for future async callers; currently unused.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.mark_paused(*args, **kwargs))
+
+    async def mark_failed_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.mark_failed(*args, **kwargs))
+
+    async def mark_resumed_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.mark_resumed(*args, **kwargs))
+
+    async def update_task_total_size_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.update_task_total_size(*args, **kwargs))
+
+    async def remove_task_async(self, *args, **kwargs):
+        # Reserved for future async callers; currently unused.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.remove_task(*args, **kwargs))
+
+    async def get_task_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.get_task(*args, **kwargs))
+
+    async def record_created_artifact_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.record_created_artifact(*args, **kwargs))
+
+    async def set_file_hash_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.set_file_hash(*args, **kwargs))
+
+    async def set_preview_msg_id_async(self, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.set_preview_msg_id(*args, **kwargs))

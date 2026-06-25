@@ -58,8 +58,8 @@ def reveal_in_explorer(path: str) -> bool:
 
     # --- Method 2: Command Line (Fallback) ---
     try:
-        cmd = f'explorer /select,"{abs_path}"'
-        logger.debug(f"Executing fallback command: {cmd}")
+        cmd = ['explorer', '/select,', abs_path]
+        logger.debug(f"Executing fallback command: explorer /select,...")
         subprocess.Popen(cmd)
         return True
     except Exception as e:

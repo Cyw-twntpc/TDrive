@@ -8,12 +8,21 @@ import base64
 import os
 import json
 import logging
+import secrets
 import machineid
+import keyring
 
 logger = logging.getLogger(__name__)
 
-# Hardcoded secret pepper
-APP_PEPPER = b'TDRIVE_SECRET_PEPPER_!@#$%'
+_KEYRING_SERVICE = 'TDrive'
+_KEYRING_KEY = 'crypto_pepper'
+
+def _get_pepper() -> bytes:
+    pepper = keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
+    if pepper is None:
+        pepper = secrets.token_hex(32)
+        keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, pepper)
+    return pepper.encode('utf-8')
 
 def _get_encryption_key(api_id: str) -> bytes:
     """Generates a deterministic 32-byte key from api_id, pepper, and hardware ID."""
@@ -22,10 +31,10 @@ def _get_encryption_key(api_id: str) -> bytes:
     try:
         hwid = machineid.id().encode('utf-8')
     except Exception as e:
-        logger.warning(f"Could not retrieve hardware ID, using a fallback secret. Error: {e}")
-        hwid = b'fallback_entropy_for_tdrive_!@#$%' 
+        logger.warning(f"Could not retrieve hardware ID, using fallback. Error: {e}")
+        hwid = secrets.token_hex(32).encode('utf-8')
     
-    machine_specific_pepper = APP_PEPPER + hwid
+    machine_specific_pepper = _get_pepper() + hwid
 
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -79,8 +88,7 @@ def decrypt_secure_data(encrypted_str: str, api_id: str) -> dict | None:
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         return json.loads(plaintext.decode('utf-8'))
     except (InvalidTag, ValueError, TypeError, json.JSONDecodeError) as e:
-        logger.warning(f"Failed to decrypt user credentials. This can happen if the API ID is incorrect, "
-                       f"the data is corrupt, or it's from a different machine. Error: {e}")
+        logger.warning(f"Failed to decrypt user credentials: {e}")
         return None
 
 def hash_data(data_source: str) -> str:
@@ -95,14 +103,10 @@ def hash_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 def generate_key(password: str, salt: str) -> bytes:
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt.encode('utf-8'),
-        iterations=480000,
-        backend=default_backend()
-    )
-    return kdf.derive(password.encode('utf-8'))
+    """Derive a 32-byte AES key from high-entropy inputs.
+    Input is a SHA256 hash (64 hex chars) which already has full entropy,
+    so a single SHA256 pass is sufficient — no need for PBKDF2 stretching."""
+    return hashlib.sha256((password + salt).encode()).digest()
 
 def encrypt(plaintext: bytes, key: bytes) -> bytes:
     iv = os.urandom(12)

@@ -1,3 +1,4 @@
+import math
 import logging
 from pathlib import Path
 
@@ -90,7 +91,6 @@ class SplashScreen(QWidget):
         bg_rect = self.rect().adjusted(20, 20, -20, -20)
         
         # Create flowing gradient
-        import math
         offset1 = math.sin(self.gradient_offset * math.pi * 2) * 0.15
         offset2 = math.cos(self.gradient_offset * math.pi * 2) * 0.15
         offset3 = math.sin(self.gradient_offset * math.pi * 2 + math.pi) * 0.15

@@ -7,6 +7,7 @@ import asyncio
 import io
 import os
 import time
+import sqlite3
 from typing import Dict, List, OrderedDict, Any
 from collections import OrderedDict as SysOrderedDict, defaultdict
 
@@ -56,7 +57,7 @@ class MetadataManager:
             return
 
         try:
-            logger.info("Executing adaptive background sync...")
+            logger.debug("Executing adaptive background sync...")
             await self.sync_db_to_cloud(
                 self.shared_state.client,
                 self.shared_state.group_id,
@@ -81,7 +82,7 @@ class MetadataManager:
             
             if not snapshot_msg:
                 # Fallback: Try search if not found in recent history (e.g. buried deep)
-                logger.info("Snapshot not found in recent history. Trying deep search...")
+                logger.debug("Snapshot not found in recent history. Trying deep search...")
                 messages = await client.get_messages(group_id, limit=1, search='#tdrive_db_snapshot')
                 if messages:
                     snapshot_msg = messages[0]
@@ -125,7 +126,6 @@ class MetadataManager:
                         ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots'}
                         sql_dump = sql_dump.replace('\r\n', '\n')
                         
-                        import sqlite3
                         statements = []
                         current_stmt = []
                         for line in sql_dump.split('\n'):
@@ -190,7 +190,8 @@ class MetadataManager:
                         try:
                             if os.path.exists(self.db.transaction_logger.log_path):
                                 os.remove(self.db.transaction_logger.log_path)
-                        except: pass
+                        except Exception:
+                            logger.warning("Failed to remove corrupt transaction log file.", exc_info=True)
 
             return True
 
@@ -206,7 +207,7 @@ class MetadataManager:
             try:
                 # 0. Pre-Sync Integrity Check
                 if hasattr(self.db, 'run_integrity_check') and not self.db.run_integrity_check():
-                    logger.error("CRITICAL: Database integrity check failed! Aborting cloud sync to protect remote backup.")
+                    logger.error("DB integrity check failed. Aborting cloud sync.")
                     return
 
                 def _dump_and_rotate():
@@ -255,7 +256,8 @@ class MetadataManager:
                     ids_to_del = [m.id for m in old_msgs if m.id != msg.id and m.id != self._last_snapshot_msg_id]
                     if ids_to_del:
                         await client.delete_messages(group_id, ids_to_del)
-                except: pass
+                except Exception:
+                    logger.warning("Failed to clean up old database snapshots.", exc_info=True)
                 
             except Exception as e:
                 logger.error(f"Failed to sync DB to cloud: {e}", exc_info=True)
@@ -427,7 +429,7 @@ class MetadataManager:
                     msgs_list = list(messages_to_delete)
                     for i in range(0, len(msgs_list), 100):
                         await client.delete_messages(group_id, msgs_list[i:i+100])
-                    logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} independent map files and {len(msgs_list) - len(maps_to_delete_cloud_ids)} content chunks from cloud.")
+                    logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} map files and {len(msgs_list) - len(maps_to_delete_cloud_ids)} chunks from cloud.")
             except Exception as e:
                 logger.error(f"Failed to delete map files and chunks: {e}")
 
@@ -449,14 +451,14 @@ class MetadataManager:
                     db_info = cur.fetchone()
                     
                     if db_info and db_info['thumbs_db_msg_id']:
-                        logger.info(f"Downloading existing thumbs.db for folder {folder_id} before update...")
+                        logger.debug(f"Downloading existing thumbs.db for folder {folder_id} before update...")
                         old_db_bytes = await telegram_comms.download_data_as_bytes(
                             client, group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
                         )
                         if old_db_bytes:
                             gallery_manager.load_thumbs_db_from_bytes(folder_id, old_db_bytes)
 
-                logger.info(f"Updating thumbs.db for folder {folder_id} with {len(new_thumbs_map)} new items.")
+                logger.debug(f"Updating thumbs.db for folder {folder_id} with {len(new_thumbs_map)} new items.")
                 
                 # 2. Update In-Memory DB
                 # This returns the serialized bytes of the FULL new DB

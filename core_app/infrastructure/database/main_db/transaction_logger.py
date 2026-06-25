@@ -82,7 +82,7 @@ class TransactionLogger:
                         
                         data = f.read(data_len)
                         if len(data) < data_len:
-                            logger.warning(f"Incomplete payload data found in {path} (Expected {data_len}, got {len(data)}). Safe truncation applied.")
+                            logger.warning(f"Incomplete payload in {path}: expected {data_len}, got {len(data)}.")
                             break
                             
                         footer = f.read(4)

@@ -99,7 +99,8 @@ class FileStatusWatcher:
             return True
         try:
             return self._db.check_folder_exists(folder_id)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to check remote folder {folder_id}: {e}")
             return False
 
     def get_all_statuses(self) -> Dict[str, bool]:

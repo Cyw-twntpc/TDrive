@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import time
 
@@ -99,7 +100,6 @@ class DefragWorker:
                     new_thumbs_map = thumbs_result.get("thumbnails", {})
                     
                     # Convert base64 back to bytes
-                    import base64
                     binary_thumbs_map = {int(k): base64.b64decode(v) for k, v in new_thumbs_map.items()}
                     
                     if binary_thumbs_map:

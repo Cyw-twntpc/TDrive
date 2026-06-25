@@ -89,7 +89,6 @@ async def get_group_id(client, group_name: str = "TDrive") -> int | None:
 async def upload_single_chunk(client, group_id: int, part_bytes: bytes, progress_callback: Callable | None = None):
     """Uploads a single byte sequence with backoff and retry, disguised as an mp4."""
     async def _upload_chunk():
-        import io
         f = io.BytesIO(part_bytes)
         f.name = "chunk.txt"
         return await client.send_file(
@@ -124,7 +123,6 @@ async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original
             part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_chunk)
             
             async def _upload_chunk():
-                import io
                 f = io.BytesIO(encrypted_chunk)
                 f.name = "chunk.txt"
                 return await client.send_file(
@@ -159,7 +157,7 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
             return None
             
         if len(messages) != len(msg_ids):
-            logger.error(f"Requested {len(msg_ids)} chunks but only got {len(messages)}. Aborting to prevent data corruption.")
+            logger.error(f"Chunk count mismatch: requested {len(msg_ids)}, got {len(messages)}.")
             return None
             
         key = cr.generate_key(original_hash[:32], original_hash[-32:])

@@ -143,8 +143,12 @@ class TDriveService:
             task_id = f"bg_task_{id(task)}"
             self._shared_state.active_tasks[task_id] = task
             
-            def _on_done(_):
+            def _on_done(t):
                 self._shared_state.active_tasks.pop(task_id, None)
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc:
+                        logger.error(f"Background task failed: {exc}", exc_info=exc)
                 
             task.add_done_callback(_on_done)
 
@@ -175,7 +179,6 @@ class TDriveService:
             bot_manager = BotManager()
             
             async def setup_worker_bots():
-                import asyncio
                 await bot_manager.init_saved_bots(self._shared_state)
                 await bot_manager.recover_lost_bots(self._shared_state)
                 await bot_manager.provision_missing_bots(self._shared_state, target_count=5)

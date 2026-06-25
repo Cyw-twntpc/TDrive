@@ -183,7 +183,7 @@ class TransferService:
         self.controller.mark_paused(task_id)
         self.shared_state.loop.create_task(self.controller.pause_all_sub_tasks(task_id))
         
-        logger.info(f"Task {task_id} marked as paused (Sub-tasks cancelled: {len(sub_tasks)}).")
+        logger.debug(f"Task {task_id} marked as paused (Sub-tasks cancelled: {len(sub_tasks)}).")
 
     # --- Resume Logic (Complex, kept here for now as it orchestrates both) ---
 
@@ -191,10 +191,10 @@ class TransferService:
         self.shared_state.active_tasks[task_id] = asyncio.current_task()
 
         try:
-            task_info = self.controller.get_task(task_id)
+            task_info = await self.controller.get_task_async(task_id)
             if not task_info: return
 
-            self.controller.mark_resumed(task_id)
+            await self.controller.mark_resumed_async(task_id)
             client = await utils.ensure_client_connected(self.shared_state)
             if not client: return
             
@@ -275,18 +275,18 @@ class TransferService:
             # Check for cancellation within results to avoid marking task as completed
             for res in results:
                 if isinstance(res, asyncio.CancelledError):
-                    logger.info(f"Resume task {task_id} caught cancellation signal in child tasks.")
+                    logger.debug(f"Resume task {task_id} caught cancellation signal in child tasks.")
                     raise res # Jump to outer CancelledError handler
             
             if is_upload:
                  await self.uploader._finalize_thumbnails(client, task_id)
                  await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
 
-            self.controller.mark_sub_task_completed(task_id, task_id)
+            await self.controller.mark_sub_task_completed_async(task_id, task_id)
             progress_callback(task_id, task_info.get('name', ''), task_info.get('total_size', 0), task_info.get('total_size', 0), 'completed', 0)
 
         except asyncio.CancelledError:
-            logger.info(f"Resume task {task_id} cancelled/paused.")
+            logger.debug(f"Resume task {task_id} cancelled/paused.")
             raise
         finally:
             if task_id in self.shared_state.active_tasks:
@@ -323,4 +323,4 @@ class TransferService:
                     await self._semaphore.acquire()
             self.shared_state.loop.create_task(drain())
             
-        logger.info(f"Concurrency limit updated to {self.concurrency_limit}")
+        logger.debug(f"Concurrency limit updated to {self.concurrency_limit}")

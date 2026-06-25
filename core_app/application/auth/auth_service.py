@@ -8,6 +8,7 @@ import io
 import shutil
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, ApiIdInvalidError, PasswordHashInvalidError, PhoneNumberInvalidError
+from telethon.sessions import StringSession
 from core_app.core.errors import ErrorCode
 
 from typing import TYPE_CHECKING, Dict, Any, Optional, Callable
@@ -128,10 +129,10 @@ class AuthService:
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
         client = None
         try:
-            os.makedirs('./file/user_data', exist_ok=True)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: os.makedirs('./file/user_data', exist_ok=True))
             
             # Start with a fresh session for new login attempt
-            from telethon.sessions import StringSession
             session = StringSession() 
 
             client = TelegramClient(session, api_id, api_hash)
@@ -183,7 +184,8 @@ class AuthService:
         try:
             await qr_login.wait()
             self.shared_state.is_logged_in = True
-            self._save_api_credentials() # This now triggers session save too
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._save_api_credentials)
             event_callback({"status": "completed"})
         except SessionPasswordNeededError:
             event_callback({"status": "password_needed"})
@@ -216,7 +218,8 @@ class AuthService:
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
             self.shared_state.is_logged_in = True
-            self._save_api_credentials() # Saves session
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._save_api_credentials)
             return {"success": True}
         except PhoneCodeInvalidError:
             logger.warning("An invalid verification code was submitted.")
@@ -235,7 +238,8 @@ class AuthService:
         try:
             await client.sign_in(password=password)
             self.shared_state.is_logged_in = True
-            self._save_api_credentials() # Saves session
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._save_api_credentials)
             return {"success": True}
         except PasswordHashInvalidError:
             logger.warning("An invalid 2FA password was submitted.")
@@ -256,8 +260,7 @@ class AuthService:
                  return {"success": False}
 
             # Use fresh StringSession
-            from telethon.sessions import StringSession
-            session = StringSession()
+            session = StringSession() 
 
             new_client = TelegramClient(session, api_id, api_hash)
             await new_client.connect()
@@ -320,9 +323,14 @@ class AuthService:
                 logger.info("User has no profile picture set.")
                 return {"success": False, "error_code": ErrorCode.AVATAR_NOT_FOUND}
             
-            with open(path, "rb") as image_file:
-                encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-            os.remove(path)
+            loop = asyncio.get_running_loop()
+
+            def _read_avatar():
+                with open(path, "rb") as image_file:
+                    return base64.b64encode(image_file.read()).decode('utf-8')
+
+            encoded_string = await loop.run_in_executor(None, _read_avatar)
+            await loop.run_in_executor(None, os.remove, path)
             return {"success": True, "avatar_base64": f"data:image/jpeg;base64,{encoded_string}"}
         except Exception as e:
             logger.error(f"Failed to get user avatar: {e}", exc_info=True)

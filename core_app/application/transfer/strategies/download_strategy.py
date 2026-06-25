@@ -54,7 +54,7 @@ class DownloadStrategy(TransferStrategy):
 
                 save_path = await loop.run_in_executor(None, fp.get_unique_filepath, destination_dir, file_details['name'])
 
-                self.context.controller.add_download_task(
+                await self.context.controller.add_download_task_async(
                     task_id, db_id, save_path, file_details['size'], is_folder=False, file_details=file_details
                 )
                 
@@ -106,7 +106,7 @@ class DownloadStrategy(TransferStrategy):
                         "name": item['name']
                     })
 
-            self.context.controller.add_download_task(
+            await self.context.controller.add_download_task_async(
                 main_task_id, folder_db_id, local_root_path, total_size, is_folder=True
             )
             progress_callback(main_task_id, root_folder_name, 0, total_size, 'queued', 0, is_folder=True)
@@ -141,20 +141,20 @@ class DownloadStrategy(TransferStrategy):
                     )
                 )
 
-            self.context.controller.add_child_tasks_bulk(main_task_id, child_tasks_map)
+            await self.context.controller.add_child_tasks_bulk_async(main_task_id, child_tasks_map)
 
             progress_callback(main_task_id, root_folder_name, -1, total_size, 'transferring', 0)
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
-            task_info = self.context.controller.get_task(main_task_id)
+            task_info = await self.context.controller.get_task_async(main_task_id)
             if task_info and task_info['status'] not in ['cancelled', 'failed', 'paused']:
-                self.context.controller.mark_sub_task_completed(main_task_id, main_task_id)
+                await self.context.controller.mark_sub_task_completed_async(main_task_id, main_task_id)
                 progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
                 self.context.watcher.add_watch(main_task_id, local_root_path, 'local')
 
         except Exception as e:
             logger.error(f"Download folder failed: {e}", exc_info=True)
-            self.context.controller.mark_failed(main_task_id, ErrorCode.TASK_FAILED)
+            await self.context.controller.mark_failed_async(main_task_id, ErrorCode.TASK_FAILED)
         finally:
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
@@ -165,11 +165,12 @@ class DownloadStrategy(TransferStrategy):
                                     progress_callback: Callable,
                                     resume_parts: set = None):
         def chunk_cb(part_num):
-            self.context.controller.update_progress(main_task_id, sub_task_id, part_num)
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num)
         
         last_downloaded = 0
         try:
-            task_info = self.context.controller.get_task(main_task_id)
+            task_info = await self.context.controller.get_task_async(main_task_id)
             sub_status = None
             if task_info:
                 if task_info.get('is_folder'):
@@ -206,8 +207,9 @@ class DownloadStrategy(TransferStrategy):
             _t.add_done_callback(self.context.shared_state.background_tasks.discard)
             progress_callback(main_task_id, delta, speed)
 
+        loop = asyncio.get_running_loop()
         async with self.context._semaphore:
-            main_status = self.context.controller.queue_repo.get_main_task_status(main_task_id)
+            main_status = await loop.run_in_executor(None, self.context.controller.queue_repo.get_main_task_status, main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
                 return
 
@@ -236,7 +238,7 @@ class DownloadStrategy(TransferStrategy):
                     chunk_callback=chunk_cb
                 )
                 
-                self.context.controller.mark_sub_task_completed(main_task_id, sub_task_id)
+                await self.context.controller.mark_sub_task_completed_async(main_task_id, sub_task_id)
 
                 if main_task_id == sub_task_id:
                     progress_callback(main_task_id, file_details['name'], file_details['size'], file_details['size'], 'completed', 0)
@@ -246,7 +248,7 @@ class DownloadStrategy(TransferStrategy):
                 raise
             except Exception as e:
                 logger.error(f"Download failed {save_path}: {e}")
-                self.context.controller.mark_sub_task_failed(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
+                await self.context.controller.mark_sub_task_failed_async(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
             finally:
                 if sub_task_id in self.context.shared_state.active_tasks:
                     del self.context.shared_state.active_tasks[sub_task_id]
@@ -272,5 +274,5 @@ class DownloadStrategy(TransferStrategy):
             if os.path.exists(path):
                 try:
                     os.remove(path)
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning("Failed to delete %s: %s", path, e)

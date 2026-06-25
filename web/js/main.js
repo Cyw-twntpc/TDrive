@@ -45,7 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function onFolderContentsReady(response) {
         const { data, request_id } = response;
         if (request_id !== AppState.currentViewRequestId) {
-            console.log(`Ignoring stale folder content for request_id: ${request_id}`);
             return;
         }
 
@@ -87,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
             renderListAndSyncManager();
         } else if (type === 'done') {
             UIManager.stopProgress();
-            console.log(`Search complete for request_id: ${request_id}`);
         } else if (type === 'error') {
             UIManager.stopProgress();
             UIManager.handleBackendError(data || { message: window.t('dialog.search_err') });
@@ -353,8 +351,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
-        console.log("Successfully connected to backend signals.");
-
         ActionController.init({
             appState: AppState, apiService: ApiService, uiModals: UIModals,
             transferManager: TransferManager, refreshAllCallback: refreshAll,

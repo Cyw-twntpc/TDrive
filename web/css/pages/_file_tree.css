@@ -115,7 +115,6 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     white-space: nowrap;
     pointer-events: none; /* Allow events to pass through */
-    display: none;
     border: 1px solid var(--border-color);
     font-size: 16px;
     display: flex;

@@ -14,10 +14,10 @@ const TransferManager = {
         TransferManager.setupEventListeners();
         
         if (window.tdrive_bridge && window.tdrive_bridge.transfer_progress_updated) {
-            window.tdrive_bridge.transfer_progress_updated.connect(TransferModel.updateTask.bind(TransferView));
+            window.tdrive_bridge.transfer_progress_updated.connect(TransferModel.updateTask.bind(TransferModel));
         }
         if (window.tdrive_bridge && window.tdrive_bridge.file_status_changed) {
-            window.tdrive_bridge.file_status_changed.connect(TransferModel.updateFileExistence.bind(TransferView));
+            window.tdrive_bridge.file_status_changed.connect(TransferModel.updateFileExistence.bind(TransferModel));
         }
 
         if (TransferManager.ApiService.getInitialStats) {

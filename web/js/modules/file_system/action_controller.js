@@ -340,7 +340,6 @@ const ActionController = {
             if (!response.success) {
                 ActionController._uiManager.handleBackendError({ error_code: response.error_code || 'SEARCH_FAILED' });
             } else {
-                console.log(`Search complete for request_id: ${requestId}`);
             }
         });
     },

@@ -27,8 +27,20 @@ const ApiService = {
         return new Promise((resolve, reject) => {
             if (window.tdrive_bridge && window.tdrive_bridge[functionName] && window.tdrive_bridge[signalName]) {
                 const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                const TIMEOUT_MS = 30000;
+                let settled = false;
+                const timeout = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    window.tdrive_bridge[signalName].disconnect(handler);
+                    console.warn(`Bridge call '${functionName}' timed out after ${TIMEOUT_MS}ms`);
+                    resolve({ success: false, error_code: 'TIMEOUT' });
+                }, TIMEOUT_MS);
                 const handler = (result) => {
                     if (result && result.request_id === requestId) {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timeout);
                         window.tdrive_bridge[signalName].disconnect(handler);
                         if (result.data && result.data.success === false) {
                             console.warn(`Bridge call '${functionName}' reported a failure:`, result.data.error_code);

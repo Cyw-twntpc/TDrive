@@ -5,6 +5,7 @@ import string
 from telethon import TelegramClient
 from telethon.tl.functions.channels import InviteToChannelRequest, EditAdminRequest
 from telethon.tl.types import ChatAdminRights
+from telethon.sessions import StringSession
 import logging
 from typing import List, Dict, Optional
 from core_app.infrastructure.database.main_db.database import DatabaseConnection
@@ -158,8 +159,6 @@ class BotManager:
                                 # Boot it up
                                 old_threshold = getattr(client, 'flood_sleep_threshold', 60)
                                 try:
-                                    from telethon.sessions import StringSession
-                                    import asyncio
                                     
                                     # Temporarily disable main client auto-sleep for invite operation
                                     client.flood_sleep_threshold = 0
@@ -230,7 +229,7 @@ class BotManager:
                         resp = await conv.get_response()
                         
                         if 'How are we going to call it' not in resp.text:
-                            logger.warning(f"BotFather refused to create new bot. Response: {resp.text}")
+                            logger.warning(f"BotFather refused to create new bot. Response: {resp.text:.200s}")
                             if 'too many attempts' in resp.text.lower():
                                 # Handle flood wait
                                 match = re.search(r'in (\d+) seconds', resp.text)
@@ -249,7 +248,7 @@ class BotManager:
                         resp = await conv.get_response()
                         
                         if 'choose a username' not in resp.text:
-                            logger.error(f"Unexpected response when setting name: {resp.text}")
+                            logger.error(f"Unexpected response when setting name: {resp.text:.200s}")
                             continue
                             
                         # 3. Choose unique username
@@ -285,7 +284,6 @@ class BotManager:
                                 self.mark_bot_joined(bot_id)
                                 
                                 # 7. Initialize immediately (Hot-plug)
-                                from telethon.sessions import StringSession
                                 bot_client = TelegramClient(StringSession(""), shared_state.api_id, shared_state.api_hash)
                                 await bot_client.start(bot_token=token)
                                 bot_client.tdrive_worker_name = username
@@ -297,7 +295,7 @@ class BotManager:
                             else:
                                 logger.error(f"Failed to invite newly created bot {username} to the group. It will not be added to the pool.")
                         else:
-                            logger.error(f"Failed to create bot {username}. Response: {resp.text}")
+                            logger.error(f"Failed to create bot {username}. Response: {resp.text:.200s}")
 
                 except asyncio.TimeoutError:
                     logger.error("Timeout waiting for BotFather response.")

@@ -35,8 +35,8 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
             if shared_state.client:
                 try:
                     await shared_state.client.disconnect()
-                except Exception:
-                    pass 
+                except Exception as e:
+                    logger.warning(f"Error disconnecting old client: {e}") 
 
             new_client = TelegramClient(session_file, api_id, api_hash)
             await new_client.connect()

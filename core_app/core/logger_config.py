@@ -15,6 +15,10 @@ class JSONFormatter(logging.Formatter):
             "name": record.name,
             "message": record.getMessage()
         }
+        if record.exc_info and record.exc_info[0]:
+            log_object["exception"] = self.formatException(record.exc_info)
+        elif record.exc_text:
+            log_object["exception"] = record.exc_text
         return json.dumps(log_object, ensure_ascii=False)
 class OneTimeFilter(logging.Filter):
     def __init__(self):
@@ -42,7 +46,7 @@ def setup_logging():
             for old_log in logs_to_delete:
                 os.remove(old_log)
     except OSError as e:
-        print(f"Warning: Failed to remove old log file {e}")
+        logging.warning("Failed to remove old log file: %s", e)
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}.json.log')

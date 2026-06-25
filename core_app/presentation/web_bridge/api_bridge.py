@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import json
 from PySide6.QtCore import QObject, Slot, Signal, QEventLoop as QtEventLoop
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.native_ui.gui_utils import core_select_files, core_select_directory, reveal_in_explorer
@@ -72,7 +73,7 @@ class Bridge(QObject):
     def _wait_for_async(self, coro):
         """Synchronously waits for an async coroutine using a local event loop."""
         if self._is_busy:
-            logger.warning("BUSY: A critical operation was rejected because a previous one is still in progress.")
+            logger.warning("BUSY: Rejected overlapping critical operation.")
             return {"success": False, "error_code": ErrorCode.BUSY}
 
         # If the main asyncio loop isn't running, we can run the coroutine directly.
@@ -246,7 +247,6 @@ class Bridge(QObject):
 
     @Slot(int, result=str)
     def get_file_extended_details(self, file_id: int) -> str:
-        import json
         res_dict = self._async_call(self._service.get_file_extended_details(file_id))
         return json.dumps(res_dict)
 
@@ -346,14 +346,12 @@ class Bridge(QObject):
     # --- Settings Management ---
     @Slot(result=str)
     def get_settings(self):
-        import json
         settings = self._settings_manager.get_all()
         return json.dumps(settings)
 
     @Slot(str, str)
     def save_setting(self, key: str, value: str):
         # Value is passed as a JSON string from JS for simplicity
-        import json
         try:
             val = json.loads(value)
         except json.JSONDecodeError:

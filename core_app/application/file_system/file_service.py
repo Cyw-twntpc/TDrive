@@ -1,5 +1,8 @@
 import logging
 import asyncio
+import base64
+import time
+import os
 from telethon import errors as telethon_errors
 from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
@@ -83,7 +86,7 @@ class FileService:
                     if client:
                         for pkg in cloud_packages:
                             if pkg['thumbs_db_msg_id'] and pkg['thumbs_db_msg_id'] != 0:
-                                logger.info(f"Downloading thumbs package for folder {pkg['id']} (msg_id: {pkg['thumbs_db_msg_id']})...")
+                                logger.debug(f"Downloading thumbs package for folder {pkg['id']} (msg_id: {pkg['thumbs_db_msg_id']})...")
                                 db_bytes = await telegram_comms.download_data_as_bytes(
                                     client, self.shared_state.group_id, [pkg['thumbs_db_msg_id']], pkg['thumbs_db_hash']
                                 )
@@ -105,11 +108,11 @@ class FileService:
                             map_id = id_map[content_id]
                             mapped_thumbs[str(map_id)] = b64_data
                     except ValueError:
-                        pass
+                        logger.debug("Skipping invalid content_id: %s", content_id_str)
             
             thumbs = mapped_thumbs
 
-            logger.info(f"FileService returning {len(thumbs)} thumbnails for {folder_id} (Mapped IDs)")
+            logger.debug(f"FileService returning {len(thumbs)} thumbnails for {folder_id} (Mapped IDs)")
             return {"success": True, "thumbnails": thumbs}
         except Exception as e:
             logger.error(f"Error fetching thumbnails: {e}", exc_info=True)
@@ -155,13 +158,13 @@ class FileService:
             preview_bytes = None
             
             if info['preview_msg_id']:
-                logger.info(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
+                logger.debug(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
                 preview_bytes = await telegram_comms.download_data_as_bytes(
                     client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
                 )
             else:
                 # Fallback: Download first chunk of original file if no preview exists
-                logger.info(f"No preview found for {file_id}, attempting fallback to original file...")
+                logger.debug(f"No preview found for {file_id}, attempting fallback to original file...")
                 try:
                     chunks = await self.shared_state.metadata_manager.get_file_chunks(
                         client, self.shared_state.group_id, self.shared_state.api_id, info['content_id']
@@ -184,7 +187,6 @@ class FileService:
                 # Ideally cache by content_id, but frontend sends map_id.
                 # Let's stick to Map ID for now as the key for simplicity in 1:1 mapping with UI.
                 self.gallery_manager.cache_preview(file_id, preview_bytes)
-                import base64
                 b64_str = base64.b64encode(preview_bytes).decode('utf-8')
                 return {"success": True, "preview": b64_str}
             
@@ -236,7 +238,7 @@ class FileService:
             return {"success": False}
 
     async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
-        logger.info(f"Fetching contents for folder_id: {folder_id} from database.")
+        logger.debug(f"Fetching contents for folder_id: {folder_id} from database.")
         try:
             def _sync_db_op():
                 db = DatabaseConnection()
@@ -253,8 +255,6 @@ class FileService:
                 active_uploads = tdb.get_active_uploads(folder_id)
                 
                 if active_uploads:
-                    import time
-                    import os
                     for task in active_uploads:
                         file_name = os.path.basename(task['local_path'])
                         # Ensure we don't add duplicates if DB already has the file 
@@ -282,7 +282,7 @@ class FileService:
             return {"success": False, "error_code": errors.ErrorCode.DB_READ_FAILED}
 
     async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
-        logger.info(f"Recursively fetching contents for folder_id: {folder_id}.")
+        logger.debug(f"Recursively fetching contents for folder_id: {folder_id}.")
         try:
             def _sync_db_op():
                 db = DatabaseConnection()
@@ -297,7 +297,7 @@ class FileService:
             return {"folder_name": "Error", "items": [], "success": False, "error_code": errors.ErrorCode.DB_READ_FAILED}
 
     async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter: Callable, request_id: str):
-        logger.info(f"Starting streaming search from base_id: {base_folder_id} for term: '{search_term}'")
+        logger.debug(f"Starting streaming search from base_id: {base_folder_id} for term: '{search_term}'")
 
         def progress_callback(batch_results: dict):
             try:
@@ -314,7 +314,7 @@ class FileService:
                 
                 done_payload = {'request_id': request_id, 'type': 'done'}
                 result_signal_emitter(done_payload)
-                logger.info(f"Streaming search completed for request_id: {request_id}.")
+                logger.debug(f"Streaming search completed for request_id: {request_id}.")
             except Exception as e:
                 logger.error(f"Critical error in background search thread: {e}", exc_info=True)
                 error_payload = {'request_id': request_id, 'type': 'error', 'data': {'error_code': errors.ErrorCode.INTERNAL_ERROR}}
@@ -561,7 +561,7 @@ class FileService:
             logger.warning(f"Delete operation hit a flood wait for {e.seconds} seconds.")
             return {"success": False, "error_code": errors.ErrorCode.FLOOD_WAIT_ERROR}
         except Exception as e:
-            logger.error(f"An unknown error occurred while deleting items: {items}", exc_info=True)
+            logger.error(f"An unknown error occurred while deleting {len(items)} items", exc_info=True)
             return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
 
     async def empty_trash(self) -> Dict[str, Any]:

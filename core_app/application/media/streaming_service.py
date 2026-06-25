@@ -33,7 +33,7 @@ class StreamingService:
         # socket info structure: (address, port)
         if self.site._server and self.site._server.sockets:
             self.port = self.site._server.sockets[0].getsockname()[1]
-            logger.info(f"Streaming Proxy started on http://127.0.0.1:{self.port} (Token: {self.session_token})")
+            logger.info(f"Streaming Proxy started on http://127.0.0.1:{self.port}")
         else:
             logger.error("Failed to retrieve bound port for Streaming Proxy.")
 

@@ -39,7 +39,9 @@ class BaseRepository:
         try:
             dt_obj = datetime.fromtimestamp(ts)
             return dt_obj.strftime("%Y/%m/%d %p %I:%M").replace("AM", "上午").replace("PM", "下午")
-        except: return "-"
+        except Exception as e:
+            logger.warning("Failed to format timestamp %s: %s", ts, e)
+            return "-"
 
     def _is_valid_item_name(self, name: str) -> bool:
         if not name or name in (".", ".."): return False

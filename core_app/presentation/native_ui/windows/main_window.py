@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWidgets import QMainWindow, QApplication
+from PySide6.QtWidgets import QMainWindow, QApplication, QStackedWidget
 from PySide6.QtGui import QIcon, QCloseEvent
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -31,8 +31,6 @@ class MainWindow(QMainWindow):
         self.channel = QWebChannel()
         self.channel.registerObject("tdrive_bridge", self.bridge)
 
-        from PySide6.QtWidgets import QStackedWidget
-        
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
         
