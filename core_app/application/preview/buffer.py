@@ -13,6 +13,7 @@ from core_app.infrastructure.database.main_db.repositories.trash_repository impo
 
 logger = logging.getLogger(__name__)
 
+
 class StreamBuffer:
     """
     Manages buffering and on-demand downloading of encrypted file chunks for streaming.
@@ -23,17 +24,17 @@ class StreamBuffer:
         self.chunk_size = fp.CHUNK_SIZE # 8MB
         self.cache_capacity = cache_size_mb * 1024 * 1024
         self.current_cache_size = 0
-        
+
         # Cache: (file_id, chunk_index) -> decrypted_bytes
         self._cache = OrderedDict()
         self._db = DatabaseConnection()
         FileRepository(self._db)
         FolderRepository(self._db)
         TrashRepository(self._db)
-        
+
         # Track active downloads to prevent duplicate requests and memory leaks
         self._active_downloads: Dict[str, asyncio.Future] = {}
-        
+
         # Tracking for dynamic readahead
         self._active_readaheads: Dict[Tuple[int, int], asyncio.Task] = {}
         self._last_chunk_requested: Dict[int, int] = {}
@@ -58,7 +59,6 @@ class StreamBuffer:
         current_read_pos = offset
 
         # Retrieve chunks information from DB
-        # Optimization: We could cache this info map, but for now query is fast enough
         chunk_map = await self._get_chunk_map(file_id)
 
         # Seek Detection: Cancel old readaheads if we jumped more than 1 chunk
@@ -71,20 +71,20 @@ class StreamBuffer:
                     if not task.done():
                         task.cancel()
                     del self._active_readaheads[k]
-        
+
         async with self._state_lock:
             self._last_chunk_requested[file_id] = end_chunk_idx
 
         for chunk_idx in range(start_chunk_idx, end_chunk_idx + 1):
             chunk_data = await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
-            
+
             # Calculate intersection of requested range and current chunk
             chunk_start = chunk_idx * self.chunk_size
-            
+
             # Intersection relative to chunk
             slice_start = max(0, current_read_pos - chunk_start)
             slice_end = min(len(chunk_data), end_offset - chunk_start)
-            
+
             if slice_start < slice_end:
                 buffer.write(chunk_data[slice_start:slice_end])
                 current_read_pos += (slice_end - slice_start)
@@ -93,7 +93,7 @@ class StreamBuffer:
             for ra_offset in range(1, 3):
                 target_chunk = chunk_idx + ra_offset
                 cache_key = (file_id, target_chunk)
-                
+
                 # Only schedule if it's not already cached and not currently downloading
                 if cache_key not in self._cache and cache_key not in self._active_readaheads:
                     task = asyncio.create_task(self._readahead(file_id, target_chunk, file_hash, chunk_map))
@@ -104,7 +104,7 @@ class StreamBuffer:
 
     async def _get_chunk(self, file_id: int, chunk_idx: int, file_hash: str, chunk_map: Dict[int, int]) -> bytes:
         cache_key = (file_id, chunk_idx)
-        
+
         # 1. Check Memory Cache
         if cache_key in self._cache:
             self._cache.move_to_end(cache_key)
@@ -124,7 +124,7 @@ class StreamBuffer:
         loop = asyncio.get_running_loop()
         download_future = loop.create_future()
         self._active_downloads[lock_key] = download_future
-        
+
         try:
             # 2. Download and Decrypt
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
@@ -137,23 +137,18 @@ class StreamBuffer:
                 raise ConnectionError("Telegram client not connected")
 
             logger.debug(f"Downloading chunk {chunk_idx+1} for file {file_id} (Msg: {msg_id})")
-            
-            # Key Generation Logic:
-            # The key is derived from the *original file hash*.
-            # cr.generate_key uses file_hash[:32] and file_hash[-32:].
-            # This is consistent for all chunks.
-            
+
             decrypted_data = await telegram_comms.download_data_as_bytes(
                 client, self.shared_state.group_id, [msg_id], file_hash
             )
-            
+
             if not decrypted_data:
                 raise IOError(f"Failed to download chunk {chunk_idx+1}")
 
             # 3. Update Cache
             await self._add_to_cache(cache_key, decrypted_data)
             return decrypted_data
-            
+
         finally:
             # Mark the Future as done and clean it up to prevent memory leaks
             if not download_future.done():

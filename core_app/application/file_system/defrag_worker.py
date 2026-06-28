@@ -92,7 +92,7 @@ class DefragWorker:
                 
                 logger.info(f"DefragWorker starting defragmentation for folder {folder_id}...")
                 
-                # Step 1: Pull all thumbnails using GalleryManager (via file_service)
+                # Step 1: Pull all thumbnails using ThumbnailManager (via file_service)
                 # This will automatically reconstruct missing packages by downloading them
                 thumbs_result = await self.file_service.get_thumbnails(folder_id, return_file_id_keys=True)
                 
@@ -111,7 +111,7 @@ class DefragWorker:
                                 self.shared_state.group_id,
                                 folder_id,
                                 binary_thumbs_map,
-                                self.file_service.gallery_manager
+                                self.file_service.thumb_manager
                             )
                             logger.info(f"DefragWorker successfully defragmented folder {folder_id}.")
                 

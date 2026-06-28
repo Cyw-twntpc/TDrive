@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
 if TYPE_CHECKING:
     from core_app.core.shared_state import SharedState
-    from ..media.gallery_manager import GalleryManager
+    from ..thumbnail.manager import ThumbnailManager
+    from core_app.application.preview.image.viewer import ImagePreviewer
 
 from core_app.core import utils
 from core_app.core import errors
@@ -19,13 +20,15 @@ from core_app.infrastructure.database.main_db.repositories.folder_repository imp
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
 
 from core_app.application.file_system.defrag_worker import DefragWorker
+from core_app.application.preview.image.viewer import ImagePreviewer
 
 logger = logging.getLogger(__name__)
 
 class FileService:
-    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager'):
+    def __init__(self, shared_state: 'SharedState', thumb_manager: 'ThumbnailManager'):
         self.shared_state = shared_state
-        self.gallery_manager = gallery_manager
+        self.thumb_manager = thumb_manager
+        self.previewer = ImagePreviewer()
         self.defrag_worker = DefragWorker(shared_state, self)
         self.defrag_worker.start()
 
@@ -59,7 +62,7 @@ class FileService:
             id_map = {row['file_id']: row['map_id'] for row in files_info}
             
             # 2. Local-First Cache Retrieval
-            thumbs = self.gallery_manager.get_thumbnails(file_ids)
+            thumbs = self.thumb_manager.get_thumbnails(file_ids)
             
             # 3. Check for missing thumbnails and download their packages
             # Absolutely strictly ONLY consider files that are explicitly marked with has_thumb=1
@@ -91,10 +94,10 @@ class FileService:
                                     client, self.shared_state.group_id, [pkg['thumbs_db_msg_id']], pkg['thumbs_db_hash']
                                 )
                                 if db_bytes:
-                                    self.gallery_manager.import_package_bytes(db_bytes)
+                                    self.thumb_manager.import_package_bytes(db_bytes)
                         
                         # Re-fetch from local cache after importing missing packages
-                        thumbs = self.gallery_manager.get_thumbnails(file_ids)
+                        thumbs = self.thumb_manager.get_thumbnails(file_ids)
 
             # 4. Convert Content IDs (file_id) to Map IDs (file_folder_map.id) for frontend
             if return_file_id_keys:
@@ -121,7 +124,7 @@ class FileService:
     async def get_preview(self, file_id: int) -> Dict[str, Any]:
         try:
             # 1. Check Cache
-            preview_b64 = self.gallery_manager.get_cached_preview(file_id)
+            preview_b64 = self.previewer.get_cached_preview(file_id)
             if preview_b64:
                 return {"success": True, "preview": preview_b64}
 
@@ -181,12 +184,12 @@ class FileService:
             if preview_bytes:
                 # 4. Cache and Return
                 # We cache by Map ID or Content ID? 
-                # GalleryManager cache uses `file_id`. 
+                # ImagePreviewer cache uses `file_id`. 
                 # To be consistent with frontend requests, let's use the Map ID (which is unique per item in folder).
                 # However, if multiple maps point to same file, we duplicate cache. 
                 # Ideally cache by content_id, but frontend sends map_id.
                 # Let's stick to Map ID for now as the key for simplicity in 1:1 mapping with UI.
-                self.gallery_manager.cache_preview(file_id, preview_bytes)
+                self.previewer.cache_preview(file_id, preview_bytes)
                 b64_str = base64.b64encode(preview_bytes).decode('utf-8')
                 return {"success": True, "preview": b64_str}
             

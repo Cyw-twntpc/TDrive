@@ -14,9 +14,9 @@ from core_app.application.auth.auth_service import AuthService
 from core_app.application.file_system.file_service import FileService
 from core_app.application.file_system.folder_service import FolderService
 from core_app.application.transfer.transfer_service import TransferService
-from core_app.application.media.gallery_manager import GalleryManager
-from core_app.application.media.stream_buffer import StreamBuffer
-from core_app.application.media.streaming_service import StreamingService
+from core_app.application.file_system.thumbnail.manager import ThumbnailManager
+from core_app.application.preview.buffer import StreamBuffer
+from core_app.application.preview.video.player import VideoStreamer
 from core_app.application.auth.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -45,20 +45,20 @@ class TDriveService:
         self.metadata_manager = MetadataManager(self.db_handler, self._shared_state)
         self._shared_state.metadata_manager = self.metadata_manager
         
-        # Initialize Gallery Manager (Shared Instance)
-        self.gallery_manager = GalleryManager()
+        # Initialize Thumbnail Manager (Shared Instance)
+        self.thumb_manager = ThumbnailManager()
         
         # Initialize Streaming Components
-        self.stream_buffer = StreamBuffer(self._shared_state)
-        self.streaming_service = StreamingService(self.stream_buffer, self.db_handler)
+        self.buffer = StreamBuffer(self._shared_state)
+        self.video_player = VideoStreamer(self.buffer, self.db_handler)
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
-        self._file_service = FileService(self._shared_state, self.gallery_manager)
+        self._file_service = FileService(self._shared_state, self.thumb_manager)
         self._folder_service = FolderService(self._shared_state)
         
         # Inject MetadataManager into TransferService
-        self._transfer_service = TransferService(self._shared_state, self.gallery_manager, self.metadata_manager)
+        self._transfer_service = TransferService(self._shared_state, self.thumb_manager, self.metadata_manager)
 
     # --- Helper: Progress Adapter ---
     
@@ -192,8 +192,8 @@ class TDriveService:
         self._transfer_service.shutdown()
         
         # Stop Streaming Proxy and Player
-        if self.streaming_service:
-            await self.streaming_service.stop()
+        if self.video_player:
+            await self.video_player.stop()
         
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
@@ -229,10 +229,10 @@ class TDriveService:
         Starts the streaming proxy (if needed) and returns the stream URL.
         """
         # Ensure proxy is running
-        if not self.streaming_service.runner:
-            await self.streaming_service.start()
+        if not self.video_player.runner:
+            await self.video_player.start()
             
-        url = self.streaming_service.get_stream_url(file_id)
+        url = self.video_player.get_stream_url(file_id)
         if not url:
             logger.error("Failed to generate stream URL")
             return {"success": False}
@@ -294,8 +294,8 @@ class TDriveService:
         logger.info("Logging out, shutting down services...")
         self._transfer_service.shutdown()
         
-        if hasattr(self, 'gallery_manager') and hasattr(self.gallery_manager, 'close'):
-            self.gallery_manager.close()
+        if hasattr(self, 'thumb_manager') and hasattr(self.thumb_manager, 'close'):
+            self.thumb_manager.close()
             
         return await self._auth_service.perform_logout()
 

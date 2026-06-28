@@ -14,7 +14,9 @@ from core_app.infrastructure.telegram import telegram_comms
 from core_app.core import crypto_handler
 from core_app.core import errors
 from core_app.infrastructure.local_fs import file_processor as fp
-from core_app.application.media.image_processor import ImageProcessor
+from core_app.application.file_system.thumbnail.image_generator import ImageThumbnailGenerator
+from core_app.application.file_system.thumbnail.video_generator import VideoThumbnailGenerator
+from core_app.application.preview.image.viewer import ImagePreviewer
 from core_app.application.transfer.metadata_extractor import extract_metadata
 
 logger = logging.getLogger(__name__)
@@ -350,9 +352,11 @@ class UploadStrategy(TransferStrategy):
                 thumb_bytes, preview_bytes = None, None
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.tiff'}:
-                    thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_image, file_path)
+                    thumb_bytes = await loop.run_in_executor(None, ImageThumbnailGenerator.generate, file_path)
+                    preview_bytes = await loop.run_in_executor(None, ImagePreviewer().generate, file_path)
                 elif ext in {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv'}:
-                    thumb_bytes, preview_bytes = await loop.run_in_executor(None, ImageProcessor.process_video, file_path)
+                    thumb_bytes = await loop.run_in_executor(None, VideoThumbnailGenerator.generate, file_path)
+                    preview_bytes = None
                 
                 preview_msg_id = None
                 preview_hash = None
@@ -464,7 +468,7 @@ class UploadStrategy(TransferStrategy):
                         self.context.shared_state.group_id, 
                         f_id, 
                         new_thumbs_map,
-                        self.context.gallery_manager
+                        self.context.thumb_manager
                     )
                 
                 await loop.run_in_executor(None, self.context.controller.queue_repo.delete_task_thumbnails, main_task_id)

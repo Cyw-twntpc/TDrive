@@ -7,7 +7,7 @@ from collections import defaultdict
 
 if TYPE_CHECKING:
     from core_app.core.shared_state import SharedState
-    from ..media.gallery_manager import GalleryManager
+    from core_app.application.file_system.thumbnail.manager import ThumbnailManager
     from core_app.infrastructure.telegram.metadata_manager import MetadataManager
 
 from core_app.application.transfer.transfer_controller import TransferController
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONCURRENCY = 3
 
 class TransferService:
-    def __init__(self, shared_state: 'SharedState', gallery_manager: 'GalleryManager', metadata_manager: 'MetadataManager'):
+    def __init__(self, shared_state: 'SharedState', thumb_manager: 'ThumbnailManager', metadata_manager: 'MetadataManager'):
         self.shared_state = shared_state
         self.db = DatabaseConnection()
         self.file_repo = FileRepository(self.db)
@@ -39,7 +39,7 @@ class TransferService:
         self.metadata_manager = metadata_manager
         self.controller = TransferController()
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.folder_repo, status_change_callback=lambda x: None)
-        self.gallery_manager = gallery_manager
+        self.thumb_manager = thumb_manager
         
         # In the future, this can be loaded from user settings
         self.concurrency_limit = DEFAULT_CONCURRENCY

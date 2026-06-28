@@ -433,7 +433,7 @@ class MetadataManager:
             except Exception as e:
                 logger.error(f"Failed to delete map files and chunks: {e}")
 
-    async def update_folder_thumbnails(self, client, group_id: int, folder_id: int, new_thumbs_map: Dict[int, bytes], gallery_manager: Any):
+    async def update_folder_thumbnails(self, client, group_id: int, folder_id: int, new_thumbs_map: Dict[int, bytes], thumb_manager: Any):
         """
         Thread-safe method to update thumbs.db for a specific folder.
         Handles download, merge, re-upload, and cleanup of old versions.
@@ -441,10 +441,7 @@ class MetadataManager:
         async with self._folder_locks[folder_id]:
             try:
                 # 1. Check if DB is loaded; if not, try to download
-                if not gallery_manager.has_db(folder_id):
-                    # Helper to get DB info (Sync DB access inside Async Lock is safe here as it's a read)
-                    # Ideally we use run_in_executor but the lock is already held.
-                    # We can direct query since we are in MetadataManager
+                if not thumb_manager.has_db(folder_id):
                     conn = self.db._get_conn()
                     cur = conn.cursor()
                     cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
@@ -456,13 +453,11 @@ class MetadataManager:
                             client, group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
                         )
                         if old_db_bytes:
-                            gallery_manager.load_thumbs_db_from_bytes(folder_id, old_db_bytes)
+                            thumb_manager.load_thumbs_db_from_bytes(folder_id, old_db_bytes)
 
                 logger.debug(f"Updating thumbs.db for folder {folder_id} with {len(new_thumbs_map)} new items.")
                 
-                # 2. Update In-Memory DB
-                # This returns the serialized bytes of the FULL new DB
-                db_bytes = gallery_manager.update_thumbs_db(folder_id, new_thumbs_map)
+                db_bytes = thumb_manager.update_thumbs_db(folder_id, new_thumbs_map)
                 
                 if db_bytes:
                     # 3. Hash and Upload
