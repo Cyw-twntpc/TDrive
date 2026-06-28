@@ -6,3 +6,5 @@ venv/
 file/
 *.pdf
 AGENTS.md
+core_app/vendor/
+docs/
