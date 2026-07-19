@@ -36,7 +36,7 @@ class LRUCache:
 class ImagePreviewer:
     """
     Generates 1080p JPG previews from image files.
-    Maintains an in-memory LRU cache of preview bytes keyed by file_id.
+    Maintains an in-memory LRU cache of preview bytes keyed by content_id.
     """
 
     def __init__(self):
@@ -91,11 +91,11 @@ class ImagePreviewer:
         image.save(buffer, format_str, quality)
         return byte_array.data()
 
-    def cache_preview(self, file_id: int, image_bytes: bytes):
-        self._preview_cache.put(file_id, image_bytes)
+    def cache_preview(self, content_id: int, image_bytes: bytes):
+        self._preview_cache.put(content_id, image_bytes)
 
-    def get_cached_preview(self, file_id: int) -> Optional[str]:
-        data = self._preview_cache.get(file_id)
+    def get_cached_preview(self, content_id: int) -> Optional[str]:
+        data = self._preview_cache.get(content_id)
         if data:
             return base64.b64encode(data).decode('utf-8')
         return None

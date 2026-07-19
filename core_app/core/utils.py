@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import os
+import py7zr
 from typing import TYPE_CHECKING, Optional
 from telethon import TelegramClient
 
@@ -63,4 +64,20 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
 
 def check_path_exists(path: str) -> bool:
     return os.path.exists(path)
+
+
+VENDOR_DIR = os.path.join(os.path.dirname(__file__), '..', 'vendor')
+_extracted_cache = {}
+
+def ensure_extracted(name: str) -> str:
+    """Extract name.7z -> name/ on first call. Returns path to extracted dir."""
+    if name in _extracted_cache:
+        return _extracted_cache[name]
+    archive = os.path.join(VENDOR_DIR, f'{name}.7z')
+    target = os.path.join(VENDOR_DIR, name)
+    if not os.path.isdir(target) and os.path.isfile(archive):
+        with py7zr.SevenZipFile(archive, mode='r') as z:
+            z.extractall(path=target)
+    _extracted_cache[name] = target
+    return target
 

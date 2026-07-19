@@ -152,29 +152,33 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
     try:
         messages = await client.get_messages(group_id, ids=msg_ids)
         messages = [m for m in messages if m]
-        
+
         if not messages:
+            logger.warning(f"download_data_as_bytes: no messages returned for {msg_ids}")
             return None
-            
+
         if len(messages) != len(msg_ids):
-            logger.error(f"Chunk count mismatch: requested {len(msg_ids)}, got {len(messages)}.")
+            logger.error(f"download_data_as_bytes: chunk count mismatch: requested {len(msg_ids)}, got {len(messages)}.")
             return None
-            
+
         key = cr.generate_key(original_hash[:32], original_hash[-32:])
         final_buffer = io.BytesIO()
-        
+
         loop = asyncio.get_running_loop()
-        for message in messages:
+        for idx, message in enumerate(messages):
             encrypted_bytes = await message.download_media(file=bytes)
-            if not encrypted_bytes: continue
-            
+            if not encrypted_bytes:
+                logger.warning(f"download_data_as_bytes: message {idx} returned empty media")
+                continue
+
             decrypted_chunk = await loop.run_in_executor(None, cr.decrypt, encrypted_bytes, key)
             final_buffer.write(decrypted_chunk)
-            
-        return final_buffer.getvalue()
+
+        result = final_buffer.getvalue()
+        return result
 
     except Exception as e:
-        logger.error(f"Data download failed: {e}", exc_info=True)
+        logger.error(f"download_data_as_bytes failed: {e}", exc_info=True)
         return None
 
 async def download_single_chunk(client, message, progress_callback: Callable | None = None) -> bytes:

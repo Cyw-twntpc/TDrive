@@ -321,5 +321,17 @@
         "cam_mod": "相機型號",
         "iso": "ISO感光度",
         "pg_cnt": "頁數"
+    },
+    "preview": {
+        "select_file": "請選擇檔案以進行預覽",
+        "loading": "正在載入預覽…",
+        "doc_first_10_pages": "僅顯示前 10 頁",
+        "doc_load_full": "載入完整檔案",
+        "btn_retry": "重試",
+        "err_load_failed": "無法載入預覽內容",
+        "err_network": "預覽載入錯誤",
+        "err_doc_load_failed": "無法載入文件預覽",
+        "err_doc_full_failed": "無法載入完整文件",
+        "unknown": "未知"
     }
 }

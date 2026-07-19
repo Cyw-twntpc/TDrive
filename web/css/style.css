@@ -9,6 +9,8 @@
 @import url('components/_popovers.css');
 @import url('components/_lists.css');
 @import url('components/_gallery.css');
+@import url('components/_text-preview.css');
+@import url('components/_document-viewer.css');
 @import url('components/_global_indicators.css');
 @import url('pages/_file_list.css');
 @import url('pages/_file_tree.css');

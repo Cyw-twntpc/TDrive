@@ -190,7 +190,6 @@ class Bridge(QObject):
 
     @Slot()
     def notify_login_complete(self):
-        logger.info("Frontend has confirmed login completion. Emitting signal to switch window.")
         self.login_and_initialization_complete.emit()
 
     @Slot(int, str)
@@ -199,8 +198,28 @@ class Bridge(QObject):
         self._run_background_task(coro, self.queryResultReady, request_id)
 
     @Slot(int, str)
-    def get_preview(self, file_id, request_id):
-        coro = self._service._file_service.get_preview(file_id)
+    def get_preview(self, map_id, request_id):
+        coro = self._service._file_service.get_preview(map_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
+
+    @Slot(int, str)
+    def get_preview_file(self, map_id, request_id):
+        coro = self._service.get_preview_file(map_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
+
+    @Slot(int, str)
+    def load_full_document(self, map_id, request_id):
+        coro = self._service.load_full_document(map_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
+
+    @Slot(int, str)
+    def get_preview_text(self, map_id, request_id):
+        coro = self._service.get_preview_text(map_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
+
+    @Slot(int, int, str)
+    def get_text_page(self, map_id, page_index, request_id):
+        coro = self._service.get_text_page(map_id, page_index)
         self._run_background_task(coro, self.queryResultReady, request_id)
 
     @Slot(int, str)
@@ -246,8 +265,8 @@ class Bridge(QObject):
         return self._async_call(self._service.get_folder_contents_recursive(folder_id))
 
     @Slot(int, result=str)
-    def get_file_extended_details(self, file_id: int) -> str:
-        res_dict = self._async_call(self._service.get_file_extended_details(file_id))
+    def get_file_extended_details(self, map_id: int) -> str:
+        res_dict = self._async_call(self._service.get_file_extended_details(map_id))
         return json.dumps(res_dict)
 
     @Slot(int, str, result=dict)

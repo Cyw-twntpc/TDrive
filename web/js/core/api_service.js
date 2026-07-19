@@ -32,7 +32,7 @@ const ApiService = {
                 const timeout = setTimeout(() => {
                     if (settled) return;
                     settled = true;
-                    window.tdrive_bridge[signalName].disconnect(handler);
+                    try { window.tdrive_bridge[signalName].disconnect(handler); } catch (e) { /* ignore */ }
                     console.warn(`Bridge call '${functionName}' timed out after ${TIMEOUT_MS}ms`);
                     resolve({ success: false, error_code: 'TIMEOUT' });
                 }, TIMEOUT_MS);
@@ -41,7 +41,7 @@ const ApiService = {
                         if (settled) return;
                         settled = true;
                         clearTimeout(timeout);
-                        window.tdrive_bridge[signalName].disconnect(handler);
+                        try { window.tdrive_bridge[signalName].disconnect(handler); } catch (e) { /* ignore */ }
                         if (result.data && result.data.success === false) {
                             console.warn(`Bridge call '${functionName}' reported a failure:`, result.data.error_code);
                         }
@@ -119,4 +119,14 @@ const ApiService = {
     getThumbnails: (folderId) => ApiService._callBridgeSignal('get_thumbnails', 'queryResultReady', folderId),
     getPreview: (fileId) => ApiService._callBridgeSignal('get_preview', 'queryResultReady', fileId),
     playVideo: (fileId) => ApiService._callBridgeSignal('play_video', 'queryResultReady', fileId),
+
+    // --- Preview API ---
+    getPreviewFile: (fileId) =>
+        ApiService._callBridgeSignal('get_preview_file', 'queryResultReady', fileId),
+    loadFullDocument: (fileId) =>
+        ApiService._callBridgeSignal('load_full_document', 'queryResultReady', fileId),
+    getPreviewText: (fileId) =>
+        ApiService._callBridgeSignal('get_preview_text', 'queryResultReady', fileId),
+    getTextPage: (fileId, pageIndex) =>
+        ApiService._callBridgeSignal('get_text_page', 'queryResultReady', fileId, pageIndex),
 };

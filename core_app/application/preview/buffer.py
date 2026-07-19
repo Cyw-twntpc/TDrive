@@ -47,6 +47,14 @@ class StreamBuffer:
         Reads a range of bytes from the virtual file.
         Automatically downloads and decrypts necessary chunks.
         """
+        # Guard: DB stores size as REAL, ensure int arithmetic
+        file_size = int(file_size)
+        offset = int(offset)
+        length = int(length)
+
+        if length <= 0:
+            return b""
+
         if offset >= file_size:
             return b""
 
@@ -60,6 +68,8 @@ class StreamBuffer:
 
         # Retrieve chunks information from DB
         chunk_map = await self._get_chunk_map(file_id)
+        if not chunk_map:
+            logger.warning(f"StreamBuffer.read: chunk_map is empty for file_id={file_id}")
 
         # Seek Detection: Cancel old readaheads if we jumped more than 1 chunk
         async with self._state_lock:
@@ -100,7 +110,8 @@ class StreamBuffer:
                     async with self._state_lock:
                         self._active_readaheads[cache_key] = task
 
-        return buffer.getvalue()
+        result = buffer.getvalue()
+        return result
 
     async def _get_chunk(self, file_id: int, chunk_idx: int, file_hash: str, chunk_map: Dict[int, int]) -> bytes:
         cache_key = (file_id, chunk_idx)
@@ -114,45 +125,49 @@ class StreamBuffer:
         lock_key = f"{file_id}_{chunk_idx}"
         if lock_key in self._active_downloads:
             # Wait for the already-in-progress download to finish
-            await self._active_downloads[lock_key]
-            if cache_key in self._cache:
-                self._cache.move_to_end(cache_key)
-                return self._cache[cache_key]
-            return b""
+            try:
+                data = await self._active_downloads[lock_key]
+                if data:
+                    return data
+            except Exception:
+                pass
+            # Download failed — fall through to retry ourselves
 
         # Create a new Future for this download
         loop = asyncio.get_running_loop()
         download_future = loop.create_future()
         self._active_downloads[lock_key] = download_future
 
+        success = False
         try:
             # 2. Download and Decrypt
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
             if not msg_id:
-                logger.warning(f"Chunk {chunk_idx+1} not found in map for file {file_id}")
-                return b""
+                raise KeyError(f"Chunk {chunk_idx+1} not found in map for file {file_id}")
 
             client = self.shared_state.client
             if not client:
                 raise ConnectionError("Telegram client not connected")
-
-            logger.debug(f"Downloading chunk {chunk_idx+1} for file {file_id} (Msg: {msg_id})")
 
             decrypted_data = await telegram_comms.download_data_as_bytes(
                 client, self.shared_state.group_id, [msg_id], file_hash
             )
 
             if not decrypted_data:
-                raise IOError(f"Failed to download chunk {chunk_idx+1}")
+                raise IOError(f"Failed to download chunk {chunk_idx+1} for file {file_id}")
 
             # 3. Update Cache
             await self._add_to_cache(cache_key, decrypted_data)
+            success = True
+            download_future.set_result(decrypted_data)
             return decrypted_data
 
-        finally:
-            # Mark the Future as done and clean it up to prevent memory leaks
+        except Exception as e:
             if not download_future.done():
-                download_future.set_result(True)
+                download_future.set_exception(e)
+            raise
+
+        finally:
             self._active_downloads.pop(lock_key, None)
 
     async def _add_to_cache(self, key, data):
@@ -184,8 +199,8 @@ class StreamBuffer:
             await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map)
         except asyncio.CancelledError:
             pass # Task intentionally cancelled by seek detection
-        except Exception as e:
-            logger.debug(f"Readahead failed for chunk {chunk_idx}: {e}")
+        except Exception:
+            pass
         finally:
             async with self._state_lock:
                 self._active_readaheads.pop(cache_key, None)
@@ -200,6 +215,7 @@ class StreamBuffer:
 
         client = self.shared_state.client
         if not client:
+            logger.warning(f"_get_chunk_map: client not connected for file_id={file_id}")
             return {}
 
         try:
@@ -207,10 +223,11 @@ class StreamBuffer:
                 client, self.shared_state.group_id, self.shared_state.api_id, file_id
             )
             if not chunks:
-                logger.debug(f"_get_chunk_map: No chunks returned for file_id {file_id} from MetadataManager.")
+                logger.warning(f"_get_chunk_map: get_file_chunks returned empty for file_id={file_id}")
 
             # chunks is list of [part_num, message_id, part_hash]
-            return {c[0]: c[1] for c in chunks}
+            result = {c[0]: c[1] for c in chunks}
+            return result
         except Exception as e:
             logger.error(f"Failed to get chunk map for file {file_id}: {e}")
             return {}

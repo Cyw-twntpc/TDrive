@@ -3,7 +3,9 @@ import sys
 import logging
 import threading
 
-vlc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "vlc"))
+from core_app.core.utils import ensure_extracted
+
+vlc_path = ensure_extracted('vlc')
 os.environ['PYTHON_VLC_MODULE_PATH'] = vlc_path
 if hasattr(os, 'add_dll_directory'):
     try:

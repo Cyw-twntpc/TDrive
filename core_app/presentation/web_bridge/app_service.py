@@ -17,7 +17,9 @@ from core_app.application.transfer.transfer_service import TransferService
 from core_app.application.file_system.thumbnail.manager import ThumbnailManager
 from core_app.application.preview.buffer import StreamBuffer
 from core_app.application.preview.video.player import VideoStreamer
+from core_app.application.preview.http_server import PreviewServer
 from core_app.application.auth.session_manager import SessionManager
+from core_app.application.file_system.preview_cache_manager import PreviewCacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,17 @@ class TDriveService:
         
         # Initialize Streaming Components
         self.buffer = StreamBuffer(self._shared_state)
+
+        # Initialize Preview Cache
+        self._preview_cache = PreviewCacheManager()
+
         self.video_player = VideoStreamer(self.buffer, self.db_handler)
+        self.preview_server = PreviewServer(preview_cache=self._preview_cache)
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
-        self._file_service = FileService(self._shared_state, self.thumb_manager)
+        self._file_service = FileService(self._shared_state, self.thumb_manager, buffer=self.buffer, preview_cache=self._preview_cache)
+        self._file_service.preview_server = self.preview_server
         self._folder_service = FolderService(self._shared_state)
         
         # Inject MetadataManager into TransferService
@@ -194,6 +202,10 @@ class TDriveService:
         # Stop Streaming Proxy and Player
         if self.video_player:
             await self.video_player.stop()
+
+        # Stop Preview HTTP Server
+        if self.preview_server:
+            await self.preview_server.stop()
         
         # Forcibly save buffered traffic to DB
         self._transfer_service.controller.save_pending_traffic_stats()
@@ -249,6 +261,19 @@ class TDriveService:
         file_name = await loop.run_in_executor(None, get_name)
             
         return {"success": True, "stream_url": url, "file_name": file_name}
+
+    # --- Preview Delegates ---
+    async def get_preview_file(self, map_id: int) -> dict:
+        return await self._file_service.get_preview_file(map_id)
+
+    async def load_full_document(self, map_id: int) -> dict:
+        return await self._file_service.load_full_document(map_id)
+
+    async def get_preview_text(self, map_id: int) -> dict:
+        return await self._file_service.get_preview_text(map_id)
+
+    async def get_text_page(self, map_id: int, page_index: int) -> dict:
+        return await self._file_service.get_text_page(map_id, page_index)
 
     # --- Authentication Service ---
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
@@ -313,8 +338,8 @@ class TDriveService:
     async def get_folder_contents_recursive(self, folder_id: int) -> Dict[str, Any]:
         return await self._file_service.get_folder_contents_recursive(folder_id)
 
-    async def get_file_extended_details(self, file_id: int) -> Dict[str, Any]:
-        return await self._file_service.get_file_extended_details(file_id)
+    async def get_file_extended_details(self, map_id: int) -> Dict[str, Any]:
+        return await self._file_service.get_file_extended_details(map_id)
 
     async def search_db_items(self, base_folder_id: int, search_term: str, result_signal_emitter: Callable, request_id: str):
         await self._file_service.search_db_items(base_folder_id, search_term, result_signal_emitter, request_id)

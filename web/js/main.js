@@ -297,6 +297,14 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('play-video', (e) => {
             ActionController.handlePlayVideo(e.detail.id);
         });
+
+        document.addEventListener('preview-text', (e) => {
+            if (TextHandler) TextHandler.openPreview(e.detail.id, e.detail.name);
+        });
+
+        document.addEventListener('preview-document', (e) => {
+            if (DocumentHandler) DocumentHandler.openDocument(e.detail.id);
+        });
     }
 
     async function initialize() {

@@ -350,6 +350,7 @@ class UploadStrategy(TransferStrategy):
                 progress_callback(main_task_id, file_name, -1, -1, 'transferring', 0, is_folder=False)
 
                 thumb_bytes, preview_bytes = None, None
+                doc_preview_task = None
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.tiff'}:
                     thumb_bytes = await loop.run_in_executor(None, ImageThumbnailGenerator.generate, file_path)
@@ -357,6 +358,10 @@ class UploadStrategy(TransferStrategy):
                 elif ext in {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv'}:
                     thumb_bytes = await loop.run_in_executor(None, VideoThumbnailGenerator.generate, file_path)
                     preview_bytes = None
+                elif ext == '.pdf':
+                    doc_preview_task = asyncio.create_task(
+                        UploadStrategy._generate_pdf_preview_async(file_path, ext)
+                    )
                 
                 preview_msg_id = None
                 preview_hash = None
@@ -391,6 +396,27 @@ class UploadStrategy(TransferStrategy):
                     resume_context=split_files_info,
                     chunk_callback=chunk_cb
                 )
+
+                if doc_preview_task:
+                    preview_result = None
+                    try:
+                        preview_result = await doc_preview_task
+                    except Exception as e:
+                        logger.warning(f"Document preview failed for {file_path}: {e}")
+
+                    if preview_result:
+                        preview_pdf_bytes, doc_thumb_bytes, source_hash = preview_result
+                        thumb_bytes = doc_thumb_bytes
+                        if preview_pdf_bytes:
+                            preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_pdf_bytes)
+                            preview_upload_info = await telegram_comms.upload_data_as_file(
+                                client, self.context.shared_state.group_id,
+                                preview_pdf_bytes, preview_hash,
+                                progress_callback=hidden_progress
+                            )
+                            if preview_upload_info:
+                                preview_msg_id = preview_upload_info[0][1]
+                                await self.context.controller.set_preview_msg_id_async(sub_task_id, preview_msg_id)
 
                 def _pre_insert_file():
                     try:
@@ -561,3 +587,10 @@ class UploadStrategy(TransferStrategy):
             refresh_ids.append(main_remote_id)
         
         self.context._trigger_folder_refresh(refresh_ids)
+
+    @staticmethod
+    async def _generate_pdf_preview_async(file_path: str, ext: str):
+        from core_app.application.preview.document.viewer import generate_pdf_preview
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, generate_pdf_preview, file_path, ext)

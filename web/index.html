@@ -6,7 +6,9 @@
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
     <title data-i18n="main.window_title"></title>
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css?v=6">
-    <link rel="stylesheet" href="css/style.css?v=6">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+    <link rel="stylesheet" href="css/style.css?v=8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
     <script type="text/javascript" src="js/qwebchannel.js?v=6"></script>
     <script type="text/javascript">
         window.addEventListener('load', function() {
@@ -445,6 +447,66 @@
         </div>
     </template>
     
+    <!-- Text Preview Modal -->
+    <div id="text-modal" class="modal-overlay hidden">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h2 id="text-filename"></h2>
+                <button id="text-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div id="text-empty-state" class="preview-state">
+                    <i class="fas fa-file-alt" style="font-size:48px"></i>
+                    <p data-i18n="preview.select_file"></p>
+                </div>
+                <div id="text-loading-state" class="preview-state hidden">
+                    <div class="spinner"></div>
+                    <p data-i18n="preview.loading"></p>
+                </div>
+                <div id="text-render-state" class="preview-state hidden">
+                    <pre><code id="text-code-block" class="hljs"></code></pre>
+                </div>
+                <div id="text-error-state" class="preview-state hidden">
+                    <i class="fas fa-exclamation-triangle" style="font-size:48px"></i>
+                    <p id="text-error-msg"></p>
+                    <button id="text-retry-btn" class="btn" data-i18n="preview.btn_retry"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Preview Modal -->
+    <div id="document-modal" class="modal-overlay hidden">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h2 id="doc-filename"></h2>
+                <button id="doc-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div id="doc-empty-state" class="preview-state">
+                    <i class="fas fa-file-pdf" style="font-size:48px"></i>
+                    <p data-i18n="preview.select_file"></p>
+                </div>
+                <div id="doc-loading-state" class="preview-state hidden">
+                    <div class="spinner"></div>
+                    <p data-i18n="preview.loading"></p>
+                </div>
+                <div id="doc-render-state" class="preview-state hidden">
+                    <iframe id="doc-embed" width="100%" height="100%" style="border:none;"></iframe>
+                    <div id="doc-footer-bar" class="doc-footer hidden">
+                        <span data-i18n="preview.doc_first_10_pages"></span>
+                        <button id="doc-load-full-btn" class="btn btn-primary" data-i18n="preview.doc_load_full"></button>
+                    </div>
+                </div>
+                <div id="doc-error-state" class="preview-state hidden">
+                    <i class="fas fa-exclamation-triangle" style="font-size:48px"></i>
+                    <p id="doc-error-msg"></p>
+                    <button id="doc-retry-btn" class="btn" data-i18n="preview.btn_retry"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="gallery-modal" class="gallery-overlay hidden">
         <div class="gallery-header">
             <span id="gallery-filename"></span>
@@ -478,7 +540,7 @@
     <div id="interaction-lock-overlay"></div>
     <script type="text/javascript" src="js/i18n.js?v=7"></script>
     <script type="text/javascript" src="js/core/state.js?v=7"></script>
-    <script type="text/javascript" src="js/core/api_service.js?v=7"></script>
+    <script type="text/javascript" src="js/core/api_service.js?v=9"></script>
     <script type="text/javascript" src="js/components/ui_modals.js?v=7"></script>
     <script type="text/javascript" src="js/modules/transfer/transfer_model.js?v=7"></script>
 <script type="text/javascript" src="js/modules/transfer/transfer_view.js?v=7"></script>
@@ -498,6 +560,8 @@
 <script type="text/javascript" src="js/modules/trash/trash_view.js?v=7"></script>
     <script type="text/javascript" src="js/modules/trash/trash_controller.js?v=7"></script>
     <script type="text/javascript" src="js/modules/gallery/gallery_handler.js?v=6"></script>
+    <script type="text/javascript" src="js/modules/preview/text_handler.js?v=5"></script>
+    <script type="text/javascript" src="js/modules/preview/document_handler.js?v=2"></script>
     <script type="text/javascript" src="js/main.js?v=6"></script>
 </body>
 </html>

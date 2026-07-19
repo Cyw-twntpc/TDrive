@@ -204,6 +204,19 @@ const FileListView = {
                     itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
                 });
             }
+            else if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
+            else if (['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
+                      'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
+                      'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
+                      'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
+                });
+            }
         }
 
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
@@ -382,6 +395,21 @@ const FileListView = {
             else if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'].includes(ext)) {
                 itemEl.addEventListener('dblclick', () => {
                     itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
+            // Document Double Click -> Document Preview
+            else if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
+                });
+            }
+            // Text Double Click -> Text Preview
+            else if (['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
+                      'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
+                      'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
+                      'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile'].includes(ext)) {
+                itemEl.addEventListener('dblclick', () => {
+                    itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
                 });
             }
         }

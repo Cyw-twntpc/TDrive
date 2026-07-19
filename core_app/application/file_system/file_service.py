@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING, List, Dict, Any, Callable
 if TYPE_CHECKING:
     from core_app.core.shared_state import SharedState
     from ..thumbnail.manager import ThumbnailManager
-    from core_app.application.preview.image.viewer import ImagePreviewer
-
+    
 from core_app.core import utils
 from core_app.core import errors
 from core_app.infrastructure.telegram import telegram_comms
@@ -21,16 +20,22 @@ from core_app.infrastructure.database.main_db.repositories.trash_repository impo
 
 from core_app.application.file_system.defrag_worker import DefragWorker
 from core_app.application.preview.image.viewer import ImagePreviewer
+from core_app.application.file_system.preview_cache_manager import PreviewCacheManager
 
 logger = logging.getLogger(__name__)
 
 class FileService:
-    def __init__(self, shared_state: 'SharedState', thumb_manager: 'ThumbnailManager'):
+    def __init__(self, shared_state: 'SharedState', thumb_manager: 'ThumbnailManager', buffer=None, preview_cache=None):
         self.shared_state = shared_state
         self.thumb_manager = thumb_manager
+        self.buffer = buffer
+        self.preview_cache = preview_cache or PreviewCacheManager()
         self.previewer = ImagePreviewer()
+        self.preview_server = None
         self.defrag_worker = DefragWorker(shared_state, self)
         self.defrag_worker.start()
+        from core_app.application.preview.text.viewer import TextPreviewer
+        self.text_previewer = TextPreviewer(self.preview_cache, self._download_full_file)
 
     # --- Gallery Integration ---
 
@@ -121,21 +126,15 @@ class FileService:
             logger.error(f"Error fetching thumbnails: {e}", exc_info=True)
             return {"success": False, "thumbnails": {}}
 
-    async def get_preview(self, file_id: int) -> Dict[str, Any]:
+    async def get_preview(self, map_id: int) -> Dict[str, Any]:
         try:
-            # 1. Check Cache
-            preview_b64 = self.previewer.get_cached_preview(file_id)
-            if preview_b64:
-                return {"success": True, "preview": preview_b64}
-
-            # 2. If not in cache, check DB for preview info
+            # 1. Fetch file info from DB to get content_id
             def _get_file_preview_info():
                 db = DatabaseConnection()
                 FileRepository(db)
                 FolderRepository(db)
                 TrashRepository(db)
                 conn = db._get_conn()
-                
                 cur = conn.cursor()
                 query = """
                     SELECT f.preview_msg_id, f.preview_hash, f.id as content_id, f.hash as file_hash, f.size
@@ -143,14 +142,20 @@ class FileService:
                     JOIN files f ON m.file_id = f.id
                     WHERE m.id = ?
                 """
-                cur.execute(query, (file_id,))
+                cur.execute(query, (map_id,))
                 return cur.fetchone()
 
             info = await asyncio.to_thread(_get_file_preview_info)
-            
             if not info:
                 logger.error("File not found")
                 return {"success": False}
+
+            content_id = info['content_id']
+
+            # 2. Check Cache (keyed by content_id, not map_id)
+            preview_b64 = self.previewer.get_cached_preview(content_id)
+            if preview_b64:
+                return {"success": True, "preview": preview_b64}
 
             # 3. Download
             client = await utils.ensure_client_connected(self.shared_state)
@@ -159,18 +164,18 @@ class FileService:
                 return {"success": False}
 
             preview_bytes = None
-            
+
             if info['preview_msg_id']:
-                logger.debug(f"Downloading preview for file map {file_id} (content {info['content_id']})...")
+                logger.debug(f"Downloading preview for file map {map_id} (content {content_id})...")
                 preview_bytes = await telegram_comms.download_data_as_bytes(
                     client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
                 )
             else:
                 # Fallback: Download first chunk of original file if no preview exists
-                logger.debug(f"No preview found for {file_id}, attempting fallback to original file...")
+                logger.debug(f"No preview found for {map_id}, attempting fallback to original file...")
                 try:
                     chunks = await self.shared_state.metadata_manager.get_file_chunks(
-                        client, self.shared_state.group_id, self.shared_state.api_id, info['content_id']
+                        client, self.shared_state.group_id, self.shared_state.api_id, content_id
                     )
                     if chunks and len(chunks) > 0:
                         first_chunk = chunks[0]
@@ -182,17 +187,11 @@ class FileService:
                     logger.warning(f"Fallback preview download failed: {fb_e}")
 
             if preview_bytes:
-                # 4. Cache and Return
-                # We cache by Map ID or Content ID? 
-                # ImagePreviewer cache uses `file_id`. 
-                # To be consistent with frontend requests, let's use the Map ID (which is unique per item in folder).
-                # However, if multiple maps point to same file, we duplicate cache. 
-                # Ideally cache by content_id, but frontend sends map_id.
-                # Let's stick to Map ID for now as the key for simplicity in 1:1 mapping with UI.
-                self.previewer.cache_preview(file_id, preview_bytes)
+                # 4. Cache (keyed by content_id) and Return
+                self.previewer.cache_preview(content_id, preview_bytes)
                 b64_str = base64.b64encode(preview_bytes).decode('utf-8')
                 return {"success": True, "preview": b64_str}
-            
+
             logger.error("Download failed")
             return {"success": False}
 
@@ -200,7 +199,66 @@ class FileService:
             logger.error(f"Error fetching preview: {e}", exc_info=True)
             return {"success": False}
 
-    async def get_file_extended_details(self, file_id: int) -> Dict[str, Any]:
+    async def _ensure_client(self):
+        from core_app.core import utils as core_utils
+        return await core_utils.ensure_client_connected(self.shared_state)
+
+    async def _download_full_file(self, content_id: int, file_size: int, file_hash: str) -> bytes:
+        client = await utils.ensure_client_connected(self.shared_state)
+        if not client:
+            raise ConnectionError("Client not connected")
+        chunks = await self.shared_state.metadata_manager.get_file_chunks(
+            client, self.shared_state.group_id, self.shared_state.api_id, content_id
+        )
+        if not chunks:
+            raise FileNotFoundError(f"No chunks found for content_id={content_id}")
+        msg_ids = [chunk[1] for chunk in chunks]
+        data = await telegram_comms.download_data_as_bytes(
+            client, self.shared_state.group_id, msg_ids, file_hash
+        )
+        if data is None:
+            raise RuntimeError(f"Download failed for content_id={content_id}")
+        return data
+
+    async def _get_file_info(self, map_id: int) -> dict:
+        def _sync_query():
+            db = DatabaseConnection()
+            conn = db._get_conn()
+            cur = conn.cursor()
+            cur.execute('''
+                SELECT f.id as content_id, f.size, f.hash, m.name
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.id = ?
+            ''', (map_id,))
+            row = cur.fetchone()
+            if not row:
+                raise FileNotFoundError(f"File map_id={map_id} not found")
+            return {
+                'content_id': row[0],
+                'size': row[1],
+                'file_hash': row[2],
+                'name': row[3],
+            }
+        return await asyncio.to_thread(_sync_query)
+
+    async def get_preview_file(self, map_id: int) -> dict:
+        from core_app.application.preview.document.viewer import DocumentPreviewer
+        return await DocumentPreviewer.get_preview(map_id, self)
+
+    async def load_full_document(self, map_id: int) -> dict:
+        from core_app.application.preview.document.viewer import DocumentPreviewer
+        return await DocumentPreviewer.load_full(map_id, self)
+
+    async def get_preview_text(self, map_id: int) -> dict:
+        file_info = await self._get_file_info(map_id)
+        return await self.text_previewer.get_preview(file_info)
+
+    async def get_text_page(self, map_id: int, page_index: int) -> dict:
+        file_info = await self._get_file_info(map_id)
+        return await self.text_previewer.get_text_page(page_index, file_info)
+
+    async def get_file_extended_details(self, map_id: int) -> Dict[str, Any]:
         try:
             def _get_db_info():
                 db = DatabaseConnection()
@@ -211,7 +269,7 @@ class FileService:
                     FROM file_folder_map m 
                     JOIN files f ON m.file_id = f.id 
                     WHERE m.id = ?
-                """, (file_id,))
+                """, (map_id,))
                 return cur.fetchone()
                 
             row = await asyncio.to_thread(_get_db_info)
@@ -237,7 +295,7 @@ class FileService:
             
             return {"success": False}
         except Exception as e:
-            logger.error(f"Error fetching extended details for file {file_id}: {e}", exc_info=True)
+            logger.error(f"Error fetching extended details for map_id {map_id}: {e}", exc_info=True)
             return {"success": False}
 
     async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:

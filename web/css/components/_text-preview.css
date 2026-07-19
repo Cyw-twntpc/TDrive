@@ -1,0 +1,81 @@
+﻿#text-modal .large-modal {
+    max-width: 90vw;
+    width: 90vw;
+    height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#text-modal .modal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+#text-modal .preview-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--text-secondary);
+}
+
+#text-modal #text-render-state {
+    padding: 0;
+    overflow-y: auto;
+    align-items: stretch;
+    justify-content: flex-start;
+}
+
+#text-modal #text-code-block {
+    display: block;
+    margin: 0;
+    padding: 16px;
+    background: #fff;
+    color: #333;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100%;
+    white-space: pre;
+    tab-size: 4;
+    overflow-x: auto;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+#text-modal pre {
+    margin: 0;
+}
+
+/* Plain text: clean light reading area */
+#text-modal #text-code-block.text-preview-plaintext {
+    margin: 0;
+    padding: 24px 32px;
+    background: #fafafa;
+    color: #333;
+    font-family: 'Segoe UI', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    font-size: 14px;
+    line-height: 1.8;
+    min-height: 100%;
+    tab-size: 4;
+}
+
+#text-modal .text-line {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1.5em;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+#text-modal .code-line {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1.5em;
+    white-space: pre;
+}
+
+

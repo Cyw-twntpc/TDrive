@@ -267,11 +267,14 @@ class MetadataManager:
     async def fetch_map_file(self, client, group_id: int, api_id: int, map_msg_id: int) -> Dict:
         if map_msg_id in self._map_cache:
             self._map_cache.move_to_end(map_msg_id)
-            return self._map_cache[map_msg_id]
+            cached = self._map_cache[map_msg_id]
+            return cached
 
         try:
             msgs = await client.get_messages(group_id, ids=[map_msg_id])
-            if not msgs or not msgs[0]: return {}
+            if not msgs or not msgs[0]:
+                logger.warning(f"fetch_map_file: no messages returned for map_msg_id={map_msg_id}")
+                return {}
             
             msg = msgs[0]
             key = cr.generate_key_from_api_id(str(api_id))
@@ -296,7 +299,7 @@ class MetadataManager:
             if len(self._map_cache) >= self._cache_size:
                 self._map_cache.popitem(last=False)
             self._map_cache[map_msg_id] = json_data
-            
+
             return json_data
         except Exception as e:
             logger.error(f"Failed to fetch map file {map_msg_id}: {e}")
@@ -346,14 +349,21 @@ class MetadataManager:
             WHERE id = ?
         """, (file_id,))
         row = cursor.fetchone()
-        
-        if not row or not row['map_msg_id']: return []
+
+        if not row or not row['map_msg_id']:
+            logger.warning(f"get_file_chunks: map_msg_id is null/empty for file {file_id}; file may have been uploaded incompletely")
+            return []
+
         map_msg_id = row['map_msg_id']
-        
+
         map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
+
         file_data = map_data.get(str(file_id))
         if isinstance(file_data, dict) and 'c' in file_data:
-            return file_data['c']
+            chunks = file_data['c']
+            return chunks
+
+        logger.warning(f"get_file_chunks: map_data missing or malformed for file_id={file_id}, returning raw={file_data}")
         return file_data or []
 
     # --- Transfer Integration Logic ---

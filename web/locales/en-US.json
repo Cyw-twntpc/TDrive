@@ -321,5 +321,17 @@
         "cam_mod": "Camera Model",
         "iso": "ISO",
         "pg_cnt": "Pages"
+    },
+    "preview": {
+        "select_file": "Select a file to preview",
+        "loading": "Loading preview…",
+        "doc_first_10_pages": "Showing first 10 pages only",
+        "doc_load_full": "Load full document",
+        "btn_retry": "Retry",
+        "err_load_failed": "Failed to load preview content",
+        "err_network": "Preview load error",
+        "err_doc_load_failed": "Failed to load document preview",
+        "err_doc_full_failed": "Failed to load full document",
+        "unknown": "Unknown"
     }
 }
