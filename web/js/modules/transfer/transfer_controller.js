@@ -96,30 +96,38 @@ const TransferManager = {
         TransferManager.ApiService.resumeTransfer(id);
     },
 
-    cancelItem(id) {
+    async cancelItem(id) {
         const result = TransferModel.findTask(id);
-        if (result) {
-            TransferManager.ApiService.cancelTransfer(id);
-            result.map.delete(id);
-            
-            if (TransferManager.AppState && TransferManager.AppState.currentFolderContents) {
-                let removed = false;
-                const fileIndex = TransferManager.AppState.currentFolderContents.files.findIndex(f => f.id === id);
-                if (fileIndex > -1) {
-                    TransferManager.AppState.currentFolderContents.files.splice(fileIndex, 1);
-                    removed = true;
-                }
-                const folderIndex = TransferManager.AppState.currentFolderContents.folders.findIndex(f => f.id === id);
-                if (folderIndex > -1) {
-                    TransferManager.AppState.currentFolderContents.folders.splice(folderIndex, 1);
-                    removed = true;
-                }
-                
-                if (removed && typeof FileListHandler !== 'undefined') {
-                    FileListHandler.sortAndRender(TransferManager.AppState);
-                }
+        if (!result) return;
+
+        const map = result.map;
+        const taskData = { ...result.task };
+        map.delete(id);
+
+        if (TransferManager.AppState && TransferManager.AppState.currentFolderContents) {
+            let removed = false;
+            const fileIndex = TransferManager.AppState.currentFolderContents.files.findIndex(f => f.id === id);
+            if (fileIndex > -1) {
+                TransferManager.AppState.currentFolderContents.files.splice(fileIndex, 1);
+                removed = true;
+            }
+            const folderIndex = TransferManager.AppState.currentFolderContents.folders.findIndex(f => f.id === id);
+            if (folderIndex > -1) {
+                TransferManager.AppState.currentFolderContents.folders.splice(folderIndex, 1);
+                removed = true;
             }
 
+            if (removed && typeof FileListHandler !== 'undefined') {
+                FileListHandler.sortAndRender(TransferManager.AppState);
+            }
+        }
+
+        TransferManager.tick();
+
+        try {
+            await TransferManager.ApiService.cancelTransfer(id);
+        } catch (e) {
+            map.set(id, taskData);
             TransferManager.tick();
         }
     },
@@ -133,7 +141,13 @@ const TransferManager = {
     },
 
     cancelAll() {
-        [TransferModel.uploads, TransferModel.downloads].forEach(map => map.forEach(t => { if(['transferring', 'queued', 'paused', 'failed'].includes(t.status)) TransferManager.cancelItem(t.id); }));
+        const tasks = [];
+        [TransferModel.uploads, TransferModel.downloads].forEach(map => map.forEach(t => {
+            if (['transferring', 'queued', 'paused', 'failed'].includes(t.status)) {
+                tasks.push(TransferManager.cancelItem(t.id));
+            }
+        }));
+        Promise.allSettled(tasks);
     },
 
     setupEventListeners() {

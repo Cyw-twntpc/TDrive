@@ -76,7 +76,8 @@
         "TASK_FAILED": "Task execution failed.",
         "ASYNC_CALL_FAILED": "Asynchronous call failed.",
         "BUSY": "Another critical operation is in progress, please wait.",
-        "AVATAR_NOT_FOUND": "Avatar not found."
+        "CANCELLED": "Operation was cancelled.",
+        "AVATAR_NOT_FOUND": "Profile picture not found."
     },
     "validation": {
         "api_id_invalid": "Please enter a valid API ID (numbers only)",

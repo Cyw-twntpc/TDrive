@@ -45,28 +45,36 @@ class Bridge(QObject):
         from core_app.core.settings_manager import SettingsManager
         self._settings_manager = SettingsManager()
         
+        self._active_sync_tasks = set()
         logger.debug("Bridge initialized.")
 
     def _fire_and_forget(self, coro):
-        task = asyncio.create_task(coro)
-        self._service._shared_state.background_tasks.add(task)
-        task.add_done_callback(self._service._shared_state.background_tasks.discard)
-        return task
+        return self._service._shared_state.create_background_task(coro)
 
     def _run_background_task(self, coro, result_signal, request_id):
         """Executes a coroutine in background and emits result via signal."""
         async def task_wrapper():
             try:
                 result = await coro
-                payload = {'data': result, 'request_id': request_id}
-                result_signal.emit(payload)
+                if result_signal:
+                    payload = {'data': result, 'request_id': request_id}
+                    result_signal.emit(payload)
+            except asyncio.CancelledError:
+                logger.error("Background task was cancelled.")
+                if result_signal:
+                    payload = {
+                        'data': {"success": False, "error_code": ErrorCode.CANCELLED},
+                        'request_id': request_id
+                    }
+                    result_signal.emit(payload)
             except Exception as e:
                 logger.error(f"Background task failed (request_id: {request_id}): {e}", exc_info=True)
-                error_payload = {
-                    'data': {"success": False, "error_code": ErrorCode.TASK_FAILED},
-                    'request_id': request_id
-                }
-                result_signal.emit(error_payload)
+                if result_signal:
+                    error_payload = {
+                        'data': {"success": False, "error_code": ErrorCode.TASK_FAILED},
+                        'request_id': request_id
+                    }
+                    result_signal.emit(error_payload)
         
         self._fire_and_forget(task_wrapper())
 
@@ -83,10 +91,13 @@ class Bridge(QObject):
         self._is_busy = True
         try:
             task = asyncio.create_task(coro)
+            self._active_sync_tasks.add(task)
+            
             local_qt_loop = QtEventLoop()
 
             def on_done(future):
                 # This callback will run in the asyncio thread, quitting the local Qt loop.
+                self._active_sync_tasks.discard(future)
                 local_qt_loop.quit()
             
             task.add_done_callback(on_done)
@@ -100,6 +111,9 @@ class Bridge(QObject):
     def _async_call(self, coro):
         try:
             return self._wait_for_async(coro)
+        except asyncio.CancelledError:
+            logger.error("Error during async call: Operation was cancelled.")
+            return {"success": False, "error_code": ErrorCode.CANCELLED}
         except Exception as e:
             logger.error(f"Error during async call: {e}", exc_info=True)
             return {"success": False, "error_code": ErrorCode.ASYNC_CALL_FAILED}

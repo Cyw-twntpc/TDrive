@@ -94,6 +94,6 @@ class MainWindow(QMainWindow):
             self.player_widget.close_player()
             
         # Start background shutdown task
-        task = asyncio.create_task(self._graceful_shutdown())
-        self.tdrive_service._shared_state.background_tasks.add(task)
-        task.add_done_callback(self.tdrive_service._shared_state.background_tasks.discard)
+        self._shutdown_task = asyncio.create_task(self._graceful_shutdown())
+        self.tdrive_service._shared_state.background_tasks.add(self._shutdown_task)
+        self._shutdown_task.add_done_callback(self.tdrive_service._shared_state.background_tasks.discard)

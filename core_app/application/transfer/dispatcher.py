@@ -130,8 +130,11 @@ class TransferDispatcher:
         
         try:
             await asyncio.gather(prod_task, *worker_tasks)
+        except asyncio.CancelledError:
+            logger.info("Upload dispatch cancelled.")
+            raise
         except Exception as e:
-            logger.warning("Upload dispatch cancelled due to: %s", e)
+            logger.error("Upload dispatch failed: %s", e)
             prod_task.cancel()
             for w in worker_tasks:
                 w.cancel()
@@ -280,8 +283,11 @@ class TransferDispatcher:
         worker_tasks = [asyncio.create_task(worker()) for _ in range(MAX_CONCURRENT_WORKERS)]
         try:
             await asyncio.gather(*worker_tasks)
+        except asyncio.CancelledError:
+            logger.info("Download dispatch cancelled.")
+            raise
         except Exception as e:
-            logger.warning("Download dispatch cancelled due to: %s", e)
+            logger.error("Download dispatch failed: %s", e)
             for w in worker_tasks:
                 w.cancel()
             raise

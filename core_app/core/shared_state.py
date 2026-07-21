@@ -40,3 +40,13 @@ class SharedState:
         
         # --- Core Managers ---
         self.metadata_manager: Optional[Any] = None
+
+    def create_background_task(self, coro) -> asyncio.Task:
+        """
+        Creates an asyncio task and stores a strong reference to it to prevent
+        it from being garbage collected mid-execution.
+        """
+        task = self.loop.create_task(coro)
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+        return task

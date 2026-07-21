@@ -228,10 +228,10 @@ class UploadStrategy(TransferStrategy):
                     progress_callback(main_task_id, base_folder_name, 0, total_size, 'completed', 0)
                     self.context.watcher.add_watch(main_task_id, parent_id, 'remote')
 
+            except asyncio.CancelledError:
+                logger.info(f"Folder upload cancelled/paused: {main_task_id}")
+                raise
             except Exception as e:
-                if isinstance(e, asyncio.CancelledError):
-                    logger.info(f"Folder upload cancelled/paused: {main_task_id}")
-                    raise
                 logger.error(f"Folder upload failed: {e}", exc_info=True)
                 await self.context.controller.mark_failed_async(main_task_id, ErrorCode.TASK_FAILED)
                 progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)

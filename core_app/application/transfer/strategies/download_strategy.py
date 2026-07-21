@@ -152,6 +152,9 @@ class DownloadStrategy(TransferStrategy):
                 progress_callback(main_task_id, root_folder_name, 0, total_size, 'completed', 0)
                 self.context.watcher.add_watch(main_task_id, local_root_path, 'local')
 
+        except asyncio.CancelledError:
+            logger.info(f"Folder download cancelled: {main_task_id}")
+            raise
         except Exception as e:
             logger.error(f"Download folder failed: {e}", exc_info=True)
             await self.context.controller.mark_failed_async(main_task_id, ErrorCode.TASK_FAILED)

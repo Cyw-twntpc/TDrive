@@ -59,7 +59,7 @@ class DefragWorker:
             except Exception as e:
                 logger.error(f"Error evaluating fragmentation for folders {valid_ids}: {e}")
 
-        self.shared_state.loop.create_task(_eval())
+        self.shared_state.create_background_task(_eval())
 
     async def _timer_loop(self):
         """Forces a re-evaluation of all queued folders every 3 hours (10800 seconds)."""

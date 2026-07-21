@@ -179,9 +179,10 @@ class TransferService:
             if sub_task and not sub_task.done():
                  self.shared_state.loop.call_soon_threadsafe(sub_task.cancel)
         
-        self._active_sub_tasks[task_id].clear()
-        self.controller.mark_paused(task_id)
-        self.shared_state.loop.create_task(self.controller.pause_all_sub_tasks(task_id))
+        if task_id in self._active_sub_tasks:
+            self._active_sub_tasks[task_id].clear()
+        # Background task for pausing sub-tasks, protected against GC
+        self.shared_state.create_background_task(self.controller.pause_all_sub_tasks(task_id))
         
         logger.debug(f"Task {task_id} marked as paused (Sub-tasks cancelled: {len(sub_tasks)}).")
 
@@ -321,6 +322,7 @@ class TransferService:
             async def drain():
                 for _ in range(abs(diff)):
                     await self._semaphore.acquire()
-            self.shared_state.loop.create_task(drain())
+            # Background task to drain the buffer without blocking the caller
+            self.shared_state.create_background_task(drain())
             
         logger.debug(f"Concurrency limit updated to {self.concurrency_limit}")

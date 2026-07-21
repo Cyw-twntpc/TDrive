@@ -72,11 +72,11 @@ class PreviewServer:
         total_size = len(data)
         
         content_type_map = {
-            'text': 'text/plain; charset=utf-8',
-            'document_preview': 'application/pdf',
-            'document_full': 'application/pdf',
+            'text': ('text/plain', 'utf-8'),
+            'document_preview': ('application/pdf', None),
+            'document_full': ('application/pdf', None),
         }
-        content_type = content_type_map.get(cached['content_type'], 'application/octet-stream')
+        ctype, charset = content_type_map.get(cached['content_type'], ('application/octet-stream', None))
         
         headers = {
             'Access-Control-Allow-Origin': '*',
@@ -104,11 +104,12 @@ class PreviewServer:
                     body=chunk, 
                     status=206, 
                     headers=headers, 
-                    content_type=content_type
+                    content_type=ctype,
+                    charset=charset
                 )
             except Exception as e:
                 logger.error(f"Error parsing Range header: {e}")
                 pass
                 
         headers['Content-Length'] = str(total_size)
-        return web.Response(body=data, headers=headers, content_type=content_type)
+        return web.Response(body=data, headers=headers, content_type=ctype, charset=charset)

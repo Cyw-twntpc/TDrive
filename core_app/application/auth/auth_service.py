@@ -170,7 +170,7 @@ class AuthService:
             img.save(buffer, format='PNG')
             img_str = base64.b64encode(buffer.getvalue()).decode()
 
-            self.shared_state.loop.create_task(self._wait_for_qr_login(qr_login, event_callback))
+            self.shared_state.create_background_task(self._wait_for_qr_login(qr_login, event_callback))
 
             return {"success": True, "qr_url": f"data:image/png;base64,{img_str}"}
         except ApiIdInvalidError:

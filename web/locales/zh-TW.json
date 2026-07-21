@@ -76,6 +76,7 @@
         "TASK_FAILED": "任務執行失敗。",
         "ASYNC_CALL_FAILED": "非同步呼叫失敗。",
         "BUSY": "另一個關鍵操作正在進行中，請稍候。",
+        "CANCELLED": "任務已取消。",
         "AVATAR_NOT_FOUND": "找不到個人圖片。"
     },
     "validation": {
