@@ -25,8 +25,10 @@ class SharedState:
         self.phone: Optional[str] = None
         self.phone_code_hash: Optional[str] = None
 
-        # --- Async & UI Callbacks ---
-        self.loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+        try:
+            self.loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
         # Emitter for sending connection status updates to the UI.
         self.connection_emitter: Optional[Callable] = None
 
@@ -41,6 +43,10 @@ class SharedState:
         # --- Core Managers ---
         self.metadata_manager: Optional[Any] = None
 
+    @property
+    def _background_tasks(self) -> set[asyncio.Task]:
+        return self.background_tasks
+
     def create_background_task(self, coro) -> asyncio.Task:
         """
         Creates an asyncio task and stores a strong reference to it to prevent
@@ -50,3 +56,4 @@ class SharedState:
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
         return task
+

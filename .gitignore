@@ -9,3 +9,5 @@ AGENTS.md
 core_app/vendor/
 docs/
 .ignore
+.agents/
+tests/

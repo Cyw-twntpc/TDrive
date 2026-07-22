@@ -150,17 +150,27 @@ class TDriveService:
             task = self._shared_state.loop.create_task(coro)
             task_id = f"bg_task_{id(task)}"
             self._shared_state.active_tasks[task_id] = task
+            self._shared_state.background_tasks.add(task)
             
             def _on_done(t):
                 self._shared_state.active_tasks.pop(task_id, None)
+                self._shared_state.background_tasks.discard(t)
                 if not t.cancelled():
-                    exc = t.exception()
-                    if exc:
-                        logger.error(f"Background task failed: {exc}", exc_info=exc)
+                    try:
+                        exc = t.exception()
+                        if exc:
+                            logger.error(f"Background task failed: {exc}", exc_info=exc)
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
                 
             task.add_done_callback(_on_done)
 
-        self._shared_state.loop.call_soon_threadsafe(_task_wrapper)
+        if self._shared_state.loop.is_running():
+            self._shared_state.loop.call_soon_threadsafe(_task_wrapper)
+        else:
+            task = self._shared_state.create_background_task(coro)
+            task_id = f"bg_task_{id(task)}"
+            self._shared_state.active_tasks[task_id] = task
 
     # --- Application Lifecycle ---
 
@@ -196,6 +206,23 @@ class TDriveService:
             logger.error(f"Failed to start bot manager: {e}", exc_info=True)
             
     async def close(self):
+        # Stop DefragWorker if initialized
+        if hasattr(self, "_file_service") and hasattr(self._file_service, "defrag_worker") and self._file_service.defrag_worker:
+            self._file_service.defrag_worker.stop()
+
+        # Stop SyncManager if initialized
+        if hasattr(self, "_main_db") and hasattr(self._main_db, "sync_manager") and self._main_db.sync_manager:
+            self._main_db.sync_manager.stop()
+
+        # Cancel active db_upload_timer and background tasks in SharedState
+        if self._shared_state:
+            if self._shared_state.db_upload_timer:
+                self._shared_state.db_upload_timer.cancel()
+                self._shared_state.db_upload_timer = None
+            for task in list(self._shared_state.background_tasks):
+                if not task.done():
+                    task.cancel()
+
         # Stop the file status watcher
         self._transfer_service.shutdown()
         
@@ -235,7 +262,18 @@ class TDriveService:
 
         logger.info("TDriveService has been closed.")
 
+    @property
+    def defrag_worker(self):
+        return getattr(self._file_service, "defrag_worker", None)
+
     # --- Streaming Logic ---
+    def _get_file_name_by_id(self, file_id: int) -> str:
+        conn = self.db_handler._get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM file_folder_map WHERE id = ?", (file_id,))
+        row = cur.fetchone()
+        return row['name'] if row else "Unknown Video"
+
     async def play_video(self, file_id: int) -> Dict[str, Any]:
         """
         Starts the streaming proxy (if needed) and returns the stream URL.
@@ -251,14 +289,7 @@ class TDriveService:
             
         # Fetch file name
         loop = asyncio.get_running_loop()
-        def get_name():
-            conn = self.db_handler._get_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM file_folder_map WHERE id = ?", (file_id,))
-            row = cur.fetchone()
-            return row['name'] if row else "Unknown Video"
-            
-        file_name = await loop.run_in_executor(None, get_name)
+        file_name = await loop.run_in_executor(None, self._get_file_name_by_id, file_id)
             
         return {"success": True, "stream_url": url, "file_name": file_name}
 

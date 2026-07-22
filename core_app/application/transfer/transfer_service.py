@@ -65,11 +65,24 @@ class TransferService:
         logger.info("Shutting down TransferService...")
         self.watcher.stop()
         
+        if self._refresh_timer_task:
+            try:
+                self._refresh_timer_task.cancel()
+            except Exception:
+                pass
+            self._refresh_timer_task = None
+
         # Cancel all active tasks tracked in SharedState
         active_ids = list(self._active_sub_tasks.keys())
         for task_id in active_ids:
             self.cancel_transfer(task_id)
             
+        if self.shared_state:
+            tasks = list(getattr(self.shared_state, "background_tasks", []))
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
         logger.info("TransferService shutdown complete.")
 
     # --- Common Helper Methods for Strategies ->
@@ -154,7 +167,14 @@ class TransferService:
         self.controller.remove_task(task_id)
         
         if task_info:
-            asyncio.run_coroutine_threadsafe(self._cleanup_task_data(task_info), self.shared_state.loop)
+            coro = self._cleanup_task_data(task_info)
+            if self.shared_state and getattr(self.shared_state, "loop", None) and self.shared_state.loop.is_running():
+                self.shared_state.create_background_task(coro)
+            else:
+                try:
+                    coro.close()
+                except Exception:
+                    pass
 
         return {"success": True}
 

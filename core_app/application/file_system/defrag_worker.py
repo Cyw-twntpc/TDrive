@@ -32,9 +32,15 @@ class DefragWorker:
     def stop(self):
         self.is_running = False
         if self.worker_task:
-            self.worker_task.cancel()
+            if not self.worker_task.done():
+                self.worker_task.cancel()
+            self.worker_task = None
+
         if self.timer_task:
-            self.timer_task.cancel()
+            if not self.timer_task.done():
+                self.timer_task.cancel()
+            self.timer_task = None
+
         logger.info("DefragWorker stopped.")
 
     def evaluate_folders(self, folder_ids: list[int]):
@@ -56,6 +62,8 @@ class DefragWorker:
                         self.queued_folders.add(f_id)
                         await self.queue.put(f_id)
                         logger.info(f"Folder {f_id} queued for defragmentation.")
+            except asyncio.CancelledError:
+                pass
             except Exception as e:
                 logger.error(f"Error evaluating fragmentation for folders {valid_ids}: {e}")
 
@@ -67,20 +75,13 @@ class DefragWorker:
             try:
                 await asyncio.sleep(10800)
                 logger.info("DefragWorker 3-hour timer fired. Waking up worker.")
-                
-                # To forcefully execute the queue even if it was delayed, we don't
-                # strictly need anything because the worker loop is already processing it
-                # as long as it's idle.
-                # However, if we want to ensure any stragglers are checked, we could
-                # potentially re-scan active folders, but user rule said "強制重組防線"
-                # so the existing queued folders just get executed.
-            except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"DefragWorker timer error: {e}")
 
     async def _process_queue(self):
         while self.is_running:
+            folder_id = None
             try:
                 # Wait for a folder to process
                 folder_id = await self.queue.get()
@@ -121,14 +122,15 @@ class DefragWorker:
                     
                 self.queue.task_done()
                 
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, RuntimeError):
                 break
             except Exception as e:
                 logger.error(f"DefragWorker error processing folder {folder_id}: {e}", exc_info=True)
                 # Remove from queued set on error so it can be retried later
-                if folder_id in self.queued_folders:
-                    self.queued_folders.remove(folder_id)
-                self.queue.task_done()
+                if folder_id is not None:
+                    if folder_id in self.queued_folders:
+                        self.queued_folders.remove(folder_id)
+                    self.queue.task_done()
 
     def _is_system_busy(self) -> bool:
         """Checks if the system is currently performing transfers by checking the database."""

@@ -92,3 +92,20 @@ class SyncManager:
                 asyncio.run_coroutine_threadsafe(self._sync_callback(), self._loop)
             else:
                 logger.warning("Event loop is not running, cannot trigger sync.")
+
+    def stop(self):
+        """
+        Stops the SyncManager, cancelling any active debounce timers and resetting state.
+        """
+        with self._lock:
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
+            self._score = 0
+            self._sync_callback = None
+            self._loop = None
+
+    def shutdown(self):
+        """Alias for stop()."""
+        self.stop()
+
