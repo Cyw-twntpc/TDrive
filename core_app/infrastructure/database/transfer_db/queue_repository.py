@@ -290,6 +290,7 @@ class QueueRepository:
         try:
             with conn:
                 conn.execute("UPDATE main_tasks SET status = 'paused' WHERE status = 'transferring'")
+                conn.execute("UPDATE sub_tasks SET status = 'paused' WHERE status = 'transferring'")
         finally:
             conn.close()
 
