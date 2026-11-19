@@ -11,3 +11,5 @@ docs/
 .ignore
 .agents/
 tests/
+.hypothesis/
+.pytest_cache/

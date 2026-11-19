@@ -49,10 +49,9 @@ def setup_logging():
         logging.warning("Failed to remove old log file: %s", e)
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}.json.log')
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG) 
+    root_logger.setLevel(logging.DEBUG)
 
     json_formatter = JSONFormatter()
     console_formatter = logging.Formatter(
@@ -60,12 +59,23 @@ def setup_logging():
         datefmt='%m-%d %H:%M:%S'
     )
 
-    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+    # Handler 1: Debug full log (captures all DEBUG+)
+    debug_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}.json.log')
+    file_handler = logging.FileHandler(debug_filename, encoding='utf-8')
     file_handler.setFormatter(json_formatter)
     root_logger.addHandler(file_handler)
 
+    # Handler 2: Info-only log (captures INFO+)
+    info_filename = os.path.join(LOG_DIR, f'tdrive_{timestamp}_info.json.log')
+    info_file_handler = logging.FileHandler(info_filename, encoding='utf-8')
+    info_file_handler.setFormatter(json_formatter)
+    info_file_handler.setLevel(logging.INFO)
+    root_logger.addHandler(info_file_handler)
+
+    # Handler 3: Console output (INFO level)
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
 
     logging.getLogger('telethon').setLevel(logging.ERROR)
@@ -75,4 +85,4 @@ def setup_logging():
 
     root_logger.addFilter(OneTimeFilter())
 
-    root_logger.info("Logging initialized. Logs will be saved to %s", log_filename)
+    root_logger.info("Logging initialized. Debug: %s | Info: %s", debug_filename, info_filename)
