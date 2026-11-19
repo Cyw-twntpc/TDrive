@@ -14,6 +14,7 @@ const AppState = {
     currentPage: 'files',
     viewMode: 'list', // 'list' or 'grid'
     currentThumbnails: {}, // Cache for current folder thumbnails
+    currentThumbnailsFolderId: null,
     
     trashItems: [],
     trashSort: { key: 'trashed_date', order: 'desc' },

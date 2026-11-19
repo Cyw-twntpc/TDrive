@@ -1,4 +1,5 @@
 const FileListHandler = {
+    _thumbLoadGen: 0,
 
     init(onSort, onUpdateSelection) {
         FileListHandler.setupSortableHeaders(onSort);
@@ -298,53 +299,68 @@ const FileListHandler = {
         });
     },
 
+    /** Apply a base64 thumbnail string to either a grid or list item element. */
+    _applyThumbnailToElement(itemEl, b64) {
+        if (!itemEl || !b64) return;
+        const src = `data:image/jpeg;base64,${b64}`;
+
+        const gridImg = itemEl.querySelector('.grid-thumb-img');
+        if (gridImg) {
+            gridImg.src = src;
+            gridImg.classList.remove('hidden');
+            const gridIcon = itemEl.querySelector('.grid-thumb-icon');
+            if (gridIcon) gridIcon.classList.add('hidden');
+        }
+
+        const listImg = itemEl.querySelector('.list-thumb-img');
+        if (listImg) {
+            listImg.src = src;
+            listImg.classList.remove('hidden');
+            const listIcon = itemEl.querySelector('.list-thumb-icon');
+            if (listIcon) listIcon.classList.add('hidden');
+        }
+    },
+
     async loadThumbnails(folderId) {
         if (!folderId) return;
+        const loadGen = ++FileListHandler._thumbLoadGen;
         try {
             const result = await ApiService.getThumbnails(folderId);
-            
+            if (loadGen !== FileListHandler._thumbLoadGen) return;
+            if (typeof AppState !== 'undefined' && AppState.currentFolderId !== folderId) return;
+
             if (result && result.success && result.thumbnails) {
-                AppState.currentThumbnails = result.thumbnails; // Cache for Gallery
+                AppState.currentThumbnails = result.thumbnails; // Cache for Gallery and lazy chunks
+                AppState.currentThumbnailsFolderId = folderId;
                 const entries = Object.entries(result.thumbnails);
-                
+                if (entries.length === 0) return;
+
+                // Single-pass DOM index avoids repeated querySelector lookups per item
+                const itemElMap = new Map();
+                if (FileListView.fileListBodyEl) {
+                    FileListView.fileListBodyEl.querySelectorAll('.file-item[data-type="file"]').forEach(el => {
+                        itemElMap.set(String(el.dataset.id), el);
+                    });
+                }
+
                 // Batch process DOM updates using requestAnimationFrame to avoid freezing UI
                 const BATCH_SIZE = 20;
                 let currentIndex = 0;
 
                 const processBatch = () => {
+                    if (loadGen !== FileListHandler._thumbLoadGen) return;
                     const endIndex = Math.min(currentIndex + BATCH_SIZE, entries.length);
                     for (let i = currentIndex; i < endIndex; i++) {
                         const [fileId, b64] = entries[i];
-                        const src = `data:image/jpeg;base64,${b64}`;
-                        
-                        // Update Grid View
-                        const gridItem = FileListView.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"][data-type="file"]`);
-                        const gridImg = gridItem ? gridItem.querySelector('.grid-thumb-img') : null;
-                        
-                        if (gridImg) {
-                            gridImg.src = src;
-                            gridImg.classList.remove('hidden');
-                            const gridIcon = gridItem.querySelector('.grid-thumb-icon');
-                            if (gridIcon) gridIcon.classList.add('hidden');
-                        }
-
-                        // Update List View
-                        const listItem = FileListView.fileListBodyEl.querySelector(`.file-item[data-id="${fileId}"][data-type="file"]`);
-                        const listImg = listItem ? listItem.querySelector('.list-thumb-img') : null;
-
-                        if (listImg) {
-                            listImg.src = src;
-                            listImg.classList.remove('hidden');
-                            const listIcon = listItem.querySelector('.list-thumb-icon');
-                            if (listIcon) listIcon.classList.add('hidden');
-                        }
+                        const itemEl = itemElMap.get(String(fileId));
+                        FileListHandler._applyThumbnailToElement(itemEl, b64);
                     }
                     currentIndex = endIndex;
                     if (currentIndex < entries.length) {
                         requestAnimationFrame(processBatch);
                     }
                 };
-                
+
                 requestAnimationFrame(processBatch);
             }
         } catch (e) {

@@ -10,6 +10,92 @@ const FileListView = {
     ftDetailsBtn: document.getElementById('ft-details-btn'),
     ftTrashBtn: document.getElementById('ft-trash-btn'),
 
+    PREVIEW_EXTENSIONS: {
+        image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+        video: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'],
+        document: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'],
+        text: ['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
+               'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
+               'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
+               'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile']
+    },
+
+    /** Bind shared drag-source and drop-target behavior for list and grid file items. */
+    _bindItemDragEvents(itemEl, item, isFolder, AppState) {
+        itemEl.addEventListener('mousedown', () => {
+            if (itemEl.classList.contains('is-uploading')) return;
+            itemEl.draggable = itemEl.classList.contains('selected');
+        });
+        itemEl.addEventListener('mouseup', () => {
+            itemEl.draggable = false;
+        });
+
+        itemEl.addEventListener('dragstart', (e) => {
+            if (itemEl.classList.contains('is-uploading') || !itemEl.draggable) {
+                e.preventDefault();
+                return;
+            }
+            const isSelected = itemEl.classList.contains('selected');
+            if (!isSelected) {
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
+                AppState.selectedItems.length = 0;
+                itemEl.classList.add('selected');
+                AppState.selectedItems.push({ ...item, type: isFolder ? 'folder' : 'file' });
+            }
+            AppState.isDragging = true;
+            AppState.draggedItems = [...AppState.selectedItems];
+            const ghost = FileListView._createDragGhost(AppState.draggedItems);
+            document.body.appendChild(ghost);
+            e.dataTransfer.setDragImage(ghost, 0, 0);
+            setTimeout(() => document.body.removeChild(ghost), 0);
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', JSON.stringify(AppState.draggedItems.map(i => i.id)));
+            requestAnimationFrame(() => {
+                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.add('dragging'));
+            });
+        });
+
+        itemEl.addEventListener('dragend', () => {
+            itemEl.draggable = false;
+            AppState.isDragging = false;
+            AppState.draggedItems = [];
+            document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
+        });
+
+        if (isFolder) {
+            FileListHandler._setupDropTarget(itemEl, item.id);
+        }
+    },
+
+    /** Bind shared double-click navigation or preview dispatch for list and grid items. */
+    _bindItemDoubleClick(itemEl, item, isFolder) {
+        if (isFolder) {
+            itemEl.addEventListener('dblclick', () => {
+                itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true }));
+            });
+            return;
+        }
+
+        const ext = item.name.split('.').pop().toLowerCase();
+        if (FileListView.PREVIEW_EXTENSIONS.image.includes(ext)) {
+            itemEl.addEventListener('dblclick', () => {
+                itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
+            });
+        } else if (FileListView.PREVIEW_EXTENSIONS.video.includes(ext)) {
+            itemEl.addEventListener('dblclick', () => {
+                itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
+            });
+        } else if (FileListView.PREVIEW_EXTENSIONS.document.includes(ext)) {
+            itemEl.addEventListener('dblclick', () => {
+                itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
+            });
+        } else if (FileListView.PREVIEW_EXTENSIONS.text.includes(ext)) {
+            itemEl.addEventListener('dblclick', () => {
+                itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
+            });
+        }
+    },
+
     updateToolbarState(AppState) {
         if (!FileListView.floatingToolbar) return;
 
@@ -121,9 +207,21 @@ const FileListView = {
         if (oldSentinel) oldSentinel.remove();
 
         const endIndex = Math.min(state.index + state.chunkSize, state.list.length);
+        const hasFolderThumbCache = Boolean(
+            state.appState &&
+            state.appState.currentThumbnails &&
+            state.appState.currentThumbnailsFolderId === state.appState.currentFolderId
+        );
         for (let i = state.index; i < endIndex; i++) {
             const data = state.list[i];
-            fragment.appendChild(createFn(data.item, data.isFolder, state.appState));
+            const el = createFn(data.item, data.isFolder, state.appState);
+            if (!data.isFolder && hasFolderThumbCache && typeof FileListHandler !== 'undefined' && typeof FileListHandler._applyThumbnailToElement === 'function') {
+                const cachedThumb = state.appState.currentThumbnails[data.item.id];
+                if (cachedThumb) {
+                    FileListHandler._applyThumbnailToElement(el, cachedThumb);
+                }
+            }
+            fragment.appendChild(el);
         }
         state.index = endIndex;
         FileListView.fileListBodyEl.appendChild(fragment);
@@ -156,73 +254,8 @@ const FileListView = {
         
         if (item.isUploading) itemEl.classList.add('is-uploading');
 
-        // --- Drag & Drop Logic (Same as List) ---
-        itemEl.addEventListener('mousedown', (e) => {
-            if (itemEl.classList.contains('is-uploading')) return;
-            if (itemEl.classList.contains('selected')) itemEl.draggable = true;
-            else itemEl.draggable = false;
-        });
-        itemEl.addEventListener('mouseup', () => { itemEl.draggable = false; });
-        
-        itemEl.addEventListener('dragstart', (e) => {
-            if (itemEl.classList.contains('is-uploading') || !itemEl.draggable) {
-                e.preventDefault(); return;
-            }
-            const isSelected = itemEl.classList.contains('selected');
-            if (!isSelected) {
-                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.length = 0;
-                itemEl.classList.add('selected');
-                AppState.selectedItems.push({ ...item, type: isFolder ? 'folder' : 'file' });
-            }
-            AppState.isDragging = true;
-            AppState.draggedItems = [...AppState.selectedItems];
-            const ghost = FileListView._createDragGhost(AppState.draggedItems);
-            document.body.appendChild(ghost);
-            e.dataTransfer.setDragImage(ghost, 0, 0);
-            setTimeout(() => document.body.removeChild(ghost), 0);
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', JSON.stringify(AppState.draggedItems.map(i => i.id)));
-            requestAnimationFrame(() => {
-                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.add('dragging'));
-            });
-        });
-        itemEl.addEventListener('dragend', (e) => {
-            itemEl.draggable = false;
-            AppState.isDragging = false;
-            AppState.draggedItems = [];
-            document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
-        });
-
-        if (isFolder) {
-            FileListHandler._setupDropTarget(itemEl, item.id);
-            itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
-        } else {
-            const ext = item.name.split('.').pop().toLowerCase();
-            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
-                });
-            }
-            else if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
-                });
-            }
-            else if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
-                });
-            }
-            else if (['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
-                      'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
-                      'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
-                      'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
-                });
-            }
-        }
+        FileListView._bindItemDragEvents(itemEl, item, isFolder, AppState);
+        FileListView._bindItemDoubleClick(itemEl, item, isFolder);
 
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
         
@@ -250,73 +283,7 @@ const FileListView = {
             itemEl.classList.add('is-uploading');
         }
 
-        // --- Drag Activation Logic ---
-        // Only allow dragging if the item is already selected.
-        itemEl.addEventListener('mousedown', (e) => {
-            if (itemEl.classList.contains('is-uploading')) return;
-            
-            // If dragging a selected item, enable drag.
-            // Otherwise, keep draggable=false to allow the mousedown to bubble to the container for marquee selection.
-            if (itemEl.classList.contains('selected')) {
-                itemEl.draggable = true;
-            } else {
-                itemEl.draggable = false;
-            }
-        });
-
-        itemEl.addEventListener('mouseup', () => {
-            itemEl.draggable = false;
-        });
-
-        // --- Drag Source Logic ---
-        itemEl.addEventListener('dragstart', (e) => {
-            if (itemEl.classList.contains('is-uploading') || !itemEl.draggable) {
-                e.preventDefault();
-                return;
-            }
-
-            // Selection Logic:
-            // If dragging an unselected item, select it exclusively.
-            // If dragging a selected item, drag all selected items.
-            const isSelected = itemEl.classList.contains('selected');
-            if (!isSelected) {
-                // Clear previous selection
-                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.length = 0;
-                // Select current
-                itemEl.classList.add('selected');
-                AppState.selectedItems.push({ ...item, type: isFolder ? 'folder' : 'file' });
-            }
-
-            AppState.isDragging = true;
-            AppState.draggedItems = [...AppState.selectedItems];
-            
-            // Set Drag Image (Ghost)
-            const ghost = FileListView._createDragGhost(AppState.draggedItems);
-            document.body.appendChild(ghost);
-            e.dataTransfer.setDragImage(ghost, 0, 0);
-            setTimeout(() => document.body.removeChild(ghost), 0); // Cleanup DOM immediately
-
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', JSON.stringify(AppState.draggedItems.map(i => i.id))); // Fallback data
-
-            // Visual feedback
-            requestAnimationFrame(() => {
-                document.querySelectorAll('.file-item.selected').forEach(el => el.classList.add('dragging'));
-            });
-        });
-
-        itemEl.addEventListener('dragend', (e) => {
-            itemEl.draggable = false; // Reset
-            AppState.isDragging = false;
-            AppState.draggedItems = [];
-            document.querySelectorAll('.file-item.dragging').forEach(el => el.classList.remove('dragging'));
-        });
-
-        // --- Drop Target Logic (Folders only) ---
-        if (isFolder) {
-            FileListHandler._setupDropTarget(itemEl, item.id);
-        }
+        FileListView._bindItemDragEvents(itemEl, item, isFolder, AppState);
 
         // Determine the correct icon based on item type or upload status.
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
@@ -385,39 +352,7 @@ const FileListView = {
             <div class="col file-item-col size">${item.size}</div>
         `;
         
-        // Add a double-click listener for folders to navigate into them.
-        if (isFolder) {
-            itemEl.addEventListener('dblclick', () => itemEl.dispatchEvent(new CustomEvent('folder-dblclick', { detail: { id: item.id }, bubbles: true })));
-        } else {
-            const ext = item.name.split('.').pop().toLowerCase();
-            // Image Double Click -> Gallery
-            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
-                });
-            } 
-            // Video Double Click -> Player
-            else if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
-                });
-            }
-            // Document Double Click -> Document Preview
-            else if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
-                });
-            }
-            // Text Double Click -> Text Preview
-            else if (['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
-                      'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
-                      'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
-                      'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile'].includes(ext)) {
-                itemEl.addEventListener('dblclick', () => {
-                    itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
-                });
-            }
-        }
+        FileListView._bindItemDoubleClick(itemEl, item, isFolder);
 
         FileListHandler._addSelectionListener(itemEl, item, isFolder ? 'folder' : 'file', AppState);
         
