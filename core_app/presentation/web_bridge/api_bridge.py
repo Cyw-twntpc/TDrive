@@ -1,4 +1,5 @@
 import os
+import inspect
 import logging
 import asyncio
 import json
@@ -9,6 +10,13 @@ from core_app.core.utils import check_path_exists
 from core_app.core.errors import ErrorCode
 
 logger = logging.getLogger(__name__)
+
+
+def _close_unstarted_coro(coro) -> None:
+    """Closes a coroutine that has not started executing to prevent RuntimeWarning leaks."""
+    if inspect.iscoroutine(coro) and inspect.getcoroutinestate(coro) == inspect.CORO_CREATED:
+        coro.close()
+
 
 class Bridge(QObject):
     # --- UI Update Signals ---
@@ -77,17 +85,29 @@ class Bridge(QObject):
                     }
                     result_signal.emit(error_payload)
         
-        self._fire_and_forget(task_wrapper())
+        try:
+            task = self._fire_and_forget(task_wrapper())
+        except BaseException:
+            _close_unstarted_coro(coro)
+            raise
+        if task is not None:
+            task._inner_coro = coro
+            task.add_done_callback(lambda _t: _close_unstarted_coro(coro))
 
     def _wait_for_async(self, coro):
         """Synchronously waits for an async coroutine using a local event loop."""
         if self._is_busy:
+            _close_unstarted_coro(coro)
             logger.warning("BUSY: Rejected overlapping critical operation.")
             return {"success": False, "error_code": ErrorCode.BUSY}
 
         # If the main asyncio loop isn't running, we can run the coroutine directly.
         if not self._loop.is_running():
-            return self._loop.run_until_complete(coro)
+            try:
+                return self._loop.run_until_complete(coro)
+            except BaseException:
+                _close_unstarted_coro(coro)
+                raise
 
         self._is_busy = True
         try:
@@ -106,6 +126,9 @@ class Bridge(QObject):
             local_qt_loop.exec()
 
             return task.result()
+        except BaseException:
+            _close_unstarted_coro(coro)
+            raise
         finally:
             self._is_busy = False # Always release the lock
 
