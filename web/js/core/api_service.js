@@ -60,6 +60,13 @@ const ApiService = {
     getUserInfo: () => ApiService._callBridge('get_user_info'),
     getUserAvatar: () => ApiService._callBridge('get_user_avatar'),
     logout: () => ApiService._callBridge('logout'),
+    getSettings: async () => {
+        const raw = await ApiService._callBridge('get_settings');
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch (e) { return {}; }
+        }
+        return raw || {};
+    },
 
     getFolderTreeData: () => ApiService._callBridge('get_folder_tree_data'),
     getFolderContents: (folderId) => ApiService._callBridgeSignal('get_folder_contents', 'queryResultReady', folderId),

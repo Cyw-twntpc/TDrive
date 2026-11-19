@@ -124,10 +124,21 @@ const UIManager = {
     },
 
     handleBackendError(response) {
+        const resp = response || {};
         let title = window.t('dialog.err_title');
-        let message = response.error_code ? window.t('errors.' + response.error_code) : window.t('dialog.err_internal');
+        let message = '';
 
-        switch (response.error_code) {
+        if (typeof resp.message === 'string' && resp.message.length > 0) {
+            message = resp.message;
+        } else if (resp.error_code) {
+            const errKey = 'errors.' + resp.error_code;
+            const translated = window.t(errKey);
+            message = (translated && translated !== errKey) ? translated : window.t('dialog.err_internal');
+        } else {
+            message = window.t('dialog.err_internal');
+        }
+
+        switch (resp.error_code) {
             case 'ITEM_ALREADY_EXISTS':
                 title = window.t('dialog.err_op_failed');
                 break;
@@ -136,7 +147,9 @@ const UIManager = {
                 break;
             case 'CONNECTION_FAILED':
                 title = window.t('dialog.err_conn');
-                message = window.t('dialog.err_conn_msg');
+                if (!resp.message) {
+                    message = window.t('dialog.err_conn_msg');
+                }
                 break;
             case 'FLOOD_WAIT_ERROR':
                 title = window.t('dialog.err_too_frequent');
@@ -152,6 +165,15 @@ const UIManager = {
     },
 
     handleConnectionStatus(status) {
+        if (status === 'bot_limit_reached') {
+            if (!this._botLimitNotified) {
+                this._botLimitNotified = true;
+                if (typeof UIModals !== 'undefined') {
+                    UIModals.showAlert(window.t('dialog.bot_limit_title'), window.t('dialog.bot_limit_msg'), 'btn-primary');
+                }
+            }
+            return;
+        }
         this.toggleModal('connection-lost-overlay', status === 'lost');
     }
 };

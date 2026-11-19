@@ -51,10 +51,6 @@
     },
     "errors": {
         "SEARCH_FAILED": "An unknown error occurred during the search.",
-        "AVATAR_NOT_FOUND": "User avatar not found.",
-        "TASK_FAILED": "Task execution failed.",
-        "ASYNC_CALL_FAILED": "Asynchronous call failed.",
-        "BUSY": "System is busy, please wait.",
         "INVALID_API_CREDENTIALS": "Invalid API ID or API Hash.",
         "CONNECTION_FAILED": "Connection failed, please check your network status.",
         "CLIENT_NOT_CONNECTED": "The application has not finished initializing.",
@@ -77,7 +73,9 @@
         "ASYNC_CALL_FAILED": "Asynchronous call failed.",
         "BUSY": "Another critical operation is in progress, please wait.",
         "CANCELLED": "Operation was cancelled.",
-        "AVATAR_NOT_FOUND": "Profile picture not found."
+        "AVATAR_NOT_FOUND": "Profile picture not found.",
+        "TIMEOUT": "Request timed out, please try again.",
+        "TRANSFER_FAILED": "Transfer failed."
     },
     "validation": {
         "api_id_invalid": "Please enter a valid API ID (numbers only)",
@@ -102,6 +100,7 @@
         "search_scope_title": "Toggle search scope",
         "search_scope_all": "All Folders",
         "search_scope_current": "Current Folder",
+        "search_results_for": "Search results for ",
         "view_toggle_title": "Toggle view",
         "view_list": "Switch to List View",
         "view_grid": "Switch to Grid View",
@@ -109,7 +108,8 @@
         "settings_title": "Settings",
         "user_info_title": "User Info",
         "conn_lost": "Connection Lost",
-        "conn_reconnecting": "Attempting to reconnect, please wait..."
+        "conn_reconnecting": "Attempting to reconnect, please wait...",
+        "loading": "Loading..."
     },
     "file_list": {
         "col_name": "Name",
@@ -307,7 +307,11 @@
         "detail_folders": "Folders:",
         "detail_files": "Files:",
         "detail_total_size": "Total Size:",
-        "detail_name": "Name:"
+        "detail_name": "Name:",
+        "current_location": "Current location",
+        "btn_restore_settings": "Restore Defaults",
+        "bot_limit_title": "Worker Bot Limit Reached",
+        "bot_limit_msg": "Your Telegram account has reached the maximum number of bots. Transfers will continue normally, but parallel acceleration may be limited."
     },
     "meta": {
         "res": "Resolution",
@@ -333,6 +337,11 @@
         "err_network": "Preview load error",
         "err_doc_load_failed": "Failed to load document preview",
         "err_doc_full_failed": "Failed to load full document",
-        "unknown": "Unknown"
+        "unknown": "Unknown",
+        "jump_title": "Go to Progress",
+        "btn_jump": "Jump"
+    },
+    "native": {
+        "initializing": "Initializing..."
     }
 }

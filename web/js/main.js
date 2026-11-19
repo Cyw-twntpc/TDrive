@@ -41,56 +41,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     window.switchPage = switchPage;
-    
-    function onFolderContentsReady(response) {
-        const { data, request_id } = response;
-        if (request_id !== AppState.currentViewRequestId) {
-            return;
-        }
-
-        UIManager.stopProgress();
-
-        if (data && data.success !== false) {
-            AppState.currentFolderContents = data;
-            renderListAndSyncManager();
-        } else {
-            if (data && data.error_code === 'PATH_NOT_FOUND') {
-                console.warn("Current folder not found, navigating up.");
-                // Try to find parent from folderMap, otherwise go to Root
-                const currentInfo = AppState.folderMap.get(AppState.currentFolderId);
-                const parentId = currentInfo ? currentInfo.parent_id : null;
-                
-                if (parentId) {
-                    navigateTo(parentId);
-                } else {
-                    // Fallback to root if we can't find parent (or we are at root and it's gone? Unlikely)
-                    const root = AppState.folderTreeData.find(f => f.parent_id === null);
-                    if (root) navigateTo(root.id);
-                }
-                return;
-            }
-            UIManager.handleBackendError(data || { message: window.t('file_list.empty_text') });
-        }
-    }
-
-    function onSearchResultsReady(response) {
-        const { request_id, type, data } = response;
-
-        if (request_id !== AppState.currentViewRequestId) {
-            return;
-        }
-
-        if (type === 'batch') {
-            if (data.folders) AppState.currentFolderContents.folders.push(...data.folders);
-            if (data.files) AppState.currentFolderContents.files.push(...data.files);
-            renderListAndSyncManager();
-        } else if (type === 'done') {
-            UIManager.stopProgress();
-        } else if (type === 'error') {
-            UIManager.stopProgress();
-            UIManager.handleBackendError(data || { message: window.t('dialog.search_err') });
-        }
-    }
 
     async function navigateTo(folderId) {
         if (AppState.isSearching) ActionController.exitSearchMode();
@@ -139,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ApiService.getFolderContents(folderId).then(response => {
             if (!response || !response.success) {
+                UIManager.stopProgress();
                 UIModals.showAlert(window.t('dialog.load_failed'), response?.error_code ? window.t('errors.' + response.error_code) : window.t('file_list.empty_text'), 'btn-primary');
                 return;
             }
@@ -148,10 +99,9 @@ document.addEventListener('DOMContentLoaded', () => {
             AppState.currentFolderContents = response;
             FileListHandler.sortAndRender(AppState);
             UIManager.stopProgress();
-            
-            if (AppState.viewMode === 'grid') {
-                FileListHandler.loadThumbnails(AppState.currentFolderId);
-            }
+        }).catch(err => {
+            console.error('Failed to load folder contents:', err);
+            UIManager.stopProgress();
         });
     }
     window.navigateTo = navigateTo;
@@ -192,9 +142,19 @@ document.addEventListener('DOMContentLoaded', () => {
     
     async function loadUserDisplayInfo() {
         UIManager.populateUserInfoPopover(AppState);
-        const [info, avatar] = await Promise.all([ApiService.getUserInfo(), ApiService.getUserAvatar()]);
-        if (info && info.success) AppState.userInfo = info;
-        if (avatar && avatar.success) AppState.userAvatar = avatar.avatar_base64;
+        // Serialize QWebChannel _callBridge requests to avoid _is_busy mutex collision
+        try {
+            const info = await ApiService.getUserInfo();
+            if (info && info.success) AppState.userInfo = info;
+        } catch (e) {
+            console.error('Failed to load user info:', e);
+        }
+        try {
+            const avatar = await ApiService.getUserAvatar();
+            if (avatar && avatar.success) AppState.userAvatar = avatar.avatar_base64;
+        } catch (e) {
+            console.error('Failed to load user avatar:', e);
+        }
         UIManager.updateUserAvatar(AppState);
         UIManager.populateUserInfoPopover(AppState);
     }
@@ -351,9 +311,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (response && response.success && AppState.currentFolderId === response.current_folder.id) {
                             AppState.currentFolderContents = response;
                             FileListHandler.sortAndRender(AppState);
-                            if (AppState.viewMode === 'grid') {
-                                FileListHandler.loadThumbnails(AppState.currentFolderId);
-                            }
                         }
                     });
                 }
@@ -415,8 +372,11 @@ document.addEventListener('i18nChanged', () => {
             FileListHandler.sortAndRender(ActionController._appState);
         }
         // Re-render trash list using cached data
-        if (typeof TrashHandler !== 'undefined' && TrashHandler._trashItems && TrashHandler._trashItems.length > 0) {
-            TrashHandler._renderTrashItems(TrashHandler._trashItems);
+        if (typeof TrashHandler !== 'undefined' && typeof TrashView !== 'undefined' && Array.isArray(AppState.trashItems) && AppState.trashItems.length > 0) {
+            AppState.trashItems.forEach(item => {
+                item.displayPath = TrashView._getOriginalPath(item.original_parent_id);
+            });
+            TrashHandler.sortAndRender();
         }
     }
 });

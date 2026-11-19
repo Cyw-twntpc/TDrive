@@ -176,10 +176,11 @@ const ActionController = {
         }
 
         let destinationDir = null;
-        const useDefault = localStorage.getItem('useDefaultDownloadPath') === 'true';
+        const settings = await ActionController._apiService.getSettings();
+        const useDefault = settings.useDefaultDownloadPath === true || settings.useDefaultDownloadPath === 'true';
 
         if (useDefault) {
-            destinationDir = localStorage.getItem('defaultDownloadPath');
+            destinationDir = settings.defaultDownloadPath;
             if (!destinationDir) {
                 await ActionController._uiModals.showAlert(window.t('dialog.err_title'), window.t('dialog.dl_path_not_set'), 'btn-primary');
                 return;
@@ -204,7 +205,7 @@ const ActionController = {
             for (const task of TransferModel.downloads.values()) {
                 if (['queued', 'transferring', 'paused'].includes(task.status) &&
                     task.db_id === item.id &&
-                    task.destinationDir === destinationDir) {
+                    (task.destinationDir === destinationDir || task.localPath === destinationDir)) {
 
                     isDuplicate = true;
                     break;
@@ -356,10 +357,18 @@ const ActionController = {
             ActionController._uiManager.startProgress();
             ActionController._uiManager.setInteractionLock(true);
             try {
-                await ActionController._apiService.logout();
-                // Bridge settings are persistent, no need to clear localStorage anymore
-                // localStorage.clear();
-                window.location.href = 'login.html';
+                const result = await ActionController._apiService.logout();
+                if (result && result.success === false) {
+                    ActionController._uiManager.handleBackendError(result);
+                    ActionController._uiManager.stopProgress();
+                    ActionController._uiManager.setInteractionLock(false);
+                    return;
+                }
+                if (window.tdrive_bridge && typeof window.tdrive_bridge.notify_logout_complete === 'function') {
+                    window.tdrive_bridge.notify_logout_complete();
+                } else {
+                    window.location.href = 'login.html';
+                }
             } catch (error) {
                 console.error("Logout operation failed:", error);
                 ActionController._uiManager.handleBackendError({ message: window.t('dialog.logout_err') });

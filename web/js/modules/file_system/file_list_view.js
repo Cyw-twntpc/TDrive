@@ -30,8 +30,13 @@ const FileListView = {
     updateBreadcrumb(AppState, navigateTo) {
         FileListView.breadcrumbEl.innerHTML = '';
         if (AppState.isSearching) {
-            const searchHtml = `Search results for <span class="breadcrumb-search-term">${AppState.searchTerm}</span>`;
-            FileListView.breadcrumbEl.innerHTML = searchHtml;
+            const i18nPrefix = window.t('main.search_results_for');
+            const prefix = (i18nPrefix && i18nPrefix !== 'main.search_results_for') ? i18nPrefix : 'Search results for ';
+            FileListView.breadcrumbEl.appendChild(document.createTextNode(prefix));
+            const termSpan = document.createElement('span');
+            termSpan.className = 'breadcrumb-search-term';
+            termSpan.textContent = AppState.searchTerm;
+            FileListView.breadcrumbEl.appendChild(termSpan);
             return;
         }
 

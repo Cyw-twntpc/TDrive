@@ -51,10 +51,6 @@
     },
     "errors": {
         "SEARCH_FAILED": "搜尋過程中發生未知錯誤。",
-        "AVATAR_NOT_FOUND": "找不到使用者頭像。",
-        "TASK_FAILED": "任務執行失敗。",
-        "ASYNC_CALL_FAILED": "非同步呼叫失敗。",
-        "BUSY": "系統忙碌中，請稍候。",
         "INVALID_API_CREDENTIALS": "無效的 API ID 或 API Hash。",
         "CONNECTION_FAILED": "連線失敗，請檢查網路狀態。",
         "CLIENT_NOT_CONNECTED": "應用程式尚未初始化完成。",
@@ -77,7 +73,9 @@
         "ASYNC_CALL_FAILED": "非同步呼叫失敗。",
         "BUSY": "另一個關鍵操作正在進行中，請稍候。",
         "CANCELLED": "任務已取消。",
-        "AVATAR_NOT_FOUND": "找不到個人圖片。"
+        "AVATAR_NOT_FOUND": "找不到個人圖片。",
+        "TIMEOUT": "請求逾時，請稍後重試。",
+        "TRANSFER_FAILED": "傳輸失敗。"
     },
     "validation": {
         "api_id_invalid": "請輸入有效的 API ID (僅限數字)",
@@ -102,6 +100,7 @@
         "search_scope_title": "切換搜尋範圍",
         "search_scope_all": "所有資料夾",
         "search_scope_current": "目前資料夾",
+        "search_results_for": "搜尋結果：",
         "view_toggle_title": "切換檢視",
         "view_list": "切換至列表",
         "view_grid": "切換至縮圖",
@@ -109,7 +108,8 @@
         "settings_title": "設定",
         "user_info_title": "使用者資訊",
         "conn_lost": "連線中斷",
-        "conn_reconnecting": "正在嘗試重新連線，請稍候..."
+        "conn_reconnecting": "正在嘗試重新連線，請稍候...",
+        "loading": "載入中..."
     },
     "file_list": {
         "col_name": "名稱",
@@ -307,7 +307,11 @@
         "detail_folders": "資料夾數量:",
         "detail_files": "檔案數量:",
         "detail_total_size": "總計大小:",
-        "detail_name": "名稱:"
+        "detail_name": "名稱:",
+        "current_location": "目前位置",
+        "btn_restore_settings": "恢復預設值",
+        "bot_limit_title": "Worker Bot 數量已達上限",
+        "bot_limit_msg": "Telegram 帳號可建立的 Bot 數量已達上限，傳輸仍可正常進行，但並行加速可能受限。"
     },
     "meta": {
         "res": "解析度",
@@ -333,6 +337,11 @@
         "err_network": "預覽載入錯誤",
         "err_doc_load_failed": "無法載入文件預覽",
         "err_doc_full_failed": "無法載入完整文件",
-        "unknown": "未知"
+        "unknown": "未知",
+        "jump_title": "跳轉至進度",
+        "btn_jump": "跳轉"
+    },
+    "native": {
+        "initializing": "正在初始化..."
     }
 }

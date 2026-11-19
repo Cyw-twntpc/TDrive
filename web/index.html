@@ -6,9 +6,9 @@
     <link rel="shortcut icon" type="image/x-icon" href="icon.ico">
     <title data-i18n="main.window_title"></title>
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css?v=6">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+    <link rel="stylesheet" href="vendor/highlightjs/github.min.css?v=11.11.1">
     <link rel="stylesheet" href="css/style.css?v=8">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="vendor/highlightjs/highlight.min.js?v=11.11.1"></script>
     <script type="text/javascript" src="js/qwebchannel.js?v=6"></script>
     <script type="text/javascript">
         window.addEventListener('load', function() {
@@ -421,31 +421,6 @@
             </div>
         </div>
     </div>
-
-    <template id="transfer-item-template">
-        <div class="transfer-item" data-id="" data-parent-id="">
-            <div class="item-indent"></div>
-            <span class="item-toggle"></span>
-            <i class="file-icon"></i>
-            <div class="item-info">
-                <span class="item-name"></span>
-                <div class="item-details">
-                    <span class="item-progress-text"></span>
-                    <span class="item-speed"></span>
-                </div>
-                <div class="item-progress-bar">
-                    <div class="progress-fill"></div>
-                </div>
-            </div>
-            <div class="item-status"></div>
-            <div class="item-actions">
-                <button class="action-btn pause-item" data-i18n-title="transfer.btn_pause"><i class="fas fa-pause"></i></button>
-                <button class="action-btn resume-item" data-i18n-title="transfer.btn_resume"><i class="fas fa-play"></i></button>
-                <button class="action-btn cancel-item" data-i18n-title="transfer.btn_cancel"><i class="fas fa-times"></i></button>
-                <button class="action-btn retry-item" data-i18n-title="transfer.btn_retry"><i class="fas fa-sync-alt"></i></button>
-            </div>
-        </div>
-    </template>
     
     <!-- Text Preview Modal -->
     <div id="text-modal" class="modal-overlay hidden">

@@ -94,14 +94,14 @@ const TextHandler = {
             jumpModal.className = 'text-jump-modal hidden';
             jumpModal.innerHTML = `
                 <div class="jump-modal-content">
-                    <div class="jump-header">Go to Progress</div>
+                    <div class="jump-header" data-i18n="preview.jump_title">${UIManager.escapeHtml(window.t('preview.jump_title'))}</div>
                     <div class="jump-slider-container">
                         <input type="range" id="text-jump-slider" min="0" max="100" step="0.01" value="0">
                         <span id="text-jump-value">0.00%</span>
                     </div>
                     <div class="jump-actions">
-                        <button id="text-jump-cancel" class="btn btn-secondary">Cancel</button>
-                        <button id="text-jump-ok" class="btn btn-primary">Jump</button>
+                        <button id="text-jump-cancel" class="btn btn-secondary" data-i18n="dialog.btn_cancel">${UIManager.escapeHtml(window.t('dialog.btn_cancel'))}</button>
+                        <button id="text-jump-ok" class="btn btn-primary" data-i18n="preview.btn_jump">${UIManager.escapeHtml(window.t('preview.btn_jump'))}</button>
                     </div>
                 </div>
             `;

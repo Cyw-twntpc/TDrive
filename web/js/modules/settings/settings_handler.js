@@ -40,8 +40,8 @@ const SettingsHandler = {
             }
             
             // Enable or disable the "Set Path" button based on the toggle.
-            setPathBtn.disabled = useDefault;
-            pathDisplay.style.opacity = useDefault ? '0.5' : '1';
+            setPathBtn.disabled = !useDefault;
+            pathDisplay.style.opacity = useDefault ? '1' : '0.5';
         } catch (e) {
             console.error('Failed to load settings', e);
         }
@@ -83,8 +83,8 @@ const SettingsHandler = {
         
         document.getElementById('use-default-download-path-toggle').addEventListener('change', (e) => {
             const isUsingDefault = e.target.checked;
-            document.getElementById('set-default-download-path-btn').disabled = isUsingDefault;
-            document.getElementById('default-download-path-display').style.opacity = isUsingDefault ? '0.5' : '1';
+            document.getElementById('set-default-download-path-btn').disabled = !isUsingDefault;
+            document.getElementById('default-download-path-display').style.opacity = isUsingDefault ? '1' : '0.5';
         });
 
         const langSelect = document.getElementById('language-select');
