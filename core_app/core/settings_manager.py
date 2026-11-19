@@ -1,6 +1,8 @@
 import json
 import os
 import logging
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -71,3 +73,40 @@ class SettingsManager:
         """Restores all settings to their default values and saves to file."""
         self._save(self.DEFAULT_SETTINGS.copy())
         logger.info("Settings restored to default values.")
+
+
+def get_localized_text(key: str, fallback: str = "", locale_dir: Optional[str] = None) -> str:
+    """Resolve a dotted i18n key using the active language setting and locale JSON files."""
+    if not key:
+        return fallback
+
+    try:
+        lang = SettingsManager().get("language", "zh-TW") or "zh-TW"
+    except Exception as e:
+        logger.warning(f"Failed to read language setting for '{key}': {e}")
+        lang = "zh-TW"
+
+    base_dir = Path(locale_dir) if locale_dir else Path(__file__).resolve().parents[2] / "web" / "locales"
+    candidates = [base_dir / f"{lang}.json"]
+    if lang != "zh-TW":
+        candidates.append(base_dir / "zh-TW.json")
+
+    for locale_path in candidates:
+        if not locale_path.is_file():
+            continue
+        try:
+            with locale_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            current = data
+            for part in key.split("."):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    current = None
+                    break
+            if isinstance(current, str):
+                return current
+        except Exception as e:
+            logger.warning(f"Failed to load localized key '{key}' from {locale_path}: {e}")
+
+    return fallback

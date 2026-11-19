@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
 from PySide6.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QRadialGradient
 
+from core_app.core.settings_manager import get_localized_text
+
 logger = logging.getLogger(__name__)
 
 class SplashScreen(QWidget):
@@ -37,7 +39,9 @@ class SplashScreen(QWidget):
             self.logo = self.logo.scaled(260, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         else:
             logger.warning("Splash screen logo (web/title.png) not found or invalid.")
-        
+
+        self._status_text = get_localized_text("native.initializing", "正在初始化...")
+
         # Fade in animation
         self.fade_in()
 
@@ -214,7 +218,7 @@ class SplashScreen(QWidget):
         painter.setPen(QColor(60, 80, 110))
         painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Normal))
         text_rect = QRectF(0, 230, self.width(), 25) # Moved up
-        painter.drawText(text_rect, Qt.AlignCenter, "正在初始化...")
+        painter.drawText(text_rect, Qt.AlignCenter, self._status_text)
 
     def closeEvent(self, event):
         """Clean up timers when closing."""

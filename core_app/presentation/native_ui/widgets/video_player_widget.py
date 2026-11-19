@@ -3,6 +3,7 @@ import sys
 import logging
 import threading
 
+from core_app.core.settings_manager import get_localized_text
 from core_app.core.utils import ensure_extracted
 
 vlc_path = ensure_extracted('vlc')
@@ -69,7 +70,7 @@ class LoadingOverlay(QWidget):
         self.spinner = LoadingSpinner()
         layout.addWidget(self.spinner, 0, Qt.AlignmentFlag.AlignHCenter)
         
-        self.label = QLabel("加載中...")
+        self.label = QLabel(get_localized_text("main.loading", "載入中..."))
         self.label.setStyleSheet("color: white; font-weight: bold; font-size: 16px; background: transparent;")
         layout.addWidget(self.label, 0, Qt.AlignmentFlag.AlignHCenter)
 
@@ -503,14 +504,21 @@ class VideoPlayerWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def seek_relative(self, ms_offset):
+        """Seek relative to current playback time by ms_offset milliseconds."""
         if not self.player:
             return
         current_time = self.player.get_time()
         length = self.player.get_length()
         if current_time >= 0 and length > 0:
-            new_time = max(0, min(current_time + ms_offset, length))
-            self.set_position(new_time)
+            new_time = int(max(0, min(current_time + ms_offset, length)))
+            self.player.set_time(new_time)
+            self.show_controls()
+            self.is_seeking = True
+            self.stuck_ticks = 0
+            self.seek_wait_ticks = 0
+            self.position_slider.blockSignals(True)
             self.position_slider.setValue(int((new_time / length) * self.position_slider.maximum()))
+            self.position_slider.blockSignals(False)
             self.time_label.setText(f"{self.format_time(new_time)} / {self.format_time(length)}")
 
     def show_controls(self):
