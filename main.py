@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from qasync import QEventLoop
 
 from core_app.core import logger_config
+from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.native_ui.windows.login_window import LoginWindow
 from core_app.presentation.native_ui.windows.main_window import MainWindow
@@ -54,8 +55,10 @@ class AppController(QObject):
     def show_main_window(self, service_instance: TDriveService):
         if self.login_window:
             self.login_window.close()
+            self.login_window = None
         
         self.main_window = MainWindow(service_instance, self.loop)
+        self.main_window.logged_out.connect(self.on_logout)
         
         # Re-wire the connection status emitter to the new main window's bridge
         # to ensure UI updates for connection status are handled correctly.
@@ -66,6 +69,17 @@ class AppController(QObject):
 
     def on_login_successful(self, service_instance: TDriveService):
         self.show_main_window(service_instance)
+
+    def on_logout(self):
+        """Close main window, reset DB singleton and service, and show LoginWindow."""
+        if self.main_window:
+            self.main_window.close()
+            self.main_window.deleteLater()
+            self.main_window = None
+
+        DatabaseConnection._instance = None
+        self.tdrive_service = TDriveService(loop=self.loop)
+        self.show_login_window()
 
 def main():
     logger_config.setup_logging()

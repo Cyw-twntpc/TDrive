@@ -17,7 +17,6 @@ from core_app.application.transfer.transfer_service import TransferService
 from core_app.application.file_system.thumbnail.manager import ThumbnailManager
 from core_app.application.preview.buffer import StreamBuffer
 from core_app.application.preview.video.player import VideoStreamer
-from core_app.application.preview.http_server import PreviewServer
 from core_app.application.auth.session_manager import SessionManager
 from core_app.application.file_system.preview_cache_manager import PreviewCacheManager
 
@@ -57,12 +56,10 @@ class TDriveService:
         self._preview_cache = PreviewCacheManager()
 
         self.video_player = VideoStreamer(self.buffer, self.db_handler)
-        self.preview_server = PreviewServer(preview_cache=self._preview_cache)
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
         self._file_service = FileService(self._shared_state, self.thumb_manager, buffer=self.buffer, preview_cache=self._preview_cache)
-        self._file_service.preview_server = self.preview_server
         self._folder_service = FolderService(self._shared_state)
         
         # Inject MetadataManager into TransferService
@@ -175,16 +172,8 @@ class TDriveService:
     # --- Application Lifecycle ---
 
     async def check_startup_login(self) -> Dict[str, Any]:
-        result = await self._auth_service.check_startup_login()
-        if result.get("logged_in"):
-            # Restore DB Snapshot on successful auto-login
-            logger.info("Auto-login successful. Initializing database from cloud...")
-            await self.metadata_manager.initialize_db(
-                self._shared_state.client, 
-                self._shared_state.group_id, 
-                self._shared_state.api_id
-            )
-        return result
+        # initialize_drive() inside check_startup_login already calls initialize_db()
+        return await self._auth_service.check_startup_login()
 
     async def start_background_services(self):
         """Starts background tasks safely decoupled from synchronous initialization phases."""
@@ -205,16 +194,28 @@ class TDriveService:
         except Exception as e:
             logger.error(f"Failed to start bot manager: {e}", exc_info=True)
             
+    async def _disconnect_worker_bots(self):
+        """Disconnect and clear all worker bot clients in the shared pool."""
+        pool = getattr(self._shared_state, "clients_pool", None) if self._shared_state else None
+        if not pool:
+            return
+        for bot_client in list(pool):
+            try:
+                if bot_client and bot_client.is_connected():
+                    await bot_client.disconnect()
+            except Exception as e:
+                logger.warning(f"Failed to disconnect worker bot during shutdown: {e}")
+        if isinstance(pool, list):
+            pool.clear()
+
     async def close(self):
-        # Stop DefragWorker if initialized
-        if hasattr(self, "_file_service") and hasattr(self._file_service, "defrag_worker") and self._file_service.defrag_worker:
+        """Gracefully stop background workers, timers, clients, and local storage."""
+        if hasattr(self, "_file_service") and getattr(self._file_service, "defrag_worker", None):
             self._file_service.defrag_worker.stop()
 
-        # Stop SyncManager if initialized
-        if hasattr(self, "_main_db") and hasattr(self._main_db, "sync_manager") and self._main_db.sync_manager:
-            self._main_db.sync_manager.stop()
+        if hasattr(self, "db_handler") and getattr(self.db_handler, "sync_manager", None):
+            self.db_handler.sync_manager.stop()
 
-        # Cancel active db_upload_timer and background tasks in SharedState
         if self._shared_state:
             if self._shared_state.db_upload_timer:
                 self._shared_state.db_upload_timer.cancel()
@@ -223,36 +224,32 @@ class TDriveService:
                 if not task.done():
                     task.cancel()
 
-        # Stop the file status watcher
         self._transfer_service.shutdown()
-        
-        # Stop Streaming Proxy and Player
-        if self.video_player:
+
+        if getattr(self, "video_player", None):
             await self.video_player.stop()
 
-        # Stop Preview HTTP Server
-        if self.preview_server:
-            await self.preview_server.stop()
-        
-        # Forcibly save buffered traffic to DB
+        thumb_mgr = getattr(self, "thumb_manager", None)
+        if thumb_mgr and hasattr(thumb_mgr, "close"):
+            thumb_mgr.close()
+
         self._transfer_service.controller.save_pending_traffic_stats()
-        
-        # Force sync DB to cloud on exit to ensure persistence
-        if self._shared_state.client and self._shared_state.client.is_connected() and self._shared_state.is_logged_in:
+
+        if self._shared_state and self._shared_state.client and self._shared_state.client.is_connected() and self._shared_state.is_logged_in:
             try:
-                # Save Telegram Session (Encrypted)
                 SessionManager.save_session(self._shared_state.client.session, self._shared_state.api_id)
-                
                 logger.info("Syncing database to cloud before shutdown...")
                 await self.metadata_manager.sync_db_to_cloud(
-                    self._shared_state.client, 
-                    self._shared_state.group_id, 
+                    self._shared_state.client,
+                    self._shared_state.group_id,
                     self._shared_state.api_id
                 )
             except Exception as e:
                 logger.error(f"Failed to sync DB on exit: {e}")
-        
-        client = self._shared_state.client
+
+        await self._disconnect_worker_bots()
+
+        client = self._shared_state.client if self._shared_state else None
         if client and client.is_connected():
             logger.info("Disconnecting from Telegram...")
             try:
@@ -323,19 +320,10 @@ class TDriveService:
         return await self._auth_service.submit_password(password)
         
     async def perform_post_login_initialization(self) -> Dict[str, Any]:
-        # Initialize Drive (Group, etc.)
+        # initialize_drive() already calls initialize_db() internally
         result = await self._auth_service.initialize_drive()
         
         if result.get("success"):
-            # Init DB from Cloud
-            logger.info("Post-login: Initializing database from cloud...")
-            await self.metadata_manager.initialize_db(
-                self._shared_state.client, 
-                self._shared_state.group_id, 
-                self._shared_state.api_id
-            )
-            
-            # Start background services immediately since the loop is running natively during manual login
             self._schedule_background_task(self.start_background_services())
             
         return result
@@ -348,8 +336,26 @@ class TDriveService:
 
     async def logout(self) -> Dict[str, Any]:
         logger.info("Logging out, shutting down services...")
+        if hasattr(self, '_file_service') and getattr(self._file_service, 'defrag_worker', None):
+            self._file_service.defrag_worker.stop()
+        if hasattr(self, 'db_handler') and getattr(self.db_handler, 'sync_manager', None):
+            self.db_handler.sync_manager.stop()
+
+        # Cancel timers and background tasks before disconnecting clients/removing cache
+        if getattr(self, '_shared_state', None):
+            if self._shared_state.db_upload_timer:
+                self._shared_state.db_upload_timer.cancel()
+                self._shared_state.db_upload_timer = None
+            current_task = asyncio.current_task()
+            for task in list(self._shared_state.background_tasks):
+                if task is not current_task and not task.done():
+                    task.cancel()
+
         self._transfer_service.shutdown()
-        
+
+        if getattr(self, 'video_player', None):
+            await self.video_player.stop()
+
         if hasattr(self, 'thumb_manager') and hasattr(self.thumb_manager, 'close'):
             self.thumb_manager.close()
             

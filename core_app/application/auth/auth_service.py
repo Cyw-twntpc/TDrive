@@ -196,7 +196,7 @@ class AuthService:
     async def send_code_request(self, phone_number: str) -> Dict[str, Any]:
         client = self.shared_state.client
         if not client:
-            logger.error("用戶端尚未初始化。")
+            logger.error("Client is not initialized.")
             return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             sent_code = await client.send_code_request(phone_number)
@@ -213,7 +213,7 @@ class AuthService:
     async def submit_verification_code(self, code: str) -> Dict[str, Any]:
         client = self.shared_state.client
         if not client:
-            logger.error("用戶端尚未初始化。")
+            logger.error("Client is not initialized.")
             return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             await client.sign_in(self.shared_state.phone, code, phone_code_hash=self.shared_state.phone_code_hash)
@@ -233,7 +233,7 @@ class AuthService:
     async def submit_password(self, password: str) -> Dict[str, Any]:
         client = self.shared_state.client
         if not client:
-            logger.error("用戶端尚未初始化。")
+            logger.error("Client is not initialized.")
             return {"success": False, "error_code": ErrorCode.CLIENT_NOT_CONNECTED}
         try:
             await client.sign_in(password=password)
@@ -281,8 +281,89 @@ class AuthService:
         try:
             logger.info("Initializing TDrive...")
             async with asyncio.timeout(30):
-                self.shared_state.group_id = await telegram_comms.get_group_id(client)
+                async def _await_if_coro(val):
+                    if asyncio.iscoroutine(val) or hasattr(val, '__await__'):
+                        return await val
+                    return val
 
+                # 1. Scan all TDrive storage groups via get_all_tdrive_groups
+                groups_res = telegram_comms.get_all_tdrive_groups(self.shared_state)
+                groups = await _await_if_coro(groups_res)
+
+                if not isinstance(groups, list) or not groups:
+                    # Fallback to find or create primary group
+                    primary_res = telegram_comms.get_group_id(self.shared_state)
+                    primary_id = await _await_if_coro(primary_res)
+                    if primary_id and isinstance(primary_id, int):
+                        groups = [(1, primary_id, "TDrive")]
+                    else:
+                        groups = []
+
+                if not isinstance(groups, list) or not groups:
+                    logger.error("Failed to find or create any TDrive storage group.")
+                    return {"success": False, "error_code": ErrorCode.DRIVE_INITIALIZATION_FAILED}
+
+                # 2. Call _ensure_permanently_muted on every storage group
+                for idx, tg_id, name in groups:
+                    mute_res = telegram_comms._ensure_permanently_muted(self.shared_state, tg_id)
+                    await _await_if_coro(mute_res)
+
+                # 3. Determine active storage group and build shared_state mappings
+                highest_group = max(groups, key=lambda x: x[0])
+                active_idx = highest_group[0]
+                active_tg_id = highest_group[1]
+
+                self.shared_state.group_id_map = {idx: tg_id for idx, tg_id, _ in groups}
+                self.shared_state.active_group_index = active_idx
+                self.shared_state.group_id = active_tg_id
+
+                # 4. Query real message count of active group for accurate rotation threshold tracking
+                msg_count_res = telegram_comms.get_group_message_count(client, active_tg_id)
+                msg_count = await _await_if_coro(msg_count_res)
+                if isinstance(msg_count, int) and not isinstance(msg_count, bool):
+                    self.shared_state.current_group_msg_count = msg_count
+                else:
+                    self.shared_state.current_group_msg_count = 0
+
+                # 5. Restore DB snapshot across all storage groups BEFORE upserting live storage_groups
+                from core_app.infrastructure.database.main_db.database import DatabaseConnection
+                from core_app.infrastructure.telegram.metadata_manager import MetadataManager
+                db = DatabaseConnection()
+                if not getattr(self.shared_state, 'metadata_manager', None):
+                    self.shared_state.metadata_manager = MetadataManager(db, self.shared_state)
+
+                group_ids_list = list(self.shared_state.group_id_map.values())
+                await self.shared_state.metadata_manager.initialize_db(
+                    client,
+                    group_id=group_ids_list,
+                    api_id=self.shared_state.api_id
+                )
+
+                # 6. Populate/upsert SQLite storage_groups table with live discovered groups
+                conn = db._get_conn()
+                cursor = conn.cursor()
+                for idx, tg_id, name in groups:
+                    is_act = 1 if idx == active_idx else 0
+                    grp_msg_count = self.shared_state.current_group_msg_count if idx == active_idx else 0
+                    cursor.execute("SELECT group_index FROM storage_groups WHERE group_index = ? OR telegram_group_id = ?", (idx, tg_id))
+                    row = cursor.fetchone()
+                    if row:
+                        if idx == active_idx:
+                            cursor.execute(
+                                "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ?, msg_count = ? WHERE group_index = ?",
+                                (tg_id, name, is_act, grp_msg_count, idx)
+                            )
+                        else:
+                            cursor.execute(
+                                "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ? WHERE group_index = ?",
+                                (tg_id, name, is_act, idx)
+                            )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, datetime('now'), ?, ?)",
+                            (idx, tg_id, name, grp_msg_count, is_act)
+                        )
+                conn.commit()
 
             logger.info("TDrive initialization successful.")
             return {"success": True}
@@ -296,7 +377,7 @@ class AuthService:
     async def get_user_info(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗")
+            logger.error("Connection failed.")
             return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
         try:
             me = await client.get_me()
@@ -313,7 +394,7 @@ class AuthService:
     async def get_user_avatar(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗")
+            logger.error("Connection failed.")
             return {"success": False, "error_code": ErrorCode.CONNECTION_FAILED}
         
         avatar_path = './file/user_data/user_avatar.jpg'
@@ -338,6 +419,16 @@ class AuthService:
 
     async def perform_logout(self) -> Dict[str, Any]:
         logger.info("Performing logout...")
+        # Disconnect all worker bot clients in pool before clearing
+        for bot_client in list(getattr(self.shared_state, 'clients_pool', []) or []):
+            try:
+                if bot_client and bot_client.is_connected():
+                    await bot_client.disconnect()
+            except Exception as bot_err:
+                logger.warning(f"Failed to disconnect worker bot during logout: {bot_err}")
+        if hasattr(self.shared_state, 'clients_pool') and isinstance(self.shared_state.clients_pool, list):
+            self.shared_state.clients_pool.clear()
+
         client = self.shared_state.client
         if client and client.is_connected():
             await client.disconnect()
@@ -353,5 +444,9 @@ class AuthService:
         self.shared_state.api_id = None
         self.shared_state.api_hash = None
         self.shared_state.is_logged_in = False
+        self.shared_state._group_id = None
+        self.shared_state.group_id_map = {}
+        self.shared_state.active_group_index = 1
+        self.shared_state.current_group_msg_count = 0
         logger.info("In-memory session state has been cleared.")
         return {"success": True}

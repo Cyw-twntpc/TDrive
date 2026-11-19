@@ -2,7 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QMainWindow, QApplication, QStackedWidget
 from PySide6.QtGui import QIcon, QCloseEvent
@@ -15,10 +15,13 @@ from core_app.presentation.web_bridge.api_bridge import Bridge
 logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
+    logged_out = Signal()
+
     def __init__(self, tdrive_service: TDriveService, loop: asyncio.AbstractEventLoop):
         super().__init__()
         self.tdrive_service = tdrive_service
         self._loop = loop
+        self._is_logging_out = False
         # Removed self._is_ready_to_close as we now quit app directly
 
         self.setWindowTitle("TDrive")
@@ -50,8 +53,17 @@ class MainWindow(QMainWindow):
         
         # Connect bridge signals
         self.bridge.play_video_requested.connect(self.handle_play_video)
+        self.bridge.logout_completed.connect(self.on_logout_complete)
         
         self.player_widget = None
+
+    def on_logout_complete(self):
+        """Handle logout completion by shutting down active player and notifying AppController."""
+        logger.info("Logout complete signal received. Returning to login window.")
+        self._is_logging_out = True
+        if self.player_widget:
+            self.player_widget.close_player()
+        self.logged_out.emit()
 
     def handle_play_video(self, stream_url: str, file_name: str):
         from core_app.presentation.native_ui.widgets.video_player_widget import VideoPlayerWidget
@@ -85,6 +97,10 @@ class MainWindow(QMainWindow):
             QApplication.instance().quit()
 
     def closeEvent(self, event: QCloseEvent):
+        if self._is_logging_out:
+            event.accept()
+            return
+
         # Hide window immediately for better UX
         self.hide()
         event.ignore() # Prevent Qt from killing the app immediately

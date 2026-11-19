@@ -22,6 +22,7 @@ class Bridge(QObject):
     file_status_changed = Signal(list)
     connection_status_changed = Signal(str)
     login_and_initialization_complete = Signal()
+    logout_completed = Signal()
 
     # --- Window Dragging Signals ---
     drag_window = Signal(int, int)
@@ -205,6 +206,10 @@ class Bridge(QObject):
     @Slot()
     def notify_login_complete(self):
         self.login_and_initialization_complete.emit()
+
+    @Slot()
+    def notify_logout_complete(self):
+        self.logout_completed.emit()
 
     @Slot(int, str)
     def get_thumbnails(self, folder_id, request_id):
