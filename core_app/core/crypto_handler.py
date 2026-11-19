@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 _KEYRING_SERVICE = 'TDrive'
 _KEYRING_KEY = 'crypto_pepper'
+_KEYRING_FALLBACK_HWID_KEY = 'crypto_fallback_hwid'
+_HASH_BUFFER_SIZE = 1024 * 1024  # 1 MB streaming hash buffer
 
 def _get_pepper() -> bytes:
     pepper = keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
@@ -24,6 +26,14 @@ def _get_pepper() -> bytes:
         keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, pepper)
     return pepper.encode('utf-8')
 
+def _get_fallback_hwid() -> bytes:
+    """Retrieves or persists a deterministic fallback HWID in OS keyring when machineid fails."""
+    fallback_hwid = keyring.get_password(_KEYRING_SERVICE, _KEYRING_FALLBACK_HWID_KEY)
+    if fallback_hwid is None:
+        fallback_hwid = secrets.token_hex(32)
+        keyring.set_password(_KEYRING_SERVICE, _KEYRING_FALLBACK_HWID_KEY, fallback_hwid)
+    return fallback_hwid.encode('utf-8')
+
 def _get_encryption_key(api_id: str) -> bytes:
     """Generates a deterministic 32-byte key from api_id, pepper, and hardware ID."""
     salt = hashlib.sha256(f"tdrive-salt-{api_id}".encode()).digest()
@@ -31,8 +41,8 @@ def _get_encryption_key(api_id: str) -> bytes:
     try:
         hwid = machineid.id().encode('utf-8')
     except Exception as e:
-        logger.warning(f"Could not retrieve hardware ID, using fallback. Error: {e}")
-        hwid = secrets.token_hex(32).encode('utf-8')
+        logger.warning(f"Could not retrieve hardware ID, using persistent fallback. Error: {e}")
+        hwid = _get_fallback_hwid()
     
     machine_specific_pepper = _get_pepper() + hwid
 
@@ -95,7 +105,7 @@ def hash_data(data_source: str) -> str:
     """Computes SHA256 hash of a file."""
     sha256_hash = hashlib.sha256()
     with open(data_source, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
+        for byte_block in iter(lambda: f.read(_HASH_BUFFER_SIZE), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 

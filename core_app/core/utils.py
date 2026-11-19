@@ -98,33 +98,43 @@ async def ensure_client_connected(shared_state: 'SharedState') -> Optional[Teleg
     # Lazy import to avoid circular dependency with auth modules
     from core_app.application.auth.session_manager import SessionManager
 
-    while True:
-        try:
-            if shared_state.client:
-                try:
-                    await shared_state.client.disconnect()
-                except Exception as e:
-                    logger.warning(f"Error disconnecting old client: {e}") 
+    retry_delay = 5
+    max_retry_delay = 30
 
-            # Load encrypted StringSession instead of plain SQLite session file
-            session = SessionManager.load_session(api_id)
-            new_client = TelegramClient(session, api_id, api_hash)
-            await new_client.connect()
-            
-            if await new_client.is_user_authorized():
-                logger.info("Successfully reconnected to Telegram.")
-                shared_state.client = new_client
+    try:
+        while True:
+            try:
+                if shared_state.client:
+                    try:
+                        await shared_state.client.disconnect()
+                    except Exception as e:
+                        logger.warning(f"Error disconnecting old client: {e}") 
+
+                # Load encrypted StringSession instead of plain SQLite session file
+                session = SessionManager.load_session(api_id)
+                new_client = TelegramClient(session, api_id, api_hash)
+                await new_client.connect()
                 
-                if shared_state.connection_emitter:
-                    shared_state.connection_emitter('restored')
-                return new_client
-            else:
-                logger.error("Reconnection failed: user authorization is invalid. Re-login is required.")
-                break
+                if await new_client.is_user_authorized():
+                    logger.info("Successfully reconnected to Telegram.")
+                    shared_state.client = new_client
+                    
+                    if shared_state.connection_emitter:
+                        shared_state.connection_emitter('restored')
+                    return new_client
+                else:
+                    logger.error("Reconnection failed: user authorization is invalid. Re-login is required.")
+                    break
 
-        except Exception as e:
-            logger.error(f"Telegram reconnection attempt failed: {e}. Retrying in 5 seconds...")
-            await asyncio.sleep(5)
+            except Exception as e:
+                logger.error(f"Telegram reconnection attempt failed: {e}. Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+    except asyncio.CancelledError:
+        logger.info("Telegram reconnection cancelled.")
+        if shared_state.connection_emitter:
+            shared_state.connection_emitter('restored')
+        raise
     
     if shared_state.connection_emitter:
         shared_state.connection_emitter('restored')

@@ -1,6 +1,5 @@
 import os
 import logging
-import hashlib
 import asyncio
 
 from core_app.core import crypto_handler
@@ -37,8 +36,7 @@ def generate_pdf_preview(file_path: str, ext: str) -> tuple:
         pix = page.get_pixmap(matrix=mat)
         thumb_bytes = pix.tobytes('jpeg')
         
-        with open(file_path, 'rb') as f:
-            source_hash = hashlib.sha256(f.read()).hexdigest()
+        source_hash = crypto_handler.hash_data(file_path)
 
         return preview_bytes, thumb_bytes, source_hash
     finally:
