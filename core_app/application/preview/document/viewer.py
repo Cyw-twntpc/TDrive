@@ -4,6 +4,7 @@ import hashlib
 import asyncio
 
 from core_app.core import crypto_handler
+from core_app.core import utils
 from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.telegram.telegram_comms import download_data_as_bytes, upload_data_as_file
@@ -101,16 +102,19 @@ class DocumentPreviewer:
 
     @staticmethod
     async def get_preview(map_id: int, file_service) -> dict:
+        logger.debug(f"DocumentPreviewer.get_preview: map_id={map_id}")
         file_info = await file_service._get_file_info(map_id)
         
         cached = await asyncio.to_thread(file_service.preview_cache.get, file_info['content_id'])
         if cached and cached['content_type'] in ['document_preview', 'document_full']:
+            logger.debug(f"DocumentPreviewer.get_preview: cache hit for content_id={file_info['content_id']}")
             base64_data = await asyncio.to_thread(DocumentPreviewer._decode_cache, cached['data'])
             return {'base64_data': base64_data, 'is_full': cached['content_type'] == 'document_full',
                     'file_name': file_info['name']}
 
         ext = os.path.splitext(file_info['name'])[1].lower()
         if ext != '.pdf' or file_info['size'] < 8 * 1024 * 1024:
+            logger.debug(f"DocumentPreviewer.get_preview: ext={ext} or size < 8MB, delegating to load_full")
             return await DocumentPreviewer.load_full(map_id, file_service)
             
         client = await file_service._ensure_client()
@@ -118,28 +122,36 @@ class DocumentPreviewer:
         preview_existed = row and row[0] is not None
 
         if preview_existed:
+            g_idx, raw_id = utils.decode_global_msg_id(row[0])
+            logger.debug(f"DocumentPreviewer.get_preview: decoded existing preview -> group_index={g_idx}, raw_msg_id={raw_id}")
+            target_gid = file_service.shared_state.get_telegram_group_id(g_idx)
             pdf_bytes = await download_data_as_bytes(
-                client, file_service.shared_state.group_id,
-                [row[0]], row[1]
+                client, target_gid,
+                [raw_id], row[1]
             )
         else:
+            logger.debug(f"DocumentPreviewer.get_preview: no preview exists, generating from original file")
             original_bytes = await file_service._download_full_file(
                 file_info['content_id'], file_info['size'], file_info['file_hash']
             )
             if not original_bytes:
+                logger.error(f"DocumentPreviewer.get_preview: downloaded file is empty for map_id={map_id}")
                 raise ValueError("Downloaded file is empty or missing.")
-                
             ext = os.path.splitext(file_info['name'])[1]
             pdf_bytes, thumb_bytes, source_hash = await asyncio.to_thread(DocumentPreviewer._process_pdf_preview, original_bytes, ext)
 
             # Upload generated preview to Telegram for future use
             preview_hash = await asyncio.to_thread(crypto_handler.hash_bytes, pdf_bytes)
+            active_gid = file_service.shared_state.active_telegram_group_id or file_service.shared_state.group_id
+            logger.debug(f"DocumentPreviewer.get_preview: uploading generated preview to active group {file_service.shared_state.active_group_index}")
             preview_upload_info = await upload_data_as_file(
-                client, file_service.shared_state.group_id,
+                client, active_gid,
                 pdf_bytes, preview_hash
             )
             if preview_upload_info:
-                preview_msg_id = preview_upload_info[0][1]
+                raw_preview_msg_id = preview_upload_info[0][1]
+                preview_msg_id = utils.encode_global_msg_id(file_service.shared_state.active_group_index, raw_preview_msg_id)
+                logger.debug(f"DocumentPreviewer.get_preview: encoded preview_msg_id -> global_id={preview_msg_id}")
                 content_id = file_info['content_id']
                 def _update_preview():
                     db = DatabaseConnection()
@@ -154,6 +166,7 @@ class DocumentPreviewer:
                 )
 
         if file_service.preview_cache:
+            logger.debug(f"DocumentPreviewer.get_preview: saving to cache for content_id={file_info['content_id']}")
             await asyncio.to_thread(
                 file_service.preview_cache.put,
                 file_info['content_id'], pdf_bytes, 'document_preview',
@@ -165,11 +178,13 @@ class DocumentPreviewer:
 
     @staticmethod
     async def load_full(map_id: int, file_service) -> dict:
+        logger.debug(f"DocumentPreviewer.load_full: map_id={map_id}")
         file_info = await file_service._get_file_info(map_id)
         
         import base64
         cached = await asyncio.to_thread(file_service.preview_cache.get, file_info['content_id'])
         if cached and cached['content_type'] == 'document_full':
+            logger.debug(f"DocumentPreviewer.load_full: cache hit for content_id={file_info['content_id']}")
             base64_data = await asyncio.to_thread(DocumentPreviewer._decode_cache, cached['data'])
             return {'base64_data': base64_data, 'is_full': True, 'file_name': file_info['name']}
 
@@ -178,6 +193,7 @@ class DocumentPreviewer:
             file_info['content_id'], file_info['size'], file_info['file_hash']
         )
         if not original_bytes:
+            logger.error(f"DocumentPreviewer.load_full: downloaded file is empty for map_id={map_id}")
             raise ValueError("Downloaded file is empty or missing.")
             
         ext = os.path.splitext(file_info['name'])[1]

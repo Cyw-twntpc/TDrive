@@ -10,6 +10,7 @@ from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
 from core_app.infrastructure.database.main_db.repositories.trash_repository import TrashRepository
+from core_app.core import utils
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +150,15 @@ class StreamBuffer:
             if not client:
                 raise ConnectionError("Telegram client not connected")
 
+            g_idx, raw_id = utils.decode_global_msg_id(msg_id)
+            target_gid = self.shared_state.get_telegram_group_id(g_idx)
+            logger.debug(f"Buffer: chunk {chunk_idx+1} decoded -> group_index={g_idx}, target={target_gid}")
             decrypted_data = await telegram_comms.download_data_as_bytes(
-                client, self.shared_state.group_id, [msg_id], file_hash
+                client, target_gid, [raw_id], file_hash
             )
 
             if not decrypted_data:
+                logger.error(f"Buffer: failed to download chunk {chunk_idx+1} for file {file_id}")
                 raise IOError(f"Failed to download chunk {chunk_idx+1} for file {file_id}")
 
             # 3. Update Cache
@@ -220,7 +225,7 @@ class StreamBuffer:
 
         try:
             chunks = await self.shared_state.metadata_manager.get_file_chunks(
-                client, self.shared_state.group_id, self.shared_state.api_id, file_id
+                client, self.shared_state.api_id, file_id
             )
             if not chunks:
                 logger.warning(f"_get_chunk_map: get_file_chunks returned empty for file_id={file_id}")

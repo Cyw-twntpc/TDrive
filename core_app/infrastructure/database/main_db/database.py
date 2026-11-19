@@ -18,9 +18,14 @@ class DatabaseConnection:
                     cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, db_path=':memory:'):
+    def __init__(self, db_path=':memory:', shared_state=None):
+        if shared_state is not None:
+            self.shared_state = shared_state
+
         # Only initialize once
         if self._initialized:
+            if getattr(self, 'shared_state', None) and getattr(self.shared_state, 'group_id', None) is not None:
+                self._seed_default_data()
             return
             
         self.db_path = db_path # Should be ':memory:' for production as per requirement
@@ -28,6 +33,7 @@ class DatabaseConnection:
         self._db_lock = threading.RLock()
         self.transaction_logger = TransactionLogger()
         self.sync_manager = SyncManager()
+        self.shared_state = shared_state
         self._init_db()
         self._initialized = True
 
@@ -130,6 +136,20 @@ class DatabaseConnection:
             group_joined BOOLEAN DEFAULT 0
         )
         ''')
+
+        # Storage Groups table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS storage_groups (
+            group_index INTEGER PRIMARY KEY,
+            telegram_group_id INTEGER NOT NULL UNIQUE,
+            group_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            msg_count INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 0
+        );
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_storage_groups_tg_id ON storage_groups(telegram_group_id);')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_storage_groups_active ON storage_groups(is_active);')
         
         # --- FTS5 Search Index ---
         # Create virtual table for full-text search
@@ -160,7 +180,22 @@ class DatabaseConnection:
         if cursor.fetchone() is None:
             cursor.execute("INSERT INTO folders (parent_id, name, modif_date, total_size) VALUES (?, ?, ?, ?)", 
                            (None, 'Recycle Bin', time.time(), 0))
+
+        # Seed Storage Groups if empty and self.shared_state.group_id is set
+        if getattr(self, 'shared_state', None) and getattr(self.shared_state, 'group_id', None) is not None:
+            cursor.execute("SELECT COUNT(*) FROM storage_groups")
+            row = cursor.fetchone()
+            if row and row[0] == 0:
+                tg_id = self.shared_state.group_id
+                now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+                grp_idx = getattr(self.shared_state, 'active_group_index', 0)
+                cursor.execute(
+                    "INSERT OR IGNORE INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                    (grp_idx, tg_id, "Default Storage Group", now_str, 0, 1)
+                )
+
         conn.commit()
+
 
     def _create_triggers(self):
         conn = self._get_conn()

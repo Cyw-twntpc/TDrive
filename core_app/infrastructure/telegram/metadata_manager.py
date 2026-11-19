@@ -11,6 +11,7 @@ import sqlite3
 from typing import Dict, List, OrderedDict, Any
 from collections import OrderedDict as SysOrderedDict, defaultdict
 
+from core_app.core import utils
 from core_app.core import crypto_handler as cr
 from core_app.infrastructure.telegram import telegram_comms
 from core_app.infrastructure.database.main_db.database import DatabaseConnection
@@ -44,6 +45,7 @@ class MetadataManager:
         # Folder-level locks for map file updates
         self._folder_locks = defaultdict(asyncio.Lock)
         self._last_snapshot_msg_id = None
+        self._last_snapshot_group_id = None
         
         # Setup SyncManager callback
         # SyncManager is initialized in DatabaseConnection
@@ -68,33 +70,120 @@ class MetadataManager:
 
     # --- Database Snapshot Management ---
 
-    async def initialize_db(self, client, group_id: int, api_id: int) -> bool:
+    async def initialize_db(self, client, group_id: int | list[int] | None = None, api_id: int | None = None) -> bool:
         """
-        Downloads and restores the latest DB snapshot from the cloud.
+        Downloads and restores the latest DB snapshot from the cloud across all storage groups.
         """
         try:
-            # Find latest snapshot message by iterating history (more reliable than search)
+            if api_id is None and hasattr(self, 'shared_state') and self.shared_state:
+                api_id = getattr(self.shared_state, 'api_id', None)
+
+            # Collect candidate storage group IDs to search
+            group_ids_to_search = []
+
+            # 1. Process group_id parameter if provided
+            if group_id is not None:
+                if isinstance(group_id, (list, tuple, set)):
+                    for item in group_id:
+                        if isinstance(item, int):
+                            group_ids_to_search.append(item)
+                        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                            idx, tg_id = item[0], item[1]
+                            group_ids_to_search.append(tg_id)
+                            if hasattr(self, 'shared_state') and self.shared_state:
+                                if not hasattr(self.shared_state, 'group_id_map') or self.shared_state.group_id_map is None:
+                                    self.shared_state.group_id_map = {}
+                                self.shared_state.group_id_map[idx] = tg_id
+                elif isinstance(group_id, int):
+                    group_ids_to_search.append(group_id)
+
+            # 2. Discover all TDrive storage groups via telegram_comms.get_all_tdrive_groups
+            try:
+                discovered_groups = await telegram_comms.get_all_tdrive_groups(self.shared_state)
+                for idx, tg_id, name in discovered_groups:
+                    group_ids_to_search.append(tg_id)
+                    if hasattr(self, 'shared_state') and self.shared_state:
+                        if not hasattr(self.shared_state, 'group_id_map') or self.shared_state.group_id_map is None:
+                            self.shared_state.group_id_map = {}
+                        self.shared_state.group_id_map[idx] = tg_id
+            except Exception as ge:
+                logger.warning(f"Could not discover TDrive groups from client: {ge}")
+
+            # 3. Include shared_state.group_id if available
+            if hasattr(self, 'shared_state') and self.shared_state and getattr(self.shared_state, 'group_id', None):
+                group_ids_to_search.append(self.shared_state.group_id)
+
+            # Deduplicate while preserving order
+            unique_group_ids = []
+            for gid in group_ids_to_search:
+                if gid not in unique_group_ids:
+                    unique_group_ids.append(gid)
+
+            logger.info(f"Searching {len(unique_group_ids)} unique storage groups for DB snapshot")
+
+            def _extract_msg_date(msg):
+                d = getattr(msg, 'date', None)
+                if d is None:
+                    return 0.0
+                if hasattr(d, 'timestamp'):
+                    return d.timestamp()
+                try:
+                    return float(d)
+                except (ValueError, TypeError):
+                    return 0.0
+
+            # Iterate across all discovered storage groups to search for #tdrive_db_snapshot messages
+            candidate_snapshots = []
+            for gid in unique_group_ids:
+                snapshot_msg = None
+                try:
+                    iter_res = client.iter_messages(gid, limit=50)
+                    if hasattr(iter_res, '__aiter__'):
+                        async for message in iter_res:
+                            if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
+                                snapshot_msg = message
+                                break
+                    elif isinstance(iter_res, (list, tuple)):
+                        for message in iter_res:
+                            if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
+                                snapshot_msg = message
+                                break
+                except Exception as iter_err:
+                    logger.debug(f"iter_messages failed for group {gid}: {iter_err}")
+
+                if not snapshot_msg:
+                    try:
+                        get_msg_res = client.get_messages(gid, limit=1, search='#tdrive_db_snapshot')
+                        messages = await get_msg_res if (asyncio.iscoroutine(get_msg_res) or hasattr(get_msg_res, '__await__')) else get_msg_res
+                        if isinstance(messages, (list, tuple)) and len(messages) > 0 and messages[0]:
+                            snapshot_msg = messages[0]
+                    except Exception as search_err:
+                        logger.debug(f"get_messages search failed for group {gid}: {search_err}")
+
+                if snapshot_msg:
+                    candidate_snapshots.append((snapshot_msg, gid))
+
             snapshot_msg = None
-            async for message in client.iter_messages(group_id, limit=50):
-                if message.text and '#tdrive_db_snapshot' in message.text:
-                    snapshot_msg = message
-                    break
-            
-            if not snapshot_msg:
-                # Fallback: Try search if not found in recent history (e.g. buried deep)
-                logger.debug("Snapshot not found in recent history. Trying deep search...")
-                messages = await client.get_messages(group_id, limit=1, search='#tdrive_db_snapshot')
-                if messages:
-                    snapshot_msg = messages[0]
+            selected_group_id = None
+            if candidate_snapshots:
+                # Select the snapshot with the globally latest message date
+                snapshot_msg, selected_group_id = max(candidate_snapshots, key=lambda pair: _extract_msg_date(pair[0]))
+                logger.info(f"Selected snapshot from group {selected_group_id} (latest date)")
 
             conn = self.db._get_conn()
             
             if snapshot_msg:
                 self._last_snapshot_msg_id = snapshot_msg.id
+                self._last_snapshot_group_id = selected_group_id
                 logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
                 
                 # Download encrypted blob
-                encrypted_bytes = await snapshot_msg.download_media(file=bytes)
+                dl_res = snapshot_msg.download_media(file=bytes) if hasattr(snapshot_msg, 'download_media') else None
+                if dl_res is not None:
+                    encrypted_bytes = await dl_res if (asyncio.iscoroutine(dl_res) or hasattr(dl_res, '__await__')) else dl_res
+                else:
+                    encrypted_bytes = None
+
                 if not encrypted_bytes:
                     logger.error("Snapshot download failed (empty).")
                     return False
@@ -123,7 +212,7 @@ class MetadataManager:
                         self.db._create_tables()
                         
                         # 4. Smart Import: Execute INSERTs only for allowed core tables
-                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots'}
+                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots', 'storage_groups'}
                         sql_dump = sql_dump.replace('\r\n', '\n')
                         
                         statements = []
@@ -245,15 +334,17 @@ class MetadataManager:
                 if hasattr(self.db, 'transaction_logger'):
                     self.db.transaction_logger.clear()
                 
-                # Cleanup old snapshots reliably using in-memory tracker
+                # Cleanup old snapshots reliably using in-memory tracker across storage groups
                 try:
-                    if self._last_snapshot_msg_id and self._last_snapshot_msg_id != msg.id:
-                        await client.delete_messages(group_id, [self._last_snapshot_msg_id])
+                    prev_group_id = self._last_snapshot_group_id or group_id
+                    if self._last_snapshot_msg_id and (prev_group_id != group_id or self._last_snapshot_msg_id != msg.id):
+                        await client.delete_messages(prev_group_id, [self._last_snapshot_msg_id])
                     self._last_snapshot_msg_id = msg.id
+                    self._last_snapshot_group_id = group_id
                     
                     # Fallback Search logic for deletion remains useful to clean up old clutter
                     old_msgs = await client.get_messages(group_id, limit=10, search='#tdrive_db_snapshot')
-                    ids_to_del = [m.id for m in old_msgs if m.id != msg.id and m.id != self._last_snapshot_msg_id]
+                    ids_to_del = [m.id for m in old_msgs if m.id != msg.id]
                     if ids_to_del:
                         await client.delete_messages(group_id, ids_to_del)
                 except Exception:
@@ -264,16 +355,20 @@ class MetadataManager:
 
     # --- Map File Management ---
 
-    async def fetch_map_file(self, client, group_id: int, api_id: int, map_msg_id: int) -> Dict:
+    async def fetch_map_file(self, client, api_id: int, map_msg_id: int) -> Dict:
         if map_msg_id in self._map_cache:
             self._map_cache.move_to_end(map_msg_id)
             cached = self._map_cache[map_msg_id]
             return cached
 
         try:
-            msgs = await client.get_messages(group_id, ids=[map_msg_id])
+            g_idx, raw_map_msg_id = utils.decode_global_msg_id(map_msg_id)
+            logger.debug(f"fetch_map_file: decoded global_id={map_msg_id} -> group={g_idx}, raw={raw_map_msg_id}")
+            target_gid = self.shared_state.get_telegram_group_id(g_idx)
+
+            msgs = await client.get_messages(target_gid, ids=[raw_map_msg_id])
             if not msgs or not msgs[0]:
-                logger.warning(f"fetch_map_file: no messages returned for map_msg_id={map_msg_id}")
+                logger.warning(f"fetch_map_file: no messages returned for map_msg_id={map_msg_id} (raw={raw_map_msg_id}, group={target_gid})")
                 return {}
             
             msg = msgs[0]
@@ -290,11 +385,9 @@ class MetadataManager:
                 decompressed = gzip.decompress(decrypted)
                 json_data = json.loads(decompressed.decode('utf-8'))
             
-            # Normalize structure for backward compatibility
-            for k, v in json_data.items():
-                if isinstance(v, list):
-                    json_data[k] = {'c': v, 'm': {}}
-            
+            if not isinstance(json_data, dict):
+                raise ValueError(f"Invalid map file format for {map_msg_id}: expected dict, got {type(json_data)}")
+
             # Cache it
             if len(self._map_cache) >= self._cache_size:
                 self._map_cache.popitem(last=False)
@@ -307,7 +400,7 @@ class MetadataManager:
 
     async def save_map_file(self, client, group_id: int, api_id: int, map_data: Dict) -> int:
         """
-        Compresses, Encrypts (API_ID Key), Uploads Map. Returns msg_id.
+        Compresses, Encrypts (API_ID Key), Uploads Map. Returns bit-packed global_msg_id.
         """
         try:
             json_str = json.dumps(map_data, separators=(',', ':'))
@@ -327,17 +420,25 @@ class MetadataManager:
                 f.name = "map.bin"
                 msg = await client.send_file(group_id, file=f, force_document=True)
             
+            # Determine active group index for bit-packing
+            active_g_idx = 1
+            if hasattr(self, 'shared_state') and self.shared_state:
+                active_g_idx = getattr(self.shared_state, 'active_group_index', 1)
+            
+            global_msg_id = utils.encode_global_msg_id(active_g_idx, msg.id)
+            logger.debug(f"save_map_file: encoded group_index={active_g_idx}, raw_msg_id={msg.id} -> global={global_msg_id}")
+
             # Cache the result immediately
             if len(self._map_cache) >= self._cache_size:
                 self._map_cache.popitem(last=False)
-            self._map_cache[msg.id] = map_data
+            self._map_cache[global_msg_id] = map_data
             
-            return msg.id
+            return global_msg_id
         except Exception as e:
             logger.error(f"Failed to save map file: {e}")
             raise
 
-    async def get_file_chunks(self, client, group_id: int, api_id: int, file_id: int) -> List[List[Any]]:
+    async def get_file_chunks(self, client, api_id: int, file_id: int) -> List[List[Any]]:
         """
         Retrieves chunk list for a specific file from its Map.
         """
@@ -356,11 +457,12 @@ class MetadataManager:
 
         map_msg_id = row['map_msg_id']
 
-        map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
+        map_data = await self.fetch_map_file(client, api_id, map_msg_id)
 
         file_data = map_data.get(str(file_id))
         if isinstance(file_data, dict) and 'c' in file_data:
             chunks = file_data['c']
+            logger.debug(f"get_file_chunks: retrieved {len(chunks)} chunks for file_id={file_id}")
             return chunks
 
         logger.warning(f"get_file_chunks: map_data missing or malformed for file_id={file_id}, returning raw={file_data}")
@@ -370,14 +472,18 @@ class MetadataManager:
 
 
 
-    async def process_file_transfer(self, client, group_id: int, api_id: int, 
+    async def process_file_transfer(self, client, api_id: int, 
                                     folder_id: int, file_id: int, chunks: List[List], metadata: Dict = None):
         """
         Saves file chunk mapping and metadata to an independent Map File.
         """
+        logger.info(f"process_file_transfer: file_id={file_id}, target_group_index={self.shared_state.active_group_index}")
+        target_gid = self.shared_state.active_telegram_group_id
         map_data = {str(file_id): {'c': chunks, 'm': metadata or {}}}
-        new_msg_id = await self.save_map_file(client, group_id, api_id, map_data)
-        self.file_repo.update_file_map_msg_id(file_id, new_msg_id)
+        map_global_msg_id = await self.save_map_file(client, target_gid, api_id, map_data)
+        self.shared_state.current_group_msg_count += 1
+        await telegram_comms.check_and_rotate_group_if_needed(self.shared_state)
+        self.file_repo.update_file_map_msg_id(file_id, map_global_msg_id)
 
     async def handle_deletion(self, client, group_id: int, api_id: int, deletion_results: List[Dict]):
         """
@@ -400,7 +506,7 @@ class MetadataManager:
             try:
                 for map_msg_id in maps_to_delete_cloud_ids:
                     try:
-                        map_data = await self.fetch_map_file(client, group_id, api_id, map_msg_id)
+                        map_data = await self.fetch_map_file(client, api_id, map_msg_id)
                         if not map_data:
                             messages_to_delete.discard(map_msg_id)
                             continue
@@ -422,24 +528,24 @@ class MetadataManager:
                                     m_data = file_info['m']
                                     if 'p' in m_data and m_data['p']:
                                         messages_to_delete.add(m_data['p'])
-                                    # Legacy fallback: some old maps had c inside m
-                                    if 'c' in m_data:
-                                        for chunk_batch in m_data['c']:
-                                            if isinstance(chunk_batch, list):
-                                                if len(chunk_batch) >= 2:
-                                                    messages_to_delete.add(chunk_batch[1])
-                                                elif len(chunk_batch) == 1:
-                                                    messages_to_delete.add(chunk_batch[0])
-                                            else:
-                                                messages_to_delete.add(chunk_batch)
                     except Exception as e:
                         logger.error(f"Failed to fetch map {map_msg_id} during deletion: {e}")
 
                 if messages_to_delete:
-                    msgs_list = list(messages_to_delete)
-                    for i in range(0, len(msgs_list), 100):
-                        await client.delete_messages(group_id, msgs_list[i:i+100])
-                    logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} map files and {len(msgs_list) - len(maps_to_delete_cloud_ids)} chunks from cloud.")
+                    msgs_by_group = defaultdict(set)
+                    for global_msg_id in messages_to_delete:
+                        g_idx, raw_id = utils.decode_global_msg_id(global_msg_id)
+                        target_gid = self.shared_state.get_telegram_group_id(g_idx) if hasattr(self, 'shared_state') and self.shared_state else group_id
+                        msgs_by_group[target_gid].add(raw_id)
+
+                    total_deleted = 0
+                    for target_gid, raw_ids in msgs_by_group.items():
+                        raw_list = list(raw_ids)
+                        for i in range(0, len(raw_list), 100):
+                            batch = raw_list[i:i+100]
+                            await client.delete_messages(target_gid, batch)
+                            total_deleted += len(batch)
+                    logger.info(f"Deleted {len(maps_to_delete_cloud_ids)} map files and {total_deleted - len(maps_to_delete_cloud_ids)} chunks across target groups.")
             except Exception as e:
                 logger.error(f"Failed to delete map files and chunks: {e}")
 
@@ -447,9 +553,12 @@ class MetadataManager:
         """
         Thread-safe method to update thumbs.db for a specific folder.
         Handles download, merge, re-upload, and cleanup of old versions.
+        thumbs_db_msg_id in DB is stored as a global_msg_id (bit-packed group_index + raw_msg_id).
         """
         async with self._folder_locks[folder_id]:
             try:
+                target_gid = self.shared_state.active_telegram_group_id if self.shared_state else group_id
+
                 # 1. Check if DB is loaded; if not, try to download
                 if not thumb_manager.has_db(folder_id):
                     conn = self.db._get_conn()
@@ -458,9 +567,11 @@ class MetadataManager:
                     db_info = cur.fetchone()
                     
                     if db_info and db_info['thumbs_db_msg_id']:
+                        g_idx, old_raw_id = utils.decode_global_msg_id(db_info['thumbs_db_msg_id'])
+                        old_target_gid = self.shared_state.get_telegram_group_id(g_idx) if self.shared_state else target_gid
                         logger.debug(f"Downloading existing thumbs.db for folder {folder_id} before update...")
                         old_db_bytes = await telegram_comms.download_data_as_bytes(
-                            client, group_id, [db_info['thumbs_db_msg_id']], db_info['thumbs_db_hash']
+                            client, old_target_gid, [old_raw_id], db_info['thumbs_db_hash']
                         )
                         if old_db_bytes:
                             thumb_manager.load_thumbs_db_from_bytes(folder_id, old_db_bytes)
@@ -470,18 +581,19 @@ class MetadataManager:
                 db_bytes = thumb_manager.update_thumbs_db(folder_id, new_thumbs_map)
                 
                 if db_bytes:
-                    # 3. Hash and Upload
                     loop = asyncio.get_running_loop()
                     db_hash = await loop.run_in_executor(None, cr.hash_bytes, db_bytes)
                     
-                    # We don't have easy access to controller here for hidden progress, 
-                    # but thumbs.db is usually small enough. If needed, we can pass a callback.
                     upload_info = await telegram_comms.upload_data_as_file(
-                        client, group_id, db_bytes, db_hash
+                        client, target_gid, db_bytes, db_hash
                     )
                     
                     if upload_info:
-                        new_msg_id = upload_info[0][1]
+                        raw_new_msg_id = upload_info[0][1]
+                        new_msg_id = utils.encode_global_msg_id(
+                            self.shared_state.active_group_index if self.shared_state else 1,
+                            raw_new_msg_id
+                        )
                         
                         # 4. Get Old Msg ID to delete
                         conn = self.db._get_conn()
@@ -493,9 +605,7 @@ class MetadataManager:
                         # 5. Update Metadata
                         self.folder_repo.update_folder_thumbs_info(folder_id, new_msg_id, db_hash)
                         
-                        # 6. Clear thumb_src_folder_id ONLY for files currently in this folder.
-                        # Since this folder is uploading a new package, all files in it will naturally
-                        # be included. Thus, they no longer need to rely on their old source folders.
+                        # 6. Clear thumb_src_folder_id for files in this folder
                         cur.execute('''
                             UPDATE files SET thumb_src_folder_id = NULL 
                             WHERE id IN (SELECT file_id FROM file_folder_map WHERE folder_id = ?)
@@ -504,7 +614,9 @@ class MetadataManager:
                         # 7. Delete Old Cloud Message
                         if old_msg_id and old_msg_id != new_msg_id and old_msg_id != 0:
                             try:
-                                await client.delete_messages(group_id, [old_msg_id])
+                                g_idx, old_del_raw_id = utils.decode_global_msg_id(old_msg_id)
+                                old_del_gid = self.shared_state.get_telegram_group_id(g_idx) if self.shared_state else target_gid
+                                await client.delete_messages(old_del_gid, [old_del_raw_id])
                             except Exception as e:
                                 logger.warning(f"Failed to delete old thumbs.db message {old_msg_id}: {e}")
 

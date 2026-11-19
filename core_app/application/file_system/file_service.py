@@ -3,6 +3,7 @@ import asyncio
 import base64
 import time
 import os
+from collections import defaultdict
 from telethon import errors as telethon_errors
 from typing import TYPE_CHECKING, List, Dict, Any, Callable
 
@@ -31,7 +32,6 @@ class FileService:
         self.buffer = buffer
         self.preview_cache = preview_cache or PreviewCacheManager()
         self.previewer = ImagePreviewer()
-        self.preview_server = None
         self.defrag_worker = DefragWorker(shared_state, self)
         self.defrag_worker.start()
         from core_app.application.preview.text.viewer import TextPreviewer
@@ -95,8 +95,10 @@ class FileService:
                         for pkg in cloud_packages:
                             if pkg['thumbs_db_msg_id'] and pkg['thumbs_db_msg_id'] != 0:
                                 logger.debug(f"Downloading thumbs package for folder {pkg['id']} (msg_id: {pkg['thumbs_db_msg_id']})...")
+                                g_idx, raw_id = utils.decode_global_msg_id(pkg['thumbs_db_msg_id'])
+                                target_gid = self.shared_state.get_telegram_group_id(g_idx)
                                 db_bytes = await telegram_comms.download_data_as_bytes(
-                                    client, self.shared_state.group_id, [pkg['thumbs_db_msg_id']], pkg['thumbs_db_hash']
+                                    client, target_gid, [raw_id], pkg['thumbs_db_hash']
                                 )
                                 if db_bytes:
                                     self.thumb_manager.import_package_bytes(db_bytes)
@@ -167,21 +169,25 @@ class FileService:
 
             if info['preview_msg_id']:
                 logger.debug(f"Downloading preview for file map {map_id} (content {content_id})...")
+                g_idx, raw_id = utils.decode_global_msg_id(info['preview_msg_id'])
+                target_gid = self.shared_state.get_telegram_group_id(g_idx)
                 preview_bytes = await telegram_comms.download_data_as_bytes(
-                    client, self.shared_state.group_id, [info['preview_msg_id']], info['preview_hash']
+                    client, target_gid, [raw_id], info['preview_hash']
                 )
             else:
                 # Fallback: Download first chunk of original file if no preview exists
                 logger.debug(f"No preview found for {map_id}, attempting fallback to original file...")
                 try:
                     chunks = await self.shared_state.metadata_manager.get_file_chunks(
-                        client, self.shared_state.group_id, self.shared_state.api_id, content_id
+                        client, self.shared_state.api_id, content_id
                     )
                     if chunks and len(chunks) > 0:
                         first_chunk = chunks[0]
                         chunk_msg_id = first_chunk[1]
+                        g_idx, raw_id = utils.decode_global_msg_id(chunk_msg_id)
+                        target_gid = self.shared_state.get_telegram_group_id(g_idx)
                         preview_bytes = await telegram_comms.download_data_as_bytes(
-                            client, self.shared_state.group_id, [chunk_msg_id], info['file_hash']
+                            client, target_gid, [raw_id], info['file_hash']
                         )
                 except Exception as fb_e:
                     logger.warning(f"Fallback preview download failed: {fb_e}")
@@ -208,17 +214,40 @@ class FileService:
         if not client:
             raise ConnectionError("Client not connected")
         chunks = await self.shared_state.metadata_manager.get_file_chunks(
-            client, self.shared_state.group_id, self.shared_state.api_id, content_id
+            client, self.shared_state.api_id, content_id
         )
         if not chunks:
             raise FileNotFoundError(f"No chunks found for content_id={content_id}")
-        msg_ids = [chunk[1] for chunk in chunks]
-        data = await telegram_comms.download_data_as_bytes(
-            client, self.shared_state.group_id, msg_ids, file_hash
-        )
-        if data is None:
-            raise RuntimeError(f"Download failed for content_id={content_id}")
-        return data
+        
+        # Group consecutive chunks by target_group_id
+        groups_batches = []
+        current_target = None
+        current_ids = []
+        for chunk in chunks:
+            g_idx, raw_id = utils.decode_global_msg_id(chunk[1])
+            target_gid = self.shared_state.get_telegram_group_id(g_idx)
+            if target_gid != current_target:
+                if current_ids:
+                    groups_batches.append((current_target, current_ids))
+                current_target = target_gid
+                current_ids = [raw_id]
+            else:
+                current_ids.append(raw_id)
+        if current_ids:
+            groups_batches.append((current_target, current_ids))
+
+        logger.debug(f"_download_full_file: grouped {len(chunks)} chunks into {len(groups_batches)} batches for content_id={content_id}")
+        final_bytes = bytearray()
+        for target_gid, raw_ids in groups_batches:
+            data_part = await telegram_comms.download_data_as_bytes(
+                client, target_gid, raw_ids, file_hash
+            )
+            if data_part is None:
+                logger.error(f"_download_full_file: download failed for group={target_gid}, content_id={content_id}")
+                raise RuntimeError(f"Download failed for content_id={content_id}")
+            final_bytes.extend(data_part)
+
+        return bytes(final_bytes)
 
     async def _get_file_info(self, map_id: int) -> dict:
         def _sync_query():
@@ -284,8 +313,7 @@ class FileService:
                 return {"success": False}
             
             map_data = await self.shared_state.metadata_manager.fetch_map_file(
-                client, self.shared_state.group_id, 
-                self.shared_state.api_id, map_msg_id
+                client, self.shared_state.api_id, map_msg_id
             )
             
             if str(real_file_id) in map_data:
@@ -336,7 +364,7 @@ class FileService:
             
             return await asyncio.to_thread(_sync_db_op)
         except errors.PathNotFoundError:
-            logger.error("資料夾不存在。")
+            logger.error("Folder does not exist.")
             return {"success": False, "error_code": errors.ErrorCode.PATH_NOT_FOUND}
         except Exception as e:
             logger.error(f"Error getting folder contents for id {folder_id}: {e}", exc_info=True)
@@ -391,7 +419,7 @@ class FileService:
     async def create_folder(self, parent_id: int, folder_name: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
         
         try:
@@ -417,7 +445,7 @@ class FileService:
     async def rename_item(self, item_id: int, new_name: str, item_type: str) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
             
         try:
@@ -446,7 +474,7 @@ class FileService:
     async def delete_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:
@@ -505,7 +533,7 @@ class FileService:
     async def restore_items(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:
@@ -563,11 +591,11 @@ class FileService:
     async def delete_items_permanently(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         if not self.shared_state.metadata_manager:
-             logger.error("MetadataManager 未初始化。")
+             logger.error("MetadataManager is not initialized.")
              return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
 
         try:
@@ -605,12 +633,18 @@ class FileService:
 
             # 4. Delete Extra Messages
             if extra_msg_ids:
-                unique_ids = list(set(extra_msg_ids))
-                logger.info(f"Preparing to delete {len(unique_ids)} extra chunks (previews/thumbs) from Telegram.")
-                
-                for i in range(0, len(unique_ids), 100):
-                    chunk = unique_ids[i:i + 100]
-                    await client.delete_messages(self.shared_state.group_id, chunk)
+                msgs_by_group = defaultdict(set)
+                for global_msg_id in extra_msg_ids:
+                    g_idx, raw_id = utils.decode_global_msg_id(global_msg_id)
+                    target_gid = self.shared_state.get_telegram_group_id(g_idx)
+                    msgs_by_group[target_gid].add(raw_id)
+
+                for target_gid, raw_ids in msgs_by_group.items():
+                    raw_list = list(raw_ids)
+                    logger.info(f"Preparing to delete {len(raw_list)} extra chunks (previews/thumbs) from Telegram group {target_gid}.")
+                    for i in range(0, len(raw_list), 100):
+                        chunk = raw_list[i:i + 100]
+                        await client.delete_messages(target_gid, chunk)
             
             # Adaptive sync handled by DatabaseConnection
             return {"success": True}
@@ -628,11 +662,11 @@ class FileService:
     async def empty_trash(self) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         if not self.shared_state.metadata_manager:
-             logger.error("MetadataManager 未初始化。")
+             logger.error("MetadataManager is not initialized.")
              return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
 
         try:
@@ -657,11 +691,18 @@ class FileService:
                     extra_msg_ids.extend(res['msg_ids_to_delete'])
             
             if extra_msg_ids:
-                unique_ids = list(set(extra_msg_ids))
-                logger.info(f"Emptying trash: Deleting {len(unique_ids)} extra chunks from Telegram.")
-                for i in range(0, len(unique_ids), 100):
-                    chunk = unique_ids[i:i + 100]
-                    await client.delete_messages(self.shared_state.group_id, chunk)
+                msgs_by_group = defaultdict(set)
+                for global_msg_id in extra_msg_ids:
+                    g_idx, raw_id = utils.decode_global_msg_id(global_msg_id)
+                    target_gid = self.shared_state.get_telegram_group_id(g_idx)
+                    msgs_by_group[target_gid].add(raw_id)
+
+                for target_gid, raw_ids in msgs_by_group.items():
+                    raw_list = list(raw_ids)
+                    logger.info(f"Emptying trash: Deleting {len(raw_list)} extra chunks from Telegram group {target_gid}.")
+                    for i in range(0, len(raw_list), 100):
+                        chunk = raw_list[i:i + 100]
+                        await client.delete_messages(target_gid, chunk)
             
             # Adaptive sync handled by DatabaseConnection
             return {"success": True}
@@ -713,7 +754,7 @@ class FileService:
     async def move_items(self, items: List[Dict[str, Any]], target_folder_id: int) -> Dict[str, Any]:
         client = await utils.ensure_client_connected(self.shared_state)
         if not client:
-            logger.error("連線失敗，請檢查網路或重新登入。")
+            logger.error("Connection failed. Please check network or log in again.")
             return {"success": False, "error_code": errors.ErrorCode.CONNECTION_FAILED}
 
         try:

@@ -1,10 +1,14 @@
 from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.messages import SetHistoryTTLRequest
+from telethon.tl.functions.account import UpdateNotifySettingsRequest
+from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
 from telethon.errors import FloodWaitError
 import asyncio
 import logging
 import random
 import io
+import re
+import time
 from typing import Callable, List, TypeVar, Awaitable, Optional
 
 from core_app.core import crypto_handler as cr
@@ -13,6 +17,8 @@ from core_app.infrastructure.local_fs import file_processor as fp
 logger = logging.getLogger(__name__)
 
 CALLBACK_ELAPSED = 0.5 # seconds - Throttle UI updates
+
+_rotation_lock = asyncio.Lock()
 
 T = TypeVar('T')
 
@@ -46,8 +52,9 @@ async def _retry_with_backoff(
              logger.error(f"Non-retriable error: {e}")
              raise
 
-async def _ensure_no_ttl(client, group_id: int):
-    """Disables auto-delete (TTL) on the storage group."""
+async def _ensure_no_ttl(shared_state, group_id: int):
+    """Disables auto-delete (TTL) on the storage group. Uses main user account."""
+    client = shared_state.client
     try:
         entity = await client.get_entity(group_id)
         current_ttl = getattr(entity, 'ttl_period', 0)
@@ -59,17 +66,189 @@ async def _ensure_no_ttl(client, group_id: int):
     except Exception as e:
         logger.warning(f"Failed to check or disable auto-delete (TTL) for group {group_id}: {e}")
 
+async def _ensure_permanently_muted(shared_state, group_id: int):
+    """Permanently mutes notifications (mute_until=2147483647) for the given storage group. Uses main user account."""
+    client = shared_state.client
+    try:
+        input_peer = await client.get_input_entity(group_id)
+        peer_notify = InputNotifyPeer(peer=input_peer)
+        settings = InputPeerNotifySettings(mute_until=2147483647)
+        await client(UpdateNotifySettingsRequest(peer=peer_notify, settings=settings))
+        logger.info(f"Permanently muted notifications for group {group_id}.")
+    except Exception as e:
+        logger.warning(f"Failed to permanently mute notifications for group {group_id}: {e}")
+
+async def get_group_message_count(client, group_id: int) -> int:
+    """Returns the total number of messages in the given storage group using client.get_messages(group_id, limit=0)."""
+    try:
+        res = await client.get_messages(group_id, limit=0)
+        return getattr(res, 'total', 0) if res is not None else 0
+    except Exception as e:
+        logger.error(f"Failed to get message count for group {group_id}: {e}")
+        return 0
+
+async def get_all_tdrive_groups(shared_state) -> list[tuple[int, int, str]]:
+    r"""
+    Scans all dialogs using await client.get_dialogs(limit=None).
+    Matches dialog names using regex (e.g. r"^TDrive(_\d+|\s+\d+)?$" or r"^TDrive(\s+\d+)?$").
+    Extracts group_index (index 0 or 1 for "TDrive", N for "TDrive_N" / "TDrive N").
+    Returns sorted list of (group_index, telegram_group_id, group_name).
+    Uses main user account.
+    """
+    client = shared_state.client
+    try:
+        dialogs = await client.get_dialogs(limit=None)
+        pattern = re.compile(r"^TDrive(?:[_\s]+(\d+))?$")
+        groups = []
+        for dialog in dialogs:
+            name = getattr(dialog, 'name', '') or ""
+            match = pattern.match(name)
+            if match:
+                idx_str = match.group(1)
+                group_index = int(idx_str) if idx_str is not None else 1
+                group_id = getattr(dialog, 'id', None)
+                if group_id is not None:
+                    groups.append((group_index, group_id, name))
+        
+        groups.sort(key=lambda x: x[0])
+        logger.debug(f"Discovered {len(groups)} TDrive storage groups: {[g[2] for g in groups]}")
+        return groups
+    except Exception as e:
+        logger.error(f"Failed to scan TDrive storage groups: {e}")
+        return []
+
+async def rotate_storage_group(shared_state, db_connection=None) -> tuple[int, int]:
+    """
+    Creates a new storage group (e.g. TDrive_2, TDrive_3 based on max_index + 1),
+    calls _ensure_permanently_muted and _ensure_no_ttl on the new group,
+    updates storage_groups SQLite table, updates shared_state,
+    and returns (new_group_index, new_telegram_group_id).
+    Uses main user account.
+    """
+    client = shared_state.client
+    try:
+        # Determine existing max index
+        existing_groups = await get_all_tdrive_groups(shared_state)
+        known_indices = [g[0] for g in existing_groups]
+        if hasattr(shared_state, 'group_id_map') and shared_state.group_id_map:
+            known_indices.extend(shared_state.group_id_map.keys())
+        if hasattr(shared_state, 'active_group_index') and shared_state.active_group_index is not None:
+            known_indices.append(shared_state.active_group_index)
+
+        max_index = max(known_indices) if known_indices else 1
+        new_index = max_index + 1 if max_index >= 1 else 2
+        new_group_name = f"TDrive_{new_index}"
+
+        logger.info(f"Rotating storage group. Creating new group '{new_group_name}' (index {new_index})...")
+        result = await client(CreateChannelRequest(
+            title=new_group_name,
+            about="TDrive Storage Group. Do not delete.",
+            megagroup=True
+        ))
+        chats = getattr(result, 'chats', [])
+        channel = chats[0] if chats else None
+        raw_id = getattr(channel, 'id', 0) if channel else 0
+        try:
+            val = int(raw_id)
+            raw_str = str(val)
+            new_group_id = val if raw_str.startswith("-100") else int(f"-100{abs(val)}")
+        except (ValueError, TypeError):
+            new_group_id = -1000000000000 + new_index
+
+        await _ensure_permanently_muted(shared_state, new_group_id)
+        await _ensure_no_ttl(shared_state, new_group_id)
+
+        # Update Database storage_groups table
+        if db_connection is None:
+            from core_app.infrastructure.database.main_db.database import DatabaseConnection
+            if DatabaseConnection._instance is not None:
+                db_connection = DatabaseConnection._instance
+
+        if db_connection is not None:
+            try:
+                conn = db_connection._get_conn()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE storage_groups SET is_active = 0 WHERE is_active = 1")
+                now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute(
+                    "INSERT OR REPLACE INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                    (new_index, new_group_id, new_group_name, now_str, 0, 1)
+                )
+                conn.commit()
+            except Exception as dbe:
+                logger.error(f"Failed to update storage_groups DB table during rotation: {dbe}")
+
+        # Update shared_state
+        if shared_state is not None:
+            shared_state.active_group_index = new_index
+            if not hasattr(shared_state, 'group_id_map') or shared_state.group_id_map is None:
+                shared_state.group_id_map = {}
+            shared_state.group_id_map[new_index] = new_group_id
+            shared_state.current_group_msg_count = 0
+            shared_state.group_id = new_group_id
+
+        # Invite and promote existing worker bots to the newly created storage group
+        bot_usernames = set()
+        if db_connection is not None:
+            try:
+                from core_app.infrastructure.telegram.bot_manager import BotManager
+                for bot_info in BotManager(db_connection).get_all_bots():
+                    if bot_info.get('username'):
+                        bot_usernames.add(bot_info['username'])
+            except Exception as b_err:
+                logger.warning(f"Failed to query worker bots for group rotation: {b_err}")
+
+        for pool_client in getattr(shared_state, 'clients_pool', []) or []:
+            worker_name = getattr(pool_client, 'tdrive_worker_name', None)
+            if worker_name:
+                bot_usernames.add(worker_name)
+
+        if bot_usernames:
+            from core_app.infrastructure.telegram.bot_manager import BotManager
+            bot_mgr = BotManager(db_connection) if db_connection is not None else BotManager()
+            for username in sorted(bot_usernames):
+                try:
+                    await bot_mgr.invite_and_promote_bot_to_group(shared_state, username, new_group_id)
+                except Exception as inv_err:
+                    logger.warning(f"Failed to invite/promote worker bot @{username} to rotated group {new_group_id}: {inv_err}")
+
+        logger.info(f"Successfully rotated storage group to index {new_index} (ID: {new_group_id}).")
+        return (new_index, new_group_id)
+
+    except Exception as e:
+        logger.error(f"Failed to rotate storage group: {e}", exc_info=True)
+        raise
+
+async def check_and_rotate_group_if_needed(shared_state, db_connection=None) -> tuple[int, int] | None:
+    """
+    Checks if current_group_msg_count >= 995000 (or max_group_messages).
+    If so, performs group rotation under _rotation_lock with double-checked count verification.
+    Uses main user account.
+    """
+    threshold = getattr(shared_state, 'max_group_messages', 995000)
+    current_count = getattr(shared_state, 'current_group_msg_count', 0)
+    if current_count >= threshold:
+        async with _rotation_lock:
+            current_count = getattr(shared_state, 'current_group_msg_count', 0)
+            if current_count >= threshold:
+                logger.info(f"Current group message count ({current_count}) >= threshold ({threshold}). Triggering auto group rotation...")
+                return await rotate_storage_group(shared_state, db_connection=db_connection)
+    logger.debug(f"Group msg count ({current_count}) below threshold ({threshold}), no rotation needed")
+    return None
+
 # Note: Group ID saving/loading logic should be moved to AuthService or similar high-level manager.
 # telegram_comms should just be given a group_id to work with.
 # For compatibility with existing calls, we might keep get_group helper here but purely functional.
 
-async def get_group_id(client, group_name: str = "TDrive") -> int | None:
-    """Finds or creates the dedicated storage group on Telegram."""
+async def get_group_id(shared_state, group_name: str = "TDrive") -> int | None:
+    """Finds or creates the dedicated storage group on Telegram. Uses main user account."""
+    client = shared_state.client
     try:
         dialogs = await client.get_dialogs(limit=None)
         for dialog in dialogs:
             if dialog.is_group and dialog.name == group_name:
-                await _ensure_no_ttl(client, dialog.id)
+                await _ensure_no_ttl(shared_state, dialog.id)
+                await _ensure_permanently_muted(shared_state, dialog.id)
                 return dialog.id
 
         logger.info(f"Group '{group_name}' not found, creating a new one...")
@@ -80,7 +259,8 @@ async def get_group_id(client, group_name: str = "TDrive") -> int | None:
         ))
         channel = result.chats[0]
         group_id = int(f"-100{channel.id}")
-        await _ensure_no_ttl(client, group_id)
+        await _ensure_no_ttl(shared_state, group_id)
+        await _ensure_permanently_muted(shared_state, group_id)
         return group_id
     except Exception as e:
         logger.error(f"Failed to find or create group: {e}", exc_info=True)
