@@ -17,6 +17,7 @@ class DefragWorker:
         self.queue = None
         self.worker_task = None
         self.timer_task = None
+        self.timer_interval = 10800
         self.queued_folders = set()
         self.is_running = False
 
@@ -70,12 +71,17 @@ class DefragWorker:
         self.shared_state.create_background_task(_eval())
 
     async def _timer_loop(self):
-        """Forces a re-evaluation of all queued folders every 3 hours (10800 seconds)."""
+        """Periodically re-evaluates all folders every self.timer_interval seconds."""
         while self.is_running:
             try:
-                await asyncio.sleep(10800)
-                logger.info("DefragWorker 3-hour timer fired. Waking up worker.")
-                break
+                await asyncio.sleep(self.timer_interval)
+                if not self.is_running:
+                    break
+                logger.info("DefragWorker periodic timer fired. Re-evaluating folders.")
+                folders = await asyncio.to_thread(self.folder_repo.get_folder_tree)
+                self.evaluate_folders([f['id'] for f in folders if isinstance(f, dict) and 'id' in f])
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"DefragWorker timer error: {e}")
 
@@ -134,15 +140,20 @@ class DefragWorker:
 
     def _is_system_busy(self) -> bool:
         """Checks if the system is currently performing transfers by checking the database."""
+        conn = None
         try:
             from core_app.infrastructure.database.transfer_db.transfer_database import TransferDatabaseConnection
             tdb = TransferDatabaseConnection()
             conn = tdb._get_conn()
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM main_tasks WHERE status IN ('queued', 'running', 'processing') LIMIT 1")
-            is_busy = cursor.fetchone() is not None
-            conn.close()
-            return is_busy
+            cursor.execute("SELECT 1 FROM main_tasks WHERE status IN ('queued', 'transferring', 'running', 'processing') LIMIT 1")
+            return cursor.fetchone() is not None
         except Exception as e:
             logger.error(f"Error checking system busy status: {e}")
             return False
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass

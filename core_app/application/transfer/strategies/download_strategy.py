@@ -20,7 +20,11 @@ class DownloadStrategy(TransferStrategy):
 
     async def download_items(self, items: List[Dict], destination_dir: str, progress_callback: Callable):
         client = await utils.ensure_client_connected(self.context.shared_state)
-        if not client: return
+        if not client:
+            logger.error("Download failed: Client not connected.")
+            for item in items:
+                progress_callback(item['task_id'], item.get('name', ''), 0, 0, 'failed', 0, error_code=ErrorCode.CONNECTION_FAILED)
+            return
 
         tasks_to_run = []
         for item in items:
@@ -42,7 +46,7 @@ class DownloadStrategy(TransferStrategy):
 
                 # Fetch Chunks from Metadata Manager (Cloud Map)
                 file_id = file_details_basic['file_id']
-                chunks = await self.context.metadata_manager.get_file_chunks(client, self.context.shared_state.group_id, self.context.shared_state.api_id, file_id)
+                chunks = await self.context.metadata_manager.get_file_chunks(client, self.context.shared_state.api_id, file_id)
                 
                 # Construct full file details
                 file_details = {
@@ -79,7 +83,7 @@ class DownloadStrategy(TransferStrategy):
             
             contents = await loop.run_in_executor(None, self.context.folder_repo.get_folder_contents_recursive, folder_db_id)
             if not contents: 
-                progress_callback(main_task_id, folder_item['name'], 0, 0, 'failed', 0, message="資料夾為空或讀取失敗")
+                progress_callback(main_task_id, folder_item['name'], 0, 0, 'failed', 0, error_code=ErrorCode.PATH_NOT_FOUND)
                 return
             
             root_folder_name = contents['folder_name']
@@ -158,6 +162,7 @@ class DownloadStrategy(TransferStrategy):
         except Exception as e:
             logger.error(f"Download folder failed: {e}", exc_info=True)
             await self.context.controller.mark_failed_async(main_task_id, ErrorCode.TASK_FAILED)
+            progress_callback(main_task_id, folder_item.get('name', ''), 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)
         finally:
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
@@ -223,7 +228,7 @@ class DownloadStrategy(TransferStrategy):
                 # JIT Chunk Fetching
                 if not file_details.get('chunks') and file_details.get('file_id'):
                     chunks = await self.context.metadata_manager.get_file_chunks(
-                        client, self.context.shared_state.group_id, self.context.shared_state.api_id, file_details['file_id']
+                        client, self.context.shared_state.api_id, file_details['file_id']
                     )
                     file_details['chunks'] = [{"part_num": c[0], "message_id": c[1], "part_hash": c[2]} for c in chunks]
 
@@ -235,7 +240,7 @@ class DownloadStrategy(TransferStrategy):
                 from core_app.application.transfer.dispatcher import TransferDispatcher
                 
                 await TransferDispatcher.dispatch_download(
-                    self.context.shared_state, self.context.shared_state.group_id, file_details, save_path,
+                    self.context.shared_state, file_details, save_path,
                     progress_callback=ui_cb,
                     completed_parts=resume_parts,
                     chunk_callback=chunk_cb
@@ -252,6 +257,7 @@ class DownloadStrategy(TransferStrategy):
             except Exception as e:
                 logger.error(f"Download failed {save_path}: {e}")
                 await self.context.controller.mark_sub_task_failed_async(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
+                progress_callback(main_task_id, file_details.get('name', ''), 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)
             finally:
                 if sub_task_id in self.context.shared_state.active_tasks:
                     del self.context.shared_state.active_tasks[sub_task_id]

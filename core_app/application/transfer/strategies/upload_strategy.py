@@ -34,7 +34,7 @@ class UploadStrategy(TransferStrategy):
         if not client:
             logger.error("Upload failed: Client not connected.")
             for item in upload_items:
-                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, message="連線失敗")
+                progress_callback(item['task_id'], os.path.basename(item['local_path']), 0, 0, 'failed', 0, error_code=ErrorCode.CONNECTION_FAILED)
             return
 
         self.context.db.sync_manager.set_busy(True)
@@ -123,7 +123,7 @@ class UploadStrategy(TransferStrategy):
             client = await utils.ensure_client_connected(self.context.shared_state)
             if not client: 
                 await self.context.controller.mark_failed_async(main_task_id, ErrorCode.CLIENT_NOT_CONNECTED)
-                progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, message="連線失敗")
+                progress_callback(main_task_id, base_folder_name, 0, 0, 'failed', 0, error_code=ErrorCode.CLIENT_NOT_CONNECTED)
                 return
 
             try:
@@ -345,6 +345,7 @@ class UploadStrategy(TransferStrategy):
                         return None
                     except errors.ItemAlreadyExistsError:
                         await self.context.controller.mark_sub_task_failed_async(main_task_id, sub_task_id, ErrorCode.ITEM_ALREADY_EXISTS)
+                        progress_callback(main_task_id, file_name, 0, total_size, 'failed', 0, error_code=ErrorCode.ITEM_ALREADY_EXISTS)
                         return
 
                 progress_callback(main_task_id, file_name, -1, -1, 'transferring', 0, is_folder=False)
@@ -366,11 +367,11 @@ class UploadStrategy(TransferStrategy):
                 preview_msg_id = None
                 preview_hash = None
 
-                if preview_bytes:
-                    preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_bytes)
-                    
+                def _make_hidden_progress():
+                    """Create an isolated progress callback for background preview uploads."""
                     last_preview_uploaded = 0
-                    def hidden_progress(current, total):
+
+                    def _hidden_progress(current, total):
                         nonlocal last_preview_uploaded
                         if current <= last_preview_uploaded:
                             return
@@ -380,12 +381,23 @@ class UploadStrategy(TransferStrategy):
                         self.context.shared_state.background_tasks.add(_t)
                         _t.add_done_callback(self.context.shared_state.background_tasks.discard)
 
+                    return _hidden_progress
+
+                if preview_bytes:
+                    preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_bytes)
+
+                    target_upload_group_id = self.context.shared_state.active_telegram_group_id or self.context.shared_state.group_id
+                    logger.debug(f"Upload preview: target_group={target_upload_group_id}")
                     preview_upload_info = await telegram_comms.upload_data_as_file(
-                        client, self.context.shared_state.group_id, preview_bytes, preview_hash,
-                        progress_callback=hidden_progress
+                        client, target_upload_group_id, preview_bytes, preview_hash,
+                        progress_callback=_make_hidden_progress()
                     )
                     if preview_upload_info:
-                        preview_msg_id = preview_upload_info[0][1]
+                        raw_preview_msg_id = preview_upload_info[0][1]
+                        preview_msg_id = utils.encode_global_msg_id(self.context.shared_state.active_group_index, raw_preview_msg_id)
+                        logger.debug(f"Upload preview: encoded preview_msg_id -> global_id={preview_msg_id}")
+                        self.context.shared_state.current_group_msg_count += len(preview_upload_info)
+                        await telegram_comms.check_and_rotate_group_if_needed(self.context.shared_state)
                         await self.context.controller.set_preview_msg_id_async(sub_task_id, preview_msg_id)
 
                 from core_app.application.transfer.dispatcher import TransferDispatcher
@@ -409,13 +421,18 @@ class UploadStrategy(TransferStrategy):
                         thumb_bytes = doc_thumb_bytes
                         if preview_pdf_bytes:
                             preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, preview_pdf_bytes)
+                            target_upload_group_id = self.context.shared_state.active_telegram_group_id or self.context.shared_state.group_id
                             preview_upload_info = await telegram_comms.upload_data_as_file(
-                                client, self.context.shared_state.group_id,
+                                client, target_upload_group_id,
                                 preview_pdf_bytes, preview_hash,
-                                progress_callback=hidden_progress
+                                progress_callback=_make_hidden_progress()
                             )
                             if preview_upload_info:
-                                preview_msg_id = preview_upload_info[0][1]
+                                raw_preview_msg_id = preview_upload_info[0][1]
+                                preview_msg_id = utils.encode_global_msg_id(self.context.shared_state.active_group_index, raw_preview_msg_id)
+                                logger.debug(f"Upload doc_preview: encoded preview_msg_id -> global_id={preview_msg_id}")
+                                self.context.shared_state.current_group_msg_count += len(preview_upload_info)
+                                await telegram_comms.check_and_rotate_group_if_needed(self.context.shared_state)
                                 await self.context.controller.set_preview_msg_id_async(sub_task_id, preview_msg_id)
 
                 def _pre_insert_file():
@@ -454,7 +471,7 @@ class UploadStrategy(TransferStrategy):
                         file_details = task_data.get('file_details')
 
                 await self.context.metadata_manager.process_file_transfer(
-                    client, self.context.shared_state.group_id, self.context.shared_state.api_id,
+                    client, self.context.shared_state.api_id,
                     parent_id, fid, split_files_info, metadata=file_details
                 )
                 
@@ -469,6 +486,7 @@ class UploadStrategy(TransferStrategy):
             except Exception as e:
                 logger.error(f"File upload error '{file_name}': {e}", exc_info=True)
                 await self.context.controller.mark_sub_task_failed_async(main_task_id, sub_task_id, ErrorCode.TASK_FAILED)
+                progress_callback(main_task_id, file_name, 0, 0, 'failed', 0, error_code=ErrorCode.TASK_FAILED)
             finally:
                 if sub_task_id in self.context.shared_state.active_tasks:
                     del self.context.shared_state.active_tasks[sub_task_id]
@@ -566,14 +584,22 @@ class UploadStrategy(TransferStrategy):
                 collect_cleanup_info(task_info)
 
             if message_ids_to_delete:
-                unique_ids = list(set(message_ids_to_delete))
-                batch_size = 100
-                for i in range(0, len(unique_ids), batch_size):
-                    batch = unique_ids[i:i + batch_size]
-                    try:
-                        await client.delete_messages(self.context.shared_state.group_id, batch)
-                    except Exception as del_err:
-                        logger.error(f"Failed to delete messages in cleanup: {del_err}")
+                msgs_by_group = defaultdict(set)
+                for global_msg_id in message_ids_to_delete:
+                    g_idx, raw_id = utils.decode_global_msg_id(global_msg_id)
+                    target_gid = self.context.shared_state.get_telegram_group_id(g_idx)
+                    msgs_by_group[target_gid].add(raw_id)
+
+                logger.debug(f"Cleanup: decoded {len(message_ids_to_delete)} global IDs into {len(msgs_by_group)} groups")
+                for target_gid, raw_ids in msgs_by_group.items():
+                    raw_list = list(raw_ids)
+                    batch_size = 100
+                    for i in range(0, len(raw_list), batch_size):
+                        batch = raw_list[i:i + batch_size]
+                        try:
+                            await client.delete_messages(target_gid, batch)
+                        except Exception as del_err:
+                            logger.error(f"Failed to delete messages in cleanup: {del_err}")
         finally:
             self.context.db.sync_manager.set_busy(False) # Release and trigger ONE sync
                     

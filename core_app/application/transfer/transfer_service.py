@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from core_app.application.transfer.transfer_controller import TransferController
 from core_app.application.sync.file_status_watcher import FileStatusWatcher
 from core_app.core import utils
+from core_app.core.errors import ErrorCode
 from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
 from core_app.infrastructure.database.main_db.repositories.folder_repository import FolderRepository
@@ -217,7 +218,10 @@ class TransferService:
 
             await self.controller.mark_resumed_async(task_id)
             client = await utils.ensure_client_connected(self.shared_state)
-            if not client: return
+            if not client:
+                await self.controller.mark_failed_async(task_id, ErrorCode.CONNECTION_FAILED)
+                progress_callback(task_id, task_info.get('name', ''), 0, task_info.get('total_size', 0), 'failed', 0, error_code=ErrorCode.CONNECTION_FAILED)
+                return
             
             # Calculate initial progress
             initial_progress = 0
@@ -298,6 +302,19 @@ class TransferService:
                 if isinstance(res, asyncio.CancelledError):
                     logger.debug(f"Resume task {task_id} caught cancellation signal in child tasks.")
                     raise res # Jump to outer CancelledError handler
+
+            failed_exceptions = [res for res in results if isinstance(res, Exception)]
+            if failed_exceptions:
+                logger.error(f"Resume task {task_id} encountered sub-task exceptions: {failed_exceptions}")
+                await self.controller.mark_failed_async(task_id, ErrorCode.TASK_FAILED)
+                progress_callback(task_id, task_info.get('name', ''), 0, task_info.get('total_size', 0), 'failed', 0, error_code=ErrorCode.TASK_FAILED)
+                return
+
+            # Check persisted status in case child tasks caught errors and marked the task failed
+            latest_info = await self.controller.get_task_async(task_id)
+            if latest_info and latest_info.get('status') in ('cancelled', 'failed', 'paused'):
+                logger.debug(f"Resume task {task_id} ended with status '{latest_info.get('status')}', skipping completion.")
+                return
             
             if is_upload:
                  await self.uploader._finalize_thumbnails(client, task_id)

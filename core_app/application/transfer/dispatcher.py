@@ -3,10 +3,12 @@ import time
 import logging
 import random
 from typing import List, Callable, Set
+from collections import defaultdict
 import os
 
 from core_app.infrastructure.local_fs import file_processor as fp
 from core_app.core import crypto_handler as cr
+from core_app.core import utils
 from core_app.infrastructure.telegram import telegram_comms
 from core_app.core.shared_state import SharedState
 
@@ -107,16 +109,22 @@ class TransferDispatcher:
                     client = available_clients[(part_num - 1) % len(available_clients)]
                     client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
                     
-                    message = await telegram_comms.upload_single_chunk(client, group_id, part_bytes, cb)
+                    target_upload_group_id = shared_state.active_telegram_group_id or group_id
+                    message = await telegram_comms.upload_single_chunk(client, target_upload_group_id, part_bytes, cb)
                     
-                    split_files_info.append([part_num, message.id, part_hash])
+                    global_msg_id = utils.encode_global_msg_id(shared_state.active_group_index, message.id)
+                    logger.debug(f"Upload chunk {part_num}: target_group={target_upload_group_id}, encoded global_id={global_msg_id}")
+                    split_files_info.append([part_num, global_msg_id, part_hash])
+                    
+                    shared_state.current_group_msg_count += 1
+                    await telegram_comms.check_and_rotate_group_if_needed(shared_state)
                     
                     del active_chunk_progress[part_num]
                     completed_bytes += len(part_bytes)
                     if completed_bytes > total_size: completed_bytes = total_size
                     
                     if chunk_callback:
-                        chunk_callback(part_num, message.id, part_hash)
+                        chunk_callback(part_num, global_msg_id, part_hash)
                 except Exception as e:
                     logger.error(f"Worker upload failed for part {part_num}: {e}")
                     raise
@@ -144,7 +152,7 @@ class TransferDispatcher:
         return split_files_info
 
     @staticmethod
-    async def dispatch_download(shared_state: 'SharedState', group_id: int, file_details: dict, save_path: str, 
+    async def dispatch_download(shared_state: 'SharedState', file_details: dict, save_path: str, 
                                 progress_callback: Callable | None = None, completed_parts: Set[int] = None,
                                 chunk_callback: Callable[[int], None] = None):
         
@@ -182,28 +190,30 @@ class TransferDispatcher:
             return chunk_progress
 
         queue = asyncio.Queue()
-        message_ids = []
+        by_group_msg_ids = defaultdict(list)
         for chunk in chunks:
             if chunk['part_num'] not in completed_parts:
-                message_ids.append(chunk['message_id'])
+                global_id = chunk['message_id']
+                g_idx, raw_id = utils.decode_global_msg_id(global_id)
+                target_gid = shared_state.get_telegram_group_id(g_idx)
+                by_group_msg_ids[target_gid].append(raw_id)
                 await queue.put(chunk)
                 
-        if not message_ids and len(completed_parts) == len(chunks):
+        logger.debug(f"Download: decoded {len(chunks)} chunks across {len(by_group_msg_ids)} groups")
+        total_pending = sum(len(ids) for ids in by_group_msg_ids.values())
+        if total_pending == 0 and len(completed_parts) == len(chunks):
              logger.info("All parts marked as completed. Skipping download loop.")
              return
 
-        # Prepare messages in batch using main client to get message objects
-        # Note: iter_messages or get_messages is fast and gets the objects.
-        # However, to download concurrently, we can just use the message_id!
-        # Telethon's download_media supports iter_download by message_id if we fetch the message first,
-        # but client.iter_download requires a Message object or InputFileLocation.
-        # Actually, get_messages can be called by each client separately or by one client.
+        msg_map = {}
+        for target_gid, raw_ids in by_group_msg_ids.items():
+            messages = await shared_state.client.get_messages(target_gid, ids=raw_ids)
+            for m in messages:
+                if m:
+                    msg_map[(target_gid, m.id)] = m
         
-        messages = await shared_state.client.get_messages(group_id, ids=message_ids)
-        msg_map = {m.id: m for m in messages if m}
-        
-        if len(msg_map) != len(message_ids):
-            raise ValueError(f"Requested {len(message_ids)} chunks but only got {len(msg_map)}. Cloud messages missing.")
+        if len(msg_map) != total_pending:
+            raise ValueError(f"Requested {total_pending} chunks but only got {len(msg_map)}. Cloud messages missing.")
 
         active_bots = [b for b in getattr(shared_state, 'clients_pool', []) if b and b.is_connected()]
         MAX_CONCURRENT_WORKERS = len(active_bots) if active_bots else 1
@@ -222,8 +232,12 @@ class TransferDispatcher:
                 msg_id = item['message_id']
                 part_hash = item['part_hash']
                 
-                message = msg_map.get(msg_id)
+                g_idx, raw_msg_id = utils.decode_global_msg_id(msg_id)
+                target_group_id = shared_state.get_telegram_group_id(g_idx)
+                
+                message = msg_map.get((target_group_id, raw_msg_id))
                 if not message:
+                    logger.warning(f"Download: chunk {part_num} message {raw_msg_id} not found in msg_map, skipping")
                     queue.task_done()
                     continue
                     
@@ -248,9 +262,9 @@ class TransferDispatcher:
                     client = available_clients[(part_num - 1) % len(available_clients)]
                     client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
                     
-                    client_msgs = await client.get_messages(group_id, ids=[msg_id])
+                    client_msgs = await client.get_messages(target_group_id, ids=[raw_msg_id])
                     if not client_msgs or not client_msgs[0]:
-                        raise ValueError(f"Worker {client_name} could not access message {msg_id}")
+                        raise ValueError(f"Worker {client_name} could not access message {raw_msg_id} in group {target_group_id}")
                     worker_message = client_msgs[0]
                     
                     encrypted_bytes = await telegram_comms.download_single_chunk(client, worker_message, cb)
