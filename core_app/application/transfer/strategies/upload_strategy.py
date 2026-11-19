@@ -179,7 +179,7 @@ class UploadStrategy(TransferStrategy):
                     
                     if target_parent_id:
                         real_total_size += f_size
-                        meta = extract_metadata(file_path)
+                        meta = await loop.run_in_executor(None, extract_metadata, file_path)
                         child_tasks_map[sub_task_id] = {
                             "file_path": file_path,
                             "parent_id": target_parent_id,
@@ -265,7 +265,7 @@ class UploadStrategy(TransferStrategy):
 
             if sub_status == 'completed':
                 try:
-                    last_uploaded = os.path.getsize(file_path)
+                    last_uploaded = await asyncio.get_running_loop().run_in_executor(None, os.path.getsize, file_path)
                 except OSError:
                     last_uploaded = 0
             elif resume_context:
@@ -305,14 +305,13 @@ class UploadStrategy(TransferStrategy):
                 self.context.shared_state.active_tasks[sub_task_id] = current_task
                 self.context._active_sub_tasks[main_task_id].add(sub_task_id)
 
-                if not os.path.exists(file_path):
-                    raise FileNotFoundError(f"找不到檔案：{file_path}")
+                if not await loop.run_in_executor(None, os.path.exists, file_path):
+                    raise FileNotFoundError(f"File not found: {file_path}")
 
                 await loop.run_in_executor(None, self.context.controller.queue_repo.update_sub_task_status, sub_task_id, "transferring")
                 self.context._trigger_folder_refresh([parent_id])
 
-                loop = asyncio.get_running_loop()
-                total_size = os.path.getsize(file_path)
+                total_size = await loop.run_in_executor(None, os.path.getsize, file_path)
 
                 original_file_hash = pre_calculated_hash
                 split_files_info = resume_context or []

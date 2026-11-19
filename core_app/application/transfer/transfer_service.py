@@ -86,6 +86,16 @@ class TransferService:
 
         logger.info("TransferService shutdown complete.")
 
+    def has_active_transfers(self) -> bool:
+        """Returns True if any upload or download transfer task is currently active."""
+        if any(bool(sub_ids) for sub_ids in self._active_sub_tasks.values()):
+            return True
+        if self.shared_state and getattr(self.shared_state, "active_tasks", None):
+            for task_id, task in self.shared_state.active_tasks.items():
+                if not str(task_id).startswith("bg_task_") and task and not task.done():
+                    return True
+        return False
+
     # --- Common Helper Methods for Strategies ->
     
     def set_refresh_callback(self, callback: Callable):

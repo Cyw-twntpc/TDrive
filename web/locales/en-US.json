@@ -342,6 +342,8 @@
         "btn_jump": "Jump"
     },
     "native": {
-        "initializing": "Initializing..."
+        "initializing": "Initializing...",
+        "exit_confirm_title": "Confirm Exit",
+        "exit_confirm_msg": "There are active transfers in progress. Are you sure you want to cancel them and exit?"
     }
 }

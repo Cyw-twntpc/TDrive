@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from PySide6.QtGui import QIcon, QCloseEvent, QGuiApplication, QColor, QDesktopS
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
 
+from core_app.core.settings_manager import get_localized_text
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.web_bridge.api_bridge import Bridge
 
@@ -33,7 +35,7 @@ class LoginWindow(QMainWindow):
         self._drag_offset = None
         self._is_ready_to_close = False
 
-        self.setWindowTitle("TDrive - 登入")
+        self.setWindowTitle(get_localized_text("login.window_title", "TDrive - 登入"))
         self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
 
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -70,7 +72,9 @@ class LoginWindow(QMainWindow):
     def on_load_finished(self, success: bool):
         if success and self._api_id and self._api_hash:
             logger.info("Web page loaded. Pre-filling API credentials from expired session.")
-            js_code = f"window.prefill_api_credentials('{self._api_id}', '{self._api_hash}');"
+            api_id_js = json.dumps(str(self._api_id))
+            api_hash_js = json.dumps(str(self._api_hash))
+            js_code = f"window.prefill_api_credentials({api_id_js}, {api_hash_js});"
             self.web_view.page().runJavaScript(js_code)
 
     def on_login_complete(self):

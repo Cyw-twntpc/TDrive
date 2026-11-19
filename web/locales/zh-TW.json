@@ -342,6 +342,8 @@
         "btn_jump": "跳轉"
     },
     "native": {
-        "initializing": "正在初始化..."
+        "initializing": "正在初始化...",
+        "exit_confirm_title": "確認離開 TDrive",
+        "exit_confirm_msg": "目前尚有進行中的傳輸任務，確定要中斷並離開應用程式嗎？"
     }
 }

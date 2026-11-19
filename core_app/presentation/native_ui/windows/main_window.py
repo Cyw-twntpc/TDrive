@@ -4,11 +4,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWidgets import QMainWindow, QApplication, QStackedWidget
+from PySide6.QtWidgets import QMainWindow, QApplication, QStackedWidget, QMessageBox
 from PySide6.QtGui import QIcon, QCloseEvent
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 
+from core_app.core.settings_manager import get_localized_text
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.web_bridge.api_bridge import Bridge
 
@@ -40,11 +41,9 @@ class MainWindow(QMainWindow):
         self.web_view = QWebEngineView()
         self.web_view.page().profile().clearHttpCache()
         self.web_view.page().setWebChannel(self.channel)
-        self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
         
         self.web_view.setUrl(QUrl.fromLocalFile(str(Path("web/index.html").resolve())))
@@ -100,6 +99,22 @@ class MainWindow(QMainWindow):
         if self._is_logging_out:
             event.accept()
             return
+
+        transfer_service = getattr(self.tdrive_service, "_transfer_service", None)
+        if transfer_service and hasattr(transfer_service, "has_active_transfers") and transfer_service.has_active_transfers():
+            reply = QMessageBox.question(
+                self,
+                get_localized_text("native.exit_confirm_title", "確認離開 TDrive"),
+                get_localized_text(
+                    "native.exit_confirm_msg",
+                    "目前尚有進行中的傳輸任務，確定要中斷並離開應用程式嗎？"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
 
         # Hide window immediately for better UX
         self.hide()
