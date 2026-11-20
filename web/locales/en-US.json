@@ -235,6 +235,7 @@
         "settings_language": "Display Language",
         "settings_theme": "Theme",
         "theme_light": "Light Mode",
+        "theme_dark": "Dark Mode",
         "theme_dark_soon": "Dark Mode (Coming Soon)",
         "settings_default_dl": "Default Download Path",
         "btn_select_path": "Select Path",

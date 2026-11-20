@@ -28,3 +28,29 @@
     --violet-accent: #8B5CF6;
     --pink-accent: #EC4899;
 }
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --primary-color: #3b82f6;
+    --primary-color-rgb: 59, 130, 246;
+    --primary-hover-color: #2563eb;
+    --success-color: #22c55e;
+    --success-color-rgb: 34, 197, 94;
+    --danger-color: #ef4444;
+    --danger-color-rgb: 239, 68, 68;
+    --danger-hover-color: #dc2626;
+    --warning-color: #f59e0b;
+    --selected-bg-color: rgba(59, 130, 246, 0.22);
+    --selection-box-bg: rgba(59, 130, 246, 0.25);
+    --selection-box-border: 1px solid rgba(96, 165, 250, 0.65);
+    --background-color: #0f172a;
+    --sidebar-bg: #162032;
+    --main-content-bg: #1e293b;
+    --text-color: #e2e8f0;
+    --text-light-color: #94a3b8;
+    --border-color: #334155;
+    --header-bg: #162032;
+    --sort-icon-color: #64748b;
+    --hover-bg-color: #273449;
+    --item-hover-bg: #263348;
+}

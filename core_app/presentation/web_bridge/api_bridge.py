@@ -417,6 +417,10 @@ class Bridge(QObject):
             val = json.loads(value)
         except json.JSONDecodeError:
             val = value
+
+        if key == "theme":
+            val = "dark" if val == "dark" else "light"
+
         self._settings_manager.set(key, val)
 
     @Slot()

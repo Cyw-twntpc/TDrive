@@ -234,6 +234,7 @@
         "settings_title": "設定",
         "settings_theme": "主題",
         "theme_light": "明亮模式",
+        "theme_dark": "深色模式",
         "theme_dark_soon": "黑暗模式 (即將推出)",
         "settings_default_dl": "預設下載路徑",
         "btn_select_path": "選擇路徑",

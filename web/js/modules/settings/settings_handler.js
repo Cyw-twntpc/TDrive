@@ -4,6 +4,17 @@
  */
 const SettingsHandler = {
     /**
+     * Applies the selected visual theme to the document root.
+     */
+    applyTheme(theme) {
+        const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', normalizedTheme);
+        if (document.body) {
+            document.body.dataset.theme = normalizedTheme;
+        }
+    },
+
+    /**
      * Loads settings from bridge and applies them to the UI and relevant services.
      */
     async loadAndApply() {
@@ -15,15 +26,22 @@ const SettingsHandler = {
         try {
             const settingsStr = await new Promise(resolve => window.tdrive_bridge.get_settings(resolve));
             const settings = JSON.parse(settingsStr);
+
+            SettingsHandler.applyTheme(settings.theme || 'light');
             
             const pathDisplay = document.getElementById('default-download-path-display');
             const setPathBtn = document.getElementById('set-default-download-path-btn');
             const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
             const langSelect = document.getElementById('language-select');
+            const themeSelect = document.getElementById('theme-select');
 
             // Apply language state
             if (langSelect && window.i18n) {
                 langSelect.value = settings.language || 'zh-TW';
+            }
+
+            if (themeSelect) {
+                themeSelect.value = settings.theme === 'dark' ? 'dark' : 'light';
             }
 
             // Apply default download path state
@@ -52,10 +70,17 @@ const SettingsHandler = {
      */
     save() {
         const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
-        
-        // Save default download path toggle state
+        const themeSelect = document.getElementById('theme-select');
+        const selectedTheme = themeSelect && themeSelect.value === 'dark' ? 'dark' : 'light';
+
+        SettingsHandler.applyTheme(selectedTheme);
+
+        // Save user settings to the backend bridge
         if (window.tdrive_bridge) {
             window.tdrive_bridge.save_setting('useDefaultDownloadPath', useDefaultToggle.checked.toString());
+            if (themeSelect) {
+                window.tdrive_bridge.save_setting('theme', JSON.stringify(selectedTheme));
+            }
         }
         
         UIModals.showAlert(window.t('dialog.settings_saved'), window.t('dialog.settings_saved_msg'), 'btn-primary');
@@ -96,11 +121,23 @@ const SettingsHandler = {
             });
         }
         
+        const themeSelect = document.getElementById('theme-select');
+        if (themeSelect) {
+            themeSelect.addEventListener('change', (e) => {
+                const selectedTheme = e.target.value === 'dark' ? 'dark' : 'light';
+                SettingsHandler.applyTheme(selectedTheme);
+                if (window.tdrive_bridge) {
+                    window.tdrive_bridge.save_setting('theme', JSON.stringify(selectedTheme));
+                }
+            });
+        }
+
         const restoreBtn = document.getElementById('restore-settings-btn');
         if (restoreBtn) {
             restoreBtn.addEventListener('click', () => {
                 if (window.tdrive_bridge) {
                     window.tdrive_bridge.restore_default_settings();
+                    SettingsHandler.applyTheme('light');
                     this.loadAndApply();
                     if (window.i18n) {
                         window.i18n.init().then(() => {
