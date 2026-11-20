@@ -108,6 +108,13 @@ const ApiService = {
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),
     showItemInFolder: (path) => ApiService._callBridge('show_item_in_folder', path),
     checkLocalExists: (path) => ApiService._callBridge('check_local_exists', path),
+    classifyLocalPaths: async (paths) => {
+        const res = await ApiService._callBridge('classify_local_paths', JSON.stringify(paths || []));
+        if (typeof res === 'string') {
+            try { return JSON.parse(res); } catch { return { files: [], folders: [] }; }
+        }
+        return res || { files: [], folders: [] };
+    },
 
     uploadFiles: (parentId, files) => ApiService._callBridge('upload_files', parentId, files),
     uploadFolder: (parentId, folderPath, taskId) => ApiService._callBridge('upload_folder', parentId, folderPath, taskId),

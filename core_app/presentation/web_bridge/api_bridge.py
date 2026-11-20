@@ -31,6 +31,12 @@ class Bridge(QObject):
     connection_status_changed = Signal(str)
     login_and_initialization_complete = Signal()
     logout_completed = Signal()
+    external_paths_dropped = Signal(str)
+
+    def emit_external_paths_dropped(self, paths: list[str]) -> None:
+        """Forward OS dropped filesystem paths to the Web UI via QWebChannel."""
+        if paths:
+            self.external_paths_dropped.emit(json.dumps(paths))
 
     # --- Window Dragging Signals ---
     drag_window = Signal(int, int)
@@ -183,6 +189,27 @@ class Bridge(QObject):
     @Slot(str, result=bool)
     def check_local_exists(self, path):
         return check_path_exists(path)
+
+    @Slot(str, result=str)
+    def classify_local_paths(self, paths_json: str) -> str:
+        """Classify dropped local filesystem paths into existing files and folders."""
+        files = []
+        folders = []
+        try:
+            paths = json.loads(paths_json) if paths_json else []
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid paths JSON in classify_local_paths: %s", exc)
+            return json.dumps({"files": [], "folders": []})
+
+        if isinstance(paths, list):
+            for raw_path in paths:
+                if not isinstance(raw_path, str) or not raw_path:
+                    continue
+                if os.path.isdir(raw_path):
+                    folders.append(raw_path)
+                elif os.path.isfile(raw_path):
+                    files.append(raw_path)
+        return json.dumps({"files": files, "folders": folders})
 
     # --- Authentication Service Slots ---
     @Slot(int, str, result=dict)

@@ -356,13 +356,37 @@ function setupGlobalDragAndDrop() {
     });
 
     dropZone.addEventListener('drop', (e) => {
+        if (typeof AppState !== 'undefined' && AppState.isDragging) return;
         e.preventDefault();
         e.stopPropagation();
 
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            ActionController.handleFileUpload(e.dataTransfer.files);
+            const localPaths = Array.from(e.dataTransfer.files)
+                .map(file => file.path)
+                .filter(path => typeof path === 'string' && path.length > 0);
+            if (localPaths.length > 0) {
+                ActionController.handleExternalPathsDrop(localPaths);
+            }
         }
     });
+
+    const bindExternalDropSignal = () => {
+        if (window._tdriveExternalDropBound) return;
+        const bridge = window.tdrive_bridge;
+        if (bridge && bridge.external_paths_dropped && typeof bridge.external_paths_dropped.connect === 'function') {
+            window._tdriveExternalDropBound = true;
+            bridge.external_paths_dropped.connect((pathsJson) => {
+                try {
+                    const parsed = typeof pathsJson === 'string' ? JSON.parse(pathsJson) : pathsJson;
+                    ActionController.handleExternalPathsDrop(parsed);
+                } catch (err) {
+                    console.error('Failed to handle external dropped paths:', err);
+                }
+            });
+        }
+    };
+    bindExternalDropSignal();
+    document.addEventListener('TDriveBridgeReady', bindExternalDropSignal);
 }
 // Auto-refresh dynamic views on language change
 document.addEventListener('i18nChanged', () => {

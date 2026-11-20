@@ -2,7 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import QEvent, QUrl, Signal
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QMainWindow, QApplication, QStackedWidget, QMessageBox
 from PySide6.QtGui import QIcon, QCloseEvent
@@ -15,6 +15,71 @@ from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.web_bridge.api_bridge import Bridge
 
 logger = logging.getLogger(__name__)
+
+
+class TDriveWebEngineView(QWebEngineView):
+    """WebEngine view that intercepts OS local file drops with real host paths."""
+
+    local_paths_dropped = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.installEventFilter(self)
+        for child in self.children():
+            child.installEventFilter(self)
+
+    @staticmethod
+    def extract_local_paths(mime_data) -> list[str]:
+        """Return existing-syntax local filesystem paths carried by a Qt drop mime payload."""
+        if not mime_data or not mime_data.hasUrls():
+            return []
+        paths = []
+        for url in mime_data.urls():
+            if url.isLocalFile():
+                local_path = url.toLocalFile()
+                if local_path:
+                    paths.append(local_path)
+        return paths
+
+    def eventFilter(self, watched, event) -> bool:
+        """Intercept child WebEngine delegate drops for local files while leaving internal drags intact."""
+        event_type = event.type()
+        if event_type == QEvent.Type.ChildAdded and event.child() is not None:
+            event.child().installEventFilter(self)
+        elif watched is not self and event_type in (
+            QEvent.Type.DragEnter,
+            QEvent.Type.DragMove,
+            QEvent.Type.Drop,
+        ):
+            mime_data = event.mimeData() if hasattr(event, "mimeData") else None
+            paths = self.extract_local_paths(mime_data)
+            if paths:
+                event.acceptProposedAction()
+                if event_type == QEvent.Type.Drop:
+                    self.local_paths_dropped.emit(paths)
+                return True
+        return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event) -> None:
+        if self.extract_local_paths(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if self.extract_local_paths(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        paths = self.extract_local_paths(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self.local_paths_dropped.emit(paths)
+            return
+        super().dropEvent(event)
 
 class MainWindow(QMainWindow):
     logged_out = Signal()
@@ -39,7 +104,8 @@ class MainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
         
-        self.web_view = QWebEngineView()
+        self.web_view = TDriveWebEngineView()
+        self.web_view.local_paths_dropped.connect(self.bridge.emit_external_paths_dropped)
         self.web_view.page().profile().clearHttpCache()
         self.web_view.page().setWebChannel(self.channel)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)

@@ -236,10 +236,47 @@ const ActionController = {
         }
     },
 
-    async handleFileUpload() {
-        UIManager.toggleModal('blocking-overlay', true);
+    async handleExternalPathsDrop(rawPaths) {
+        if (!Array.isArray(rawPaths) || rawPaths.length === 0) return;
+        const paths = rawPaths.filter(p => typeof p === 'string' && p.length > 0);
+        if (paths.length === 0) return;
+
+        const targetFolderId = ActionController._appState.currentFolderId || 'root';
+        const classified = await ActionController._apiService.classifyLocalPaths(paths);
+        const files = Array.isArray(classified?.files) ? classified.files : [];
+        const folders = Array.isArray(classified?.folders) ? classified.folders : [];
+
+        if (files.length > 0) {
+            await ActionController.handleFileUpload(files);
+        }
+        for (const folderPath of folders) {
+            const folderName = folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath;
+            const taskId = 'ul_dir_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+            if (window.TransferManager && window.TransferManager.addUpload) {
+                window.TransferManager.addUpload(taskId, folderName, 0, true);
+            }
+            const res = await ActionController._apiService.uploadFolder(targetFolderId, folderPath, taskId);
+            if (!res || !res.success) {
+                if (window.TransferManager && window.TransferManager.updateTask) {
+                    window.TransferManager.updateTask(taskId, {
+                        status: 'failed',
+                        error: (res && res.error) || 'Upload failed',
+                    });
+                }
+            }
+        }
+    },
+
+    async handleFileUpload(preselectedPaths = null) {
+        const hasPathArray = Array.isArray(preselectedPaths) && preselectedPaths.length > 0
+            && preselectedPaths.every(p => typeof p === 'string');
+        if (!hasPathArray) {
+            UIManager.toggleModal('blocking-overlay', true);
+        }
         try {
-            const localPaths = await ActionController._apiService.selectFiles(true, window.t('dialog.select_ul_file'));
+            const localPaths = hasPathArray
+                ? preselectedPaths
+                : await ActionController._apiService.selectFiles(true, window.t('dialog.select_ul_file'));
             if (!localPaths || localPaths.length === 0) return;
 
             const parentId = ActionController._appState.currentFolderId;
