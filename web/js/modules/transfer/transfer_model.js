@@ -212,6 +212,35 @@ const TransferModel = {
         if (TransferView.currentTab === 'completed') TransferView._renderCompletedList();
     },
 
+    reorderQueue(type, orderedIds) {
+        const targetMap = type === 'uploads' ? TransferModel.uploads : TransferModel.downloads;
+        if (!targetMap || !Array.isArray(orderedIds) || orderedIds.length === 0) return false;
+
+        const orderRank = new Map(orderedIds.map((id, idx) => [id, idx]));
+        const entries = Array.from(targetMap.entries());
+        const queuedEntries = entries.filter(([id]) => orderRank.has(id));
+        if (queuedEntries.length === 0) return false;
+
+        queuedEntries.sort((a, b) => orderRank.get(a[0]) - orderRank.get(b[0]));
+
+        let queuedCursor = 0;
+        const rebuilt = new Map();
+        for (const [id, task] of entries) {
+            if (orderRank.has(id)) {
+                const [nextId, nextTask] = queuedEntries[queuedCursor++];
+                rebuilt.set(nextId, nextTask);
+            } else {
+                rebuilt.set(id, task);
+            }
+        }
+        if (type === 'uploads') {
+            TransferModel.uploads = rebuilt;
+        } else {
+            TransferModel.downloads = rebuilt;
+        }
+        return true;
+    },
+
     removeSingleHistoryItem(taskId, type) {
         if (type === 'upload') {
             TransferModel.uploadHistory.delete(taskId);

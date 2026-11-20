@@ -294,6 +294,9 @@ class UploadStrategy(TransferStrategy):
             _t.add_done_callback(self.context.shared_state.background_tasks.discard)
             progress_callback(main_task_id, delta, speed)
 
+        curr_task = asyncio.current_task()
+        if curr_task is not None:
+            curr_task._tdrive_main_task_id = main_task_id
         loop = asyncio.get_running_loop()
         async with self.context._semaphore:
             main_status = await loop.run_in_executor(None, self.context.controller.queue_repo.get_main_task_status, main_task_id)

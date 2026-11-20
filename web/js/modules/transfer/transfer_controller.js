@@ -150,7 +150,23 @@ const TransferManager = {
         Promise.allSettled(tasks);
     },
 
+    async reorderQueuedTasks(type, orderedIds) {
+        if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+            return { success: false };
+        }
+        TransferModel.reorderQueue(type, orderedIds);
+        TransferView.renderDashboard();
+        if (TransferManager.ApiService && typeof TransferManager.ApiService.reorderTransfers === 'function') {
+            return await TransferManager.ApiService.reorderTransfers(JSON.stringify(orderedIds));
+        }
+        return { success: true };
+    },
+
     setupEventListeners() {
+        const globalResumeBtn = document.getElementById('global-resume-btn');
+        if (globalResumeBtn) {
+            globalResumeBtn.addEventListener('click', () => TransferManager.resumeAll());
+        }
         const sidebarStatus = document.getElementById('sidebar-transfer-status');
         if (sidebarStatus) sidebarStatus.addEventListener('click', () => { if(window.switchPage) window.switchPage('transfer'); });
         document.querySelectorAll('.tabs-container .tab-item').forEach(btn => btn.addEventListener('click', () => {

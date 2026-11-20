@@ -1,5 +1,7 @@
+import collections
 import logging
 import asyncio
+from core_app.core.settings_manager import SettingsManager
 import time
 import os
 from typing import TYPE_CHECKING, List, Dict, Any, Callable, Optional
@@ -28,6 +30,62 @@ from core_app.application.transfer.strategies.download_strategy import DownloadS
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONCURRENCY = 3
+MIN_CONCURRENCY = 1
+MAX_CONCURRENCY = 10
+
+
+class PrioritySemaphore(asyncio.Semaphore):
+    """Asyncio semaphore allowing waiting TDrive tasks to be reordered dynamically."""
+
+    async def acquire(self):
+        if not self.locked():
+            self._value -= 1
+            return True
+
+        if self._waiters is None:
+            self._waiters = collections.deque()
+        fut = self._get_loop().create_future()
+        current_task = asyncio.current_task()
+        fut._tdrive_main_task_id = getattr(current_task, "_tdrive_main_task_id", None) if current_task else None
+        self._waiters.append(fut)
+
+        try:
+            try:
+                await fut
+            finally:
+                if self._waiters and fut in self._waiters:
+                    self._waiters.remove(fut)
+        except asyncio.CancelledError:
+            if not fut.cancelled():
+                self._value += 1
+                self._wake_up_next()
+            raise
+
+        if self._value > 0:
+            self._wake_up_next()
+        return True
+
+    def reorder_waiters(self, ordered_task_ids: list[str]) -> int:
+        """Reorder pending waiter futures to prioritize the supplied task IDs."""
+        if not self._waiters or not ordered_task_ids:
+            return 0
+        rank = {tid: idx for idx, tid in enumerate(ordered_task_ids)}
+        fallback_rank = len(rank)
+        waiters_list = list(self._waiters)
+        # Stable sort preserves relative FIFO order for untagged waiters or sibling subfiles.
+        waiters_list.sort(key=lambda fut: rank.get(getattr(fut, "_tdrive_main_task_id", None), fallback_rank))
+        self._waiters = collections.deque(waiters_list)
+        return len(waiters_list)
+
+
+def _clamp_concurrency_limit(value: Any, default: int = DEFAULT_CONCURRENCY) -> int:
+    """Normalize concurrency setting to a safe integer range [1, 10]."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(MIN_CONCURRENCY, min(MAX_CONCURRENCY, parsed))
+
 
 class TransferService:
     def __init__(self, shared_state: 'SharedState', thumb_manager: 'ThumbnailManager', metadata_manager: 'MetadataManager'):
@@ -42,9 +100,10 @@ class TransferService:
         self.watcher = FileStatusWatcher(self.shared_state.loop, self.folder_repo, status_change_callback=lambda x: None)
         self.thumb_manager = thumb_manager
         
-        # In the future, this can be loaded from user settings
-        self.concurrency_limit = DEFAULT_CONCURRENCY
-        self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+        self.concurrency_limit = _clamp_concurrency_limit(
+            SettingsManager().get("maxConcurrentTransfers", DEFAULT_CONCURRENCY)
+        )
+        self._semaphore = PrioritySemaphore(self.concurrency_limit)
         # Tracking active sub-tasks for cancellation
         self._active_sub_tasks: Dict[str, set] = defaultdict(set)
         
@@ -357,7 +416,7 @@ class TransferService:
 
     def set_concurrency_limit(self, limit: int):
         """Dynamically update concurrency limit without dropping waiting tasks."""
-        if limit < 1: limit = 1
+        limit = _clamp_concurrency_limit(limit, default=MIN_CONCURRENCY)
         diff = limit - self.concurrency_limit
         self.concurrency_limit = limit
         
@@ -373,3 +432,12 @@ class TransferService:
             self.shared_state.create_background_task(drain())
             
         logger.debug(f"Concurrency limit updated to {self.concurrency_limit}")
+
+    def reorder_queued_tasks(self, ordered_task_ids: list[str]) -> Dict[str, Any]:
+        """Reorder queued transfer waiters according to requested task ID order."""
+        if not isinstance(ordered_task_ids, list):
+            return {"success": False, "reordered": 0}
+        reordered = 0
+        if hasattr(self._semaphore, "reorder_waiters"):
+            reordered = self._semaphore.reorder_waiters(ordered_task_ids)
+        return {"success": True, "reordered": reordered}

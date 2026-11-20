@@ -456,3 +456,7 @@ class TDriveService:
 
     def remove_transfer_history(self, task_id: str) -> Dict[str, Any]:
         return self._transfer_service.remove_transfer_history(task_id)
+
+    def reorder_queued_tasks(self, ordered_task_ids: list[str]) -> Dict[str, Any]:
+        """Reorder queued transfer tasks according to frontend drag priority."""
+        return self._transfer_service.reorder_queued_tasks(ordered_task_ids)

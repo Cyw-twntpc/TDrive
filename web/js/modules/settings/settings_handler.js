@@ -34,6 +34,7 @@ const SettingsHandler = {
             const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
             const langSelect = document.getElementById('language-select');
             const themeSelect = document.getElementById('theme-select');
+            const concurrencySelect = document.getElementById('concurrency-select');
 
             // Apply language state
             if (langSelect && window.i18n) {
@@ -42,6 +43,11 @@ const SettingsHandler = {
 
             if (themeSelect) {
                 themeSelect.value = settings.theme === 'dark' ? 'dark' : 'light';
+            }
+
+            if (concurrencySelect) {
+                const limit = Math.max(1, Math.min(10, parseInt(settings.maxConcurrentTransfers, 10) || 3));
+                concurrencySelect.value = String(limit);
             }
 
             // Apply default download path state
@@ -71,7 +77,11 @@ const SettingsHandler = {
     save() {
         const useDefaultToggle = document.getElementById('use-default-download-path-toggle');
         const themeSelect = document.getElementById('theme-select');
+        const concurrencySelect = document.getElementById('concurrency-select');
         const selectedTheme = themeSelect && themeSelect.value === 'dark' ? 'dark' : 'light';
+        const concurrencyLimit = concurrencySelect
+            ? Math.max(1, Math.min(10, parseInt(concurrencySelect.value, 10) || 3))
+            : 3;
 
         SettingsHandler.applyTheme(selectedTheme);
 
@@ -80,6 +90,9 @@ const SettingsHandler = {
             window.tdrive_bridge.save_setting('useDefaultDownloadPath', useDefaultToggle.checked.toString());
             if (themeSelect) {
                 window.tdrive_bridge.save_setting('theme', JSON.stringify(selectedTheme));
+            }
+            if (concurrencySelect) {
+                window.tdrive_bridge.save_setting('maxConcurrentTransfers', JSON.stringify(concurrencyLimit));
             }
         }
         
@@ -120,7 +133,7 @@ const SettingsHandler = {
                 }
             });
         }
-        
+
         const themeSelect = document.getElementById('theme-select');
         if (themeSelect) {
             themeSelect.addEventListener('change', (e) => {
@@ -132,6 +145,17 @@ const SettingsHandler = {
             });
         }
 
+        const concurrencySelect = document.getElementById('concurrency-select');
+        if (concurrencySelect) {
+            concurrencySelect.addEventListener('change', (e) => {
+                const limit = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 3));
+                e.target.value = String(limit);
+                if (window.tdrive_bridge) {
+                    window.tdrive_bridge.save_setting('maxConcurrentTransfers', JSON.stringify(limit));
+                }
+            });
+        }
+        
         const restoreBtn = document.getElementById('restore-settings-btn');
         if (restoreBtn) {
             restoreBtn.addEventListener('click', () => {

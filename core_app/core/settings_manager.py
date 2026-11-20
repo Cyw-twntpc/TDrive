@@ -15,7 +15,8 @@ class SettingsManager:
         "language": "zh-TW",
         "theme": "light",
         "defaultDownloadPath": "",
-        "useDefaultDownloadPath": False
+        "useDefaultDownloadPath": False,
+        "maxConcurrentTransfers": 3
     }
 
     def __init__(self, settings_dir="file/user_data", settings_filename="settings.json"):

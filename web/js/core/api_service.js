@@ -121,6 +121,7 @@ const ApiService = {
     downloadItems: (items, destination) => ApiService._callBridge('download_items', items, destination),
     
     cancelTransfer: (taskId) => ApiService._callBridge('cancel_transfer', taskId),
+    reorderTransfers: (orderedTaskIdsJson) => ApiService._callBridge('reorder_transfers', orderedTaskIdsJson),
     pauseTransfer: (taskId) => ApiService._callBridge('pause_transfer', taskId),
     resumeTransfer: (taskId) => ApiService._callBridge('resume_transfer', taskId),
     removeTransferHistory: (taskId) => ApiService._callBridge('remove_transfer_history', taskId),

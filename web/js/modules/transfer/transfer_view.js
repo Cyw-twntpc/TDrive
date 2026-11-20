@@ -189,7 +189,7 @@ const TransferView = {
 
     _renderSection(type, tasks, createCardFn) {
         const listEl = document.getElementById(`list-${type}`);
-        if (!listEl) return; 
+        if (!listEl) return;
 
         if (tasks.length > 0) {
             const emptyState = listEl.querySelector('.empty-state');
@@ -198,15 +198,26 @@ const TransferView = {
 
         const existingCards = new Map();
         listEl.querySelectorAll('[data-id]').forEach(el => existingCards.set(el.dataset.id, el));
-        const toRemove = new Set(existingCards.keys());
+        const activeIds = new Set(tasks.map(task => task.id));
 
-        tasks.forEach(task => {
-            if (existingCards.has(task.id)) {
-                TransferView.renderTaskCard(task, existingCards.get(task.id));
-                toRemove.delete(task.id);
-            } else listEl.appendChild(createCardFn(task));
+        for (const [id, el] of existingCards.entries()) {
+            if (!activeIds.has(id)) {
+                el.remove();
+            }
+        }
+
+        tasks.forEach((task, idx) => {
+            let card = existingCards.get(task.id);
+            if (card) {
+                TransferView.renderTaskCard(task, card);
+            } else {
+                card = createCardFn(task);
+            }
+            const currentAtIndex = listEl.children[idx];
+            if (card !== currentAtIndex) {
+                listEl.insertBefore(card, currentAtIndex || null);
+            }
         });
-        toRemove.forEach(id => existingCards.get(id).remove());
     },
 
     renderTaskCard(task, targetElement = null) {
@@ -325,16 +336,84 @@ const TransferView = {
         return el;
     },
 
+    _computeReorderedIds(existingIds, draggedId, targetId, insertAfter = false) {
+        if (!Array.isArray(existingIds) || !draggedId || !targetId || draggedId === targetId) {
+            return existingIds || [];
+        }
+        const filtered = existingIds.filter(id => id !== draggedId);
+        const targetIdx = filtered.indexOf(targetId);
+        if (targetIdx === -1) return existingIds;
+        const insertIdx = insertAfter ? targetIdx + 1 : targetIdx;
+        filtered.splice(insertIdx, 0, draggedId);
+        return filtered;
+    },
+
+    _bindQueuedDragEvents(el) {
+        el.addEventListener('dragstart', (e) => {
+            TransferView._draggingQueuedId = el.dataset.id;
+            el.classList.add('dragging');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', el.dataset.id);
+            }
+        });
+
+        el.addEventListener('dragend', () => {
+            TransferView._draggingQueuedId = null;
+            el.classList.remove('dragging');
+            const listEl = document.getElementById('list-queued');
+            if (listEl) {
+                listEl.querySelectorAll('.drag-over-before, .drag-over-after').forEach(node => {
+                    node.classList.remove('drag-over-before', 'drag-over-after');
+                });
+            }
+        });
+
+        el.addEventListener('dragover', (e) => {
+            const draggedId = TransferView._draggingQueuedId;
+            if (!draggedId || draggedId === el.dataset.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = el.getBoundingClientRect();
+            const insertAfter = rect.height > 0 ? (e.clientY - rect.top) > (rect.height / 2) : false;
+            el.classList.toggle('drag-over-before', !insertAfter);
+            el.classList.toggle('drag-over-after', insertAfter);
+        });
+
+        el.addEventListener('dragleave', () => {
+            el.classList.remove('drag-over-before', 'drag-over-after');
+        });
+
+        el.addEventListener('drop', (e) => {
+            const draggedId = TransferView._draggingQueuedId
+                || (e.dataTransfer ? e.dataTransfer.getData('text/plain') : null);
+            if (!draggedId || draggedId === el.dataset.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const insertAfter = el.classList.contains('drag-over-after');
+            el.classList.remove('drag-over-before', 'drag-over-after');
+            const listEl = document.getElementById('list-queued');
+            if (!listEl) return;
+            const existingIds = Array.from(listEl.querySelectorAll('[data-id]')).map(node => node.dataset.id);
+            const newOrder = TransferView._computeReorderedIds(existingIds, draggedId, el.dataset.id, insertAfter);
+            if (newOrder.length > 0 && typeof TransferManager !== 'undefined' && typeof TransferManager.reorderQueuedTasks === 'function') {
+                TransferManager.reorderQueuedTasks(TransferView.currentTab, newOrder);
+            }
+        });
+    },
+
     _createQueuedCard(task) {
         const el = document.createElement('div');
         el.className = 'task-card-queued';
         el.dataset.id = task.id;
         el.dataset.type = task.type;
+        el.draggable = true;
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
             <div class="queued-content"><div class="queued-name">${TransferManager.UIManager.escapeHtml(task.name)}</div><div class="queued-size">${TransferManager.UIManager.formatBytes(task.size)}</div></div>
             <button class="icon-btn btn-cancel" title="${window.t('transfer.btn_cancel')}"><i class="fas fa-times"></i></button>`;
         TransferView._bindCardActions(el, task);
+        TransferView._bindQueuedDragEvents(el);
         TransferView.renderTaskCard(task, el);
         return el;
     },

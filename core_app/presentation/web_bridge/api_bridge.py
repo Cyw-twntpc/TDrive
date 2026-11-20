@@ -431,6 +431,17 @@ class Bridge(QObject):
     @Slot(result=dict)
     def get_initial_stats(self):
         return self._service.get_transfer_config()
+
+    @Slot(str, result=dict)
+    def reorder_transfers(self, ordered_task_ids_json: str):
+        """Reorder queued transfer tasks using a JSON array of task IDs."""
+        try:
+            ordered_ids = json.loads(ordered_task_ids_json) if ordered_task_ids_json else []
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid ordered task IDs JSON in reorder_transfers: %s", exc)
+            return {"success": False, "reordered": 0}
+        return self._service.reorder_queued_tasks(ordered_ids)
+
     # --- Settings Management ---
     @Slot(result=str)
     def get_settings(self):
@@ -445,6 +456,15 @@ class Bridge(QObject):
         except json.JSONDecodeError:
             val = value
 
+        if key == "maxConcurrentTransfers":
+            from core_app.application.transfer.transfer_service import _clamp_concurrency_limit
+            val = _clamp_concurrency_limit(val)
+            self._settings_manager.set(key, val)
+            transfer_service = getattr(self._service, "_transfer_service", None)
+            if transfer_service is not None:
+                transfer_service.set_concurrency_limit(val)
+            return
+
         if key == "theme":
             val = "dark" if val == "dark" else "light"
 
@@ -453,3 +473,7 @@ class Bridge(QObject):
     @Slot()
     def restore_default_settings(self):
         self._settings_manager.restore_defaults()
+        transfer_service = getattr(self._service, "_transfer_service", None)
+        if transfer_service is not None:
+            default_limit = self._settings_manager.get("maxConcurrentTransfers", 3)
+            transfer_service.set_concurrency_limit(default_limit)

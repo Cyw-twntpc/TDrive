@@ -290,3 +290,16 @@
 :root[data-theme="dark"] .btn-remove-history:hover {
     background-color: rgba(239, 68, 68, 0.2);
 }
+
+/* Queued card drag-and-drop visual states (shared across themes) */
+.task-card-queued.dragging {
+    opacity: 0.45;
+}
+
+.task-card-queued.drag-over-before {
+    box-shadow: inset 0 3px 0 0 var(--primary-color);
+}
+
+.task-card-queued.drag-over-after {
+    box-shadow: inset 0 -3px 0 0 var(--primary-color);
+}
