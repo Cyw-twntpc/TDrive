@@ -11,6 +11,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 from core_app.core.settings_manager import get_localized_text
+from core_app.core.utils import get_resource_path
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.web_bridge.api_bridge import Bridge
 
@@ -36,7 +37,7 @@ class LoginWindow(QMainWindow):
         self._is_ready_to_close = False
 
         self.setWindowTitle(get_localized_text("login.window_title", "TDrive - 登入"))
-        self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
+        self.setWindowIcon(QIcon(str(get_resource_path("web/icon.ico"))))
 
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -66,7 +67,7 @@ class LoginWindow(QMainWindow):
         self.web_view.page().setWebChannel(self.channel)
         self.web_view.page().setBackgroundColor(QColor(0, 0, 0, 0))
         self.web_view.loadFinished.connect(self.on_load_finished)
-        self.web_view.setUrl(QUrl.fromLocalFile(str(Path("web/login.html").resolve())))
+        self.web_view.setUrl(QUrl.fromLocalFile(str(get_resource_path("web/login.html"))))
         self.setCentralWidget(self.web_view)
 
     def on_load_finished(self, success: bool):

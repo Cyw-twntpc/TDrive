@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QLinearGradient, QFont, QRadialGradient
 
 from core_app.core.settings_manager import get_localized_text
+from core_app.core.utils import get_resource_path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class SplashScreen(QWidget):
         self.gradient_timer.start(50)
 
         # Load logo from the web folder
-        self.logo = QPixmap(str(Path("web/title.png").resolve()))
+        self.logo = QPixmap(str(get_resource_path("web/title.png")))
         if not self.logo.isNull():
             # Scale logo to a suitable size
             self.logo = self.logo.scaled(260, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)

@@ -10,6 +10,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 
 from core_app.core.settings_manager import get_localized_text
+from core_app.core.utils import get_resource_path
 from core_app.presentation.web_bridge.app_service import TDriveService
 from core_app.presentation.web_bridge.api_bridge import Bridge
 
@@ -26,7 +27,7 @@ class MainWindow(QMainWindow):
         # Removed self._is_ready_to_close as we now quit app directly
 
         self.setWindowTitle("TDrive")
-        self.setWindowIcon(QIcon(str(Path("web/icon.ico").resolve())))
+        self.setWindowIcon(QIcon(str(get_resource_path("web/icon.ico"))))
         
         self.setMinimumSize(800, 600)
 
@@ -46,7 +47,7 @@ class MainWindow(QMainWindow):
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         self.web_view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
         
-        self.web_view.setUrl(QUrl.fromLocalFile(str(Path("web/index.html").resolve())))
+        self.web_view.setUrl(QUrl.fromLocalFile(str(get_resource_path("web/index.html"))))
         
         self.stacked_widget.addWidget(self.web_view)
         

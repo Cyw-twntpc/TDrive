@@ -1,8 +1,10 @@
 import logging
 import asyncio
 import os
+import sys
+from pathlib import Path
 import py7zr
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 from telethon import TelegramClient
 
 # Use a forward reference for type hinting to avoid circular imports.
@@ -145,7 +147,16 @@ def check_path_exists(path: str) -> bool:
     return os.path.exists(path)
 
 
-VENDOR_DIR = os.path.join(os.path.dirname(__file__), '..', 'vendor')
+def get_resource_path(relative_path: Union[str, Path]) -> Path:
+    """Resolve an application resource path across source runs and PyInstaller bundles."""
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parents[2]
+    return base_path / relative_path
+
+
+VENDOR_DIR = str(get_resource_path(Path("core_app") / "vendor"))
 _extracted_cache = {}
 
 def ensure_extracted(name: str) -> str:

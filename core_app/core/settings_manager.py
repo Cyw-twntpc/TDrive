@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from core_app.core.utils import get_resource_path
+
 logger = logging.getLogger(__name__)
 
 class SettingsManager:
@@ -86,7 +88,7 @@ def get_localized_text(key: str, fallback: str = "", locale_dir: Optional[str] =
         logger.warning(f"Failed to read language setting for '{key}': {e}")
         lang = "zh-TW"
 
-    base_dir = Path(locale_dir) if locale_dir else Path(__file__).resolve().parents[2] / "web" / "locales"
+    base_dir = Path(locale_dir) if locale_dir else get_resource_path("web/locales")
     candidates = [base_dir / f"{lang}.json"]
     if lang != "zh-TW":
         candidates.append(base_dir / "zh-TW.json")
