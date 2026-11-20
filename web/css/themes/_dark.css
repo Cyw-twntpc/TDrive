@@ -48,9 +48,24 @@
 }
 
 /* Sidebar, nav rail & trees */
+:root[data-theme="dark"] .nav-rail:hover,
 :root[data-theme="dark"] .nav-rail.expanded {
-    background-color: rgba(30, 41, 59, 0.96);
+    background-color: rgba(22, 32, 50, 0.96);
+    border-right-color: var(--border-color);
     box-shadow: 4px 0 18px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="dark"] .file-tree-nav {
+    scrollbar-color: #475569 #162032;
+}
+
+:root[data-theme="dark"] .file-tree-nav::-webkit-scrollbar-track {
+    background: #162032;
+}
+
+:root[data-theme="dark"] .file-tree-nav::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 6px;
 }
 
 :root[data-theme="dark"] #tree-tooltip,

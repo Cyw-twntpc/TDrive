@@ -12,6 +12,10 @@ const SettingsHandler = {
         if (document.body) {
             document.body.dataset.theme = normalizedTheme;
         }
+        const logoImg = document.querySelector('.logo img');
+        if (logoImg) {
+            logoImg.setAttribute('src', normalizedTheme === 'dark' ? 'title_dark.png' : 'title.png');
+        }
     },
 
     /**
