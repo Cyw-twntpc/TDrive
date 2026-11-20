@@ -324,7 +324,9 @@ class TransferService:
                             task_info['file_path'], task_info['parent_id'], 
                             progress_callback,
                             resume_context=task_info.get('split_files_info'),
-                            pre_calculated_hash=task_info.get('file_hash')
+                            pre_calculated_hash=task_info.get('file_hash'),
+                            known_total_size=task_info.get('total_size'),
+                            known_file_details=task_info.get('file_details')
                         )
                     )
                 else:
@@ -351,7 +353,9 @@ class TransferService:
                                 sub_data['file_path'], sub_data['parent_id'],
                                 progress_callback,
                                 resume_context=sub_data.get('split_files_info'),
-                                pre_calculated_hash=sub_data.get('file_hash')
+                                pre_calculated_hash=sub_data.get('file_hash'),
+                                known_total_size=sub_data.get('total_size'),
+                                known_file_details=sub_data.get('file_details')
                             )
                         )
                     else:

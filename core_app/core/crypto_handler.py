@@ -3,6 +3,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidTag
+import functools
 import hashlib
 import base64
 import os
@@ -55,8 +56,9 @@ def _get_encryption_key(api_id: str) -> bytes:
     )
     return kdf.derive(machine_specific_pepper)
 
+@functools.lru_cache(maxsize=32)
 def generate_key_from_api_id(api_id: str) -> bytes:
-    """Generates a 32-byte AES key using ONLY the api_id and a fixed salt."""
+    """Generates a deterministic 32-byte AES key using ONLY the api_id and a fixed salt."""
     # Fixed salt for consistency across devices
     salt = b'TDRIVE_FIXED_SALT_V1'
     kdf = PBKDF2HMAC(

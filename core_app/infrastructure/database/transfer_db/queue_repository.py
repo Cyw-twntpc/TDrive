@@ -135,6 +135,29 @@ class QueueRepository:
         finally:
             conn.close()
 
+    def complete_sub_task(self, main_task_id: str, sub_task_id: str, updated_at: float):
+        """Atomically mark a sub-task completed and update its parent main_task row in one transaction."""
+        conn = self.db._get_conn()
+        try:
+            with conn:
+                conn.execute("UPDATE sub_tasks SET status = 'completed' WHERE sub_task_id = ?", (sub_task_id,))
+                if main_task_id == sub_task_id:
+                    conn.execute(
+                        "UPDATE main_tasks SET status = 'completed', updated_at = ? WHERE task_id = ?",
+                        (updated_at, main_task_id),
+                    )
+                else:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT status FROM main_tasks WHERE task_id = ?', (main_task_id,))
+                    row = cursor.fetchone()
+                    next_status = (row['status'] if row else None) or 'transferring'
+                    conn.execute(
+                        'UPDATE main_tasks SET status = ?, updated_at = ? WHERE task_id = ?',
+                        (next_status, updated_at, main_task_id),
+                    )
+        finally:
+            conn.close()
+
     def update_sub_task_hash(self, sub_task_id: str, file_hash: str):
         conn = self.db._get_conn()
         try:

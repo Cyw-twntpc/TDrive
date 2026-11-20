@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import time
 import logging
 import random
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 CALLBACK_ELAPSED = 0.5
 
 class TransferDispatcher:
+    _upload_rr_counter = itertools.count()
     @staticmethod
     async def dispatch_upload(shared_state: 'SharedState', group_id: int, file_path: str, original_file_hash: str, 
                               progress_callback: Callable | None = None, resume_context: List = None,
@@ -53,7 +55,8 @@ class TransferDispatcher:
             return chunk_progress
 
         active_bots = [b for b in getattr(shared_state, 'clients_pool', []) if b and b.is_connected()]
-        MAX_CONCURRENT_WORKERS = len(active_bots) if active_bots else 1
+        estimated_parts = max(1, (total_size + fp.CHUNK_SIZE - 1) // fp.CHUNK_SIZE) if total_size > 0 else 1
+        MAX_CONCURRENT_WORKERS = min(len(active_bots), estimated_parts) if active_bots else 1
         queue = asyncio.Queue(maxsize=MAX_CONCURRENT_WORKERS * 2)
 
         async def producer():
@@ -92,7 +95,7 @@ class TransferDispatcher:
                     part_hash = await loop.run_in_executor(None, cr.hash_bytes, part_bytes)
                     
                     # Humanized delay to prevent Telegram Anti-Spam FloodWait
-                    await asyncio.sleep(random.uniform(0.1, 0.5))
+                    await asyncio.sleep(random.uniform(0.02, 0.08))
                     
                     # LIVE ROUND-ROBIN (Bot First)
                     available_clients = []
@@ -106,7 +109,8 @@ class TransferDispatcher:
                     if not available_clients:
                         raise ConnectionError("No connected clients available for transfer.")
                         
-                    client = available_clients[(part_num - 1) % len(available_clients)]
+                    rr_idx = next(TransferDispatcher._upload_rr_counter)
+                    client = available_clients[rr_idx % len(available_clients)]
                     client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
                     
                     target_upload_group_id = shared_state.active_telegram_group_id or group_id

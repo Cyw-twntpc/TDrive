@@ -38,7 +38,6 @@ class UploadStrategy(TransferStrategy):
             return
 
         self.context.db.sync_manager.set_busy(True)
-        setup_done = False
         
         try:
             loop = asyncio.get_running_loop()
@@ -65,12 +64,12 @@ class UploadStrategy(TransferStrategy):
                     self._upload_single_file(
                         client, task_id, task_id, 
                         file_path, parent_id,
-                        progress_callback
+                        progress_callback,
+                        known_total_size=total_size,
+                        known_file_details=meta,
+                        is_new_task=True
                     )
                 )
-                
-            self.context.db.sync_manager.set_busy(False)
-            setup_done = True
                 
             await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
@@ -78,8 +77,8 @@ class UploadStrategy(TransferStrategy):
                 await self._finalize_thumbnails(client, item['task_id'])
         
         finally:
-            if not setup_done:
-                self.context.db.sync_manager.set_busy(False)
+            # Release sync_manager only after the whole batch finishes to avoid mid-upload snapshots
+            self.context.db.sync_manager.set_busy(False)
             self.context._trigger_folder_refresh([parent_id])
 
     async def upload_folder_recursive(self, parent_id: int, local_folder_path: str, main_task_id: str, progress_callback: Callable):
@@ -88,7 +87,6 @@ class UploadStrategy(TransferStrategy):
         self.context.shared_state.active_tasks[main_task_id] = asyncio.current_task()
         
         self.context.db.sync_manager.set_busy(True)
-        setup_done = False
 
         try:
             loop = asyncio.get_running_loop()
@@ -168,35 +166,48 @@ class UploadStrategy(TransferStrategy):
 
                 self.context._trigger_folder_refresh([parent_id, -1])
 
+                valid_files = []
+                for file_path, f_size in file_list:
+                    file_dir = self.context._normalize_path(os.path.dirname(file_path)).lower()
+                    target_parent_id = path_to_remote_id.get(file_dir)
+                    if target_parent_id:
+                        valid_files.append((file_path, f_size, target_parent_id))
+                    else:
+                        logger.warning(f"[TaskGen] Skipping file {file_path} because parent folder ID not found.")
+
+                metas = await asyncio.gather(
+                    *(loop.run_in_executor(None, extract_metadata, fp) for fp, _, _ in valid_files)
+                ) if valid_files else []
+
+                base_concurrency = getattr(self.context, "concurrency_limit", 3)
+                effective_base = base_concurrency if isinstance(base_concurrency, int) and base_concurrency > 0 else 3
+                small_file_sem = asyncio.Semaphore(max(effective_base * 4, 12))
+
                 child_tasks_map = {}
                 tasks_to_run = []
                 real_total_size = 0
-                
-                for file_path, f_size in file_list:
+
+                for (file_path, f_size, target_parent_id), meta in zip(valid_files, metas):
                     sub_task_id = str(uuid.uuid4())
-                    file_dir = self.context._normalize_path(os.path.dirname(file_path)).lower() 
-                    target_parent_id = path_to_remote_id.get(file_dir)
-                    
-                    if target_parent_id:
-                        real_total_size += f_size
-                        meta = await loop.run_in_executor(None, extract_metadata, file_path)
-                        child_tasks_map[sub_task_id] = {
-                            "file_path": file_path,
-                            "parent_id": target_parent_id,
-                            "total_size": f_size,
-                            "file_details": meta,
-                            "status": "queued"
-                        }
-                        
-                        tasks_to_run.append(
-                            self._upload_single_file(
-                                client, main_task_id, sub_task_id,
-                                file_path, target_parent_id,
-                                progress_callback
-                            )
+                    real_total_size += f_size
+                    child_tasks_map[sub_task_id] = {
+                        "file_path": file_path,
+                        "parent_id": target_parent_id,
+                        "total_size": f_size,
+                        "file_details": meta,
+                        "status": "queued"
+                    }
+                    tasks_to_run.append(
+                        self._upload_single_file(
+                            client, main_task_id, sub_task_id,
+                            file_path, target_parent_id,
+                            progress_callback,
+                            known_total_size=f_size,
+                            known_file_details=meta,
+                            is_new_task=True,
+                            semaphore_override=small_file_sem if f_size <= fp.CHUNK_SIZE else None
                         )
-                    else:
-                        logger.warning(f"[TaskGen] Skipping file {file_path} because parent folder ID not found.")
+                    )
 
                 if real_total_size != total_size:
                     await self.context.controller.update_task_total_size_async(main_task_id, real_total_size)
@@ -206,9 +217,6 @@ class UploadStrategy(TransferStrategy):
                 await self.context.controller.add_child_tasks_bulk_async(main_task_id, child_tasks_map)
 
                 progress_callback(main_task_id, base_folder_name, -1, total_size, 'transferring', 0)
-                
-                self.context.db.sync_manager.set_busy(False)
-                setup_done = True
                 
                 results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
                 
@@ -239,39 +247,24 @@ class UploadStrategy(TransferStrategy):
             if main_task_id in self.context.shared_state.active_tasks:
                 del self.context.shared_state.active_tasks[main_task_id]
             self.context._active_sub_tasks.pop(main_task_id, None)
-            if not setup_done:
-                self.context.db.sync_manager.set_busy(False)
+            # Release sync_manager only after the folder upload completes to avoid mid-upload DB snapshots
+            self.context.db.sync_manager.set_busy(False)
 
     async def _upload_single_file(self, client, main_task_id: str, sub_task_id: str,
                                   file_path: str, parent_id: int, 
                                   progress_callback: Callable,
-                                  resume_context: List = None, pre_calculated_hash: str = None):
+                                  resume_context: List = None, pre_calculated_hash: str = None,
+                                  known_total_size: int = None,
+                                  known_file_details: Dict[str, Any] = None,
+                                  is_new_task: bool = False,
+                                  semaphore_override: asyncio.Semaphore = None):
         file_name = os.path.basename(file_path)
         
         def chunk_cb(part_num, msg_id, part_hash):
             loop = asyncio.get_running_loop()
             loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num, [msg_id, part_hash])
 
-        last_uploaded = 0
-        try:
-            task_info = await self.context.controller.get_task_async(main_task_id)
-            sub_status = None
-            if task_info:
-                if task_info.get('is_folder'):
-                    child = task_info.get('child_tasks', {}).get(sub_task_id)
-                    if child: sub_status = child.get('status')
-                elif main_task_id == sub_task_id:
-                    sub_status = task_info.get('status')
-
-            if sub_status == 'completed':
-                try:
-                    last_uploaded = await asyncio.get_running_loop().run_in_executor(None, os.path.getsize, file_path)
-                except OSError:
-                    last_uploaded = 0
-            elif resume_context:
-                last_uploaded = len(resume_context) * fp.CHUNK_SIZE
-        except Exception as e:
-            logger.warning(f"Error initializing upload progress for {sub_task_id}: {e}")
+        last_uploaded = len(resume_context) * fp.CHUNK_SIZE if resume_context else 0
 
         last_update_time = time.time()
 
@@ -298,10 +291,29 @@ class UploadStrategy(TransferStrategy):
         if curr_task is not None:
             curr_task._tdrive_main_task_id = main_task_id
         loop = asyncio.get_running_loop()
-        async with self.context._semaphore:
+        active_sem = semaphore_override or self.context._semaphore
+        async with active_sem:
             main_status = await loop.run_in_executor(None, self.context.controller.queue_repo.get_main_task_status, main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
                 return
+
+            if not is_new_task and not resume_context:
+                try:
+                    task_info = await self.context.controller.get_task_async(main_task_id)
+                    sub_status = None
+                    if task_info:
+                        if task_info.get('is_folder'):
+                            child = task_info.get('child_tasks', {}).get(sub_task_id)
+                            if child:
+                                sub_status = child.get('status')
+                        elif main_task_id == sub_task_id:
+                            sub_status = task_info.get('status')
+                    if sub_status == 'completed':
+                        last_uploaded = await loop.run_in_executor(None, os.path.getsize, file_path)
+                except OSError:
+                    last_uploaded = 0
+                except Exception as e:
+                    logger.warning(f"Error initializing upload progress for {sub_task_id}: {e}")
 
             try:
                 current_task = asyncio.current_task()
@@ -312,9 +324,13 @@ class UploadStrategy(TransferStrategy):
                     raise FileNotFoundError(f"File not found: {file_path}")
 
                 await loop.run_in_executor(None, self.context.controller.queue_repo.update_sub_task_status, sub_task_id, "transferring")
-                self.context._trigger_folder_refresh([parent_id])
+                if main_task_id == sub_task_id:
+                    self.context._trigger_folder_refresh([parent_id])
 
-                total_size = await loop.run_in_executor(None, os.path.getsize, file_path)
+                if known_total_size is not None and known_total_size > 0:
+                    total_size = known_total_size
+                else:
+                    total_size = await loop.run_in_executor(None, os.path.getsize, file_path)
 
                 original_file_hash = pre_calculated_hash
                 split_files_info = resume_context or []
@@ -403,12 +419,13 @@ class UploadStrategy(TransferStrategy):
                         await self.context.controller.set_preview_msg_id_async(sub_task_id, preview_msg_id)
 
                 from core_app.application.transfer.dispatcher import TransferDispatcher
-                
+
+                skip_chunk_db_cb = is_new_task and main_task_id != sub_task_id and total_size <= fp.CHUNK_SIZE
                 split_files_info = await TransferDispatcher.dispatch_upload(
                     self.context.shared_state, self.context.shared_state.group_id, file_path, original_file_hash, 
                     progress_callback=ui_cb, 
                     resume_context=split_files_info,
-                    chunk_callback=chunk_cb
+                    chunk_callback=None if skip_chunk_db_cb else chunk_cb
                 )
 
                 if doc_preview_task:
@@ -462,15 +479,18 @@ class UploadStrategy(TransferStrategy):
 
                 await self.context.controller.mark_sub_task_completed_async(main_task_id, sub_task_id)
 
-                task_data = await self.context.controller.get_task_async(main_task_id)
-                file_details = None
-                if task_data:
-                    if task_data.get('is_folder'):
-                        child = task_data.get('child_tasks', {}).get(sub_task_id)
-                        if child:
-                            file_details = child.get('file_details')
-                    elif main_task_id == sub_task_id:
-                        file_details = task_data.get('file_details')
+                if known_file_details is not None or is_new_task:
+                    file_details = known_file_details
+                else:
+                    task_data = await self.context.controller.get_task_async(main_task_id)
+                    file_details = None
+                    if task_data:
+                        if task_data.get('is_folder'):
+                            child = task_data.get('child_tasks', {}).get(sub_task_id)
+                            if child:
+                                file_details = child.get('file_details')
+                        elif main_task_id == sub_task_id:
+                            file_details = task_data.get('file_details')
 
                 await self.context.metadata_manager.process_file_transfer(
                     client, self.context.shared_state.api_id,

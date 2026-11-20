@@ -5,6 +5,7 @@ import base64
 import logging
 import asyncio
 import io
+import itertools
 import os
 import time
 import sqlite3
@@ -30,6 +31,8 @@ class MetadataManager:
     Manages the lifecycle of the in-memory database and Cloud Map Files.
     Acts as a high-level facade for DB operations involving cloud data.
     """
+
+    _map_rr_counter = itertools.count()
     
     def __init__(self, db_handler: DatabaseConnection, shared_state: 'SharedState'):
         self.db = db_handler
@@ -410,15 +413,24 @@ class MetadataManager:
             
             b64_encoded = base64.b64encode(encrypted).decode('utf-8')
             text_payload = f"TDM:{b64_encoded}"
+
+            available_bots = [
+                b for b in (getattr(self.shared_state, 'clients_pool', None) or [])
+                if b and b.is_connected()
+            ] if hasattr(self, 'shared_state') and self.shared_state else []
+            send_client = (
+                available_bots[next(MetadataManager._map_rr_counter) % len(available_bots)]
+                if available_bots else client
+            )
             
             if len(text_payload) < 4000:
-                msg = await client.send_message(group_id, text_payload)
+                msg = await send_client.send_message(group_id, text_payload)
             else:
                 legacy_compressed = gzip.compress(json_str.encode('utf-8'))
                 legacy_encrypted = cr.encrypt(legacy_compressed, key)
                 f = io.BytesIO(legacy_encrypted)
                 f.name = "map.bin"
-                msg = await client.send_file(group_id, file=f, force_document=True)
+                msg = await send_client.send_file(group_id, file=f, force_document=True)
             
             # Determine active group index for bit-packing
             active_g_idx = 1

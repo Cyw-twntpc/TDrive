@@ -170,6 +170,10 @@ class TransferController:
         self.queue_repo.update_sub_task_status(sub_task_id, "transferring")
 
     def mark_sub_task_completed(self, main_task_id: str, sub_task_id: str):
+        if isinstance(self.queue_repo, QueueRepository):
+            self.queue_repo.complete_sub_task(main_task_id, sub_task_id, time.time())
+            return
+
         self.queue_repo.update_sub_task_status(sub_task_id, "completed")
         
         if main_task_id == sub_task_id:
