@@ -151,171 +151,22 @@ const FileListHandler = {
     },
 
     setupSelection(containerEl, onUpdate) {
-        let isDragging = false;
-        let startX = 0, startY = 0;
-        let autoScrollFrameId = null;
-        let lastClientX = 0, lastClientY = 0;
-
-        const updateSelectionBox = (clientX, clientY) => {
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.file-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            const viewTop = rect.top + headerHeight;
-            
-            const clampedX = Math.max(rect.left, Math.min(rect.right, clientX));
-            const clampedY = Math.max(viewTop, Math.min(rect.bottom, clientY));
-
-            const currentContentX = clampedX - rect.left;
-            const currentContentY = clampedY - rect.top + containerEl.scrollTop;
-
-            const newLeft = Math.min(startX, currentContentX);
-            const newTop = Math.min(startY, currentContentY);
-            const newWidth = Math.abs(startX - currentContentX);
-            const newHeight = Math.abs(startY - currentContentY);
-
-            Object.assign(FileListView.selectionBox.style, { 
-                left: `${newLeft}px`, 
-                top: `${newTop}px`, 
-                width: `${newWidth}px`, 
-                height: `${newHeight}px` 
-            });
-
-            const boxRect = FileListView.selectionBox.getBoundingClientRect();
-            const itemLookup = new Map();
-            (AppState.currentFolderContents.folders || []).forEach(f => itemLookup.set(`folder:${f.id}`, f));
-            (AppState.currentFolderContents.files || []).forEach(f => itemLookup.set(`file:${f.id}`, f));
-            const selectedKeySet = new Set(AppState.selectedItems.map(i => `${i.type}:${i.id}`));
-            const ctrlHeld = Boolean(window.event?.ctrlKey);
-
-            // Batch geometry reads before mutating classes to prevent layout thrashing
-            const measurements = [];
-            document.querySelectorAll('.file-item:not(.is-uploading)').forEach(itemEl => {
-                const itemRect = itemEl.getBoundingClientRect();
-                const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                measurements.push({
-                    itemEl,
-                    intersects,
-                    itemId: parseFloat(itemEl.dataset.id),
-                    itemType: itemEl.dataset.type,
-                });
-            });
-
-            let removedAny = false;
-            measurements.forEach(({ itemEl, intersects, itemId, itemType }) => {
-                const key = `${itemType}:${itemId}`;
-                const isSelected = selectedKeySet.has(key);
-
-                if (intersects) {
-                    if (!isSelected) {
-                        itemEl.classList.add('selected');
-                        const itemData = itemLookup.get(key);
-                        if (itemData) {
-                            AppState.selectedItems.push({ ...itemData, type: itemType });
-                            selectedKeySet.add(key);
-                        }
-                    }
-                } else if (!ctrlHeld && isSelected) {
-                    itemEl.classList.remove('selected');
-                    selectedKeySet.delete(key);
-                    removedAny = true;
-                }
-            });
-
-            if (removedAny) {
-                const retained = AppState.selectedItems.filter(i => selectedKeySet.has(`${i.type}:${i.id}`));
-                AppState.selectedItems.splice(0, AppState.selectedItems.length, ...retained);
-            }
-            if (onUpdate) onUpdate(AppState);
-        };
-
-        const autoScrollLoop = () => {
-            if (!isDragging) return;
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.file-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            const viewTop = rect.top + headerHeight;
-            let scrolled = false;
-
-            const BASE_SPEED = 2;
-            const MAX_SPEED = 30;
-            const SENSITIVITY = 0.4;
-
-            if (lastClientY < viewTop) {
-                if (containerEl.scrollTop > 0) {
-                    const dist = viewTop - lastClientY;
-                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
-                    containerEl.scrollTop -= speed;
-                    scrolled = true;
-                }
-            } else if (lastClientY > rect.bottom) {
-                const maxScroll = containerEl.scrollHeight - containerEl.clientHeight;
-                if (containerEl.scrollTop < maxScroll) {
-                    const dist = lastClientY - rect.bottom;
-                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
-                    containerEl.scrollTop += speed;
-                    scrolled = true;
-                }
-            }
-
-            if (scrolled) updateSelectionBox(lastClientX, lastClientY);
-            autoScrollFrameId = requestAnimationFrame(autoScrollLoop);
-        };
-
-        containerEl.addEventListener('mousedown', e => {
-            const clickedItem = e.target.closest('.file-item');
-            if (clickedItem && clickedItem.classList.contains('selected')) return;
-            if (e.target.closest('button') || e.target.closest('a')) return;
-
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.file-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            if (e.clientY < rect.top + headerHeight) return;
-
-            containerEl.classList.add('is-selecting');
-            isDragging = false; 
-            startX = e.clientX - rect.left; 
-            startY = e.clientY - rect.top + containerEl.scrollTop;
-            
-            Object.assign(FileListView.selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
-
-            if (!clickedItem && !e.ctrlKey) {
-                 document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                 AppState.selectedItems.length = 0;
-                 if (onUpdate) onUpdate(AppState);
-            }
-
-            const onMouseMove = (moveE) => {
-                lastClientX = moveE.clientX;
-                lastClientY = moveE.clientY;
-
-                if (!isDragging) {
-                     if (Math.abs(moveE.clientX - e.clientX) < 5 && Math.abs(moveE.clientY - e.clientY) < 5) return;
-                     isDragging = true;
-                     moveE.preventDefault();
-                     if (!e.ctrlKey) {
-                         document.querySelectorAll('.file-item.selected').forEach(el => el.classList.remove('selected'));
-                         AppState.selectedItems.length = 0;
-                     }
-                     if (!autoScrollFrameId) autoScrollLoop();
-                }
-                updateSelectionBox(moveE.clientX, moveE.clientY);
-            };
-
-            const onMouseUp = () => {
-                containerEl.classList.remove('is-selecting');
-                isDragging = false; 
-                FileListView.selectionBox.style.display = 'none';
-                if (autoScrollFrameId) {
-                    cancelAnimationFrame(autoScrollFrameId);
-                    autoScrollFrameId = null;
-                }
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-                if (onUpdate) onUpdate(AppState);
-            };
-            
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+        SelectionManager.bind({
+            containerEl,
+            getSelectionBox: () => FileListView.selectionBox,
+            headerSelector: '.file-list-header',
+            itemSelector: '.file-item',
+            selectableSelector: '.file-item:not(.is-uploading)',
+            ignoreSelector: 'button, a',
+            getScopeRoot: () => document,
+            buildItemLookup: () => {
+                const itemLookup = new Map();
+                (AppState.currentFolderContents.folders || []).forEach(f => itemLookup.set(`folder:${f.id}`, f));
+                (AppState.currentFolderContents.files || []).forEach(f => itemLookup.set(`file:${f.id}`, f));
+                return itemLookup;
+            },
+            toSelectedEntry: (itemData, itemType) => ({ ...itemData, type: itemType }),
+            onUpdate,
         });
     },
 

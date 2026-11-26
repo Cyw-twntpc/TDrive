@@ -81,11 +81,11 @@ const TrashView = {
 
         el.querySelector('.restore-btn').addEventListener('click', (e) => {
             e.stopPropagation();
-            TrashModel.restoreItem(item);
+            TrashHandler.restoreItem(item);
         });
         el.querySelector('.delete-btn').addEventListener('click', (e) => {
             e.stopPropagation();
-            TrashModel.deleteItemPermanently(item);
+            TrashHandler.deleteItemPermanently(item);
         });
 
         TrashHandler._addSelectionListener(el, item);

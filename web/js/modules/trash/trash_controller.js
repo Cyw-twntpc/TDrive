@@ -7,6 +7,54 @@ const TrashHandler = {
         TrashHandler.setupBulkActions();
     },
 
+    /** Restore a single trashed item and reload the trash list. */
+    async restoreItem(item) {
+        UIManager.startProgress();
+        UIManager.setInteractionLock(true);
+        try {
+            const result = await ApiService.restoreItems([{ id: item.id, type: item.type }]);
+            if (result.success) {
+                TrashHandler.loadTrashItems();
+            } else {
+                UIManager.handleBackendError(result);
+            }
+        } catch (e) {
+            console.error(e);
+            UIManager.handleBackendError({ message: window.t('dialog.restore_failed') });
+        } finally {
+            UIManager.stopProgress();
+            UIManager.setInteractionLock(false);
+        }
+    },
+
+    /** Permanently delete a single trashed item after user confirmation. */
+    async deleteItemPermanently(item) {
+        const confirmed = await UIModals.showConfirm(
+            window.t('trash.btn_delete'),
+            window.t('trash.confirm_delete_single').replace('{name}', item.name),
+            'btn-danger'
+        );
+
+        if (!confirmed) return;
+
+        UIManager.startProgress();
+        UIManager.setInteractionLock(true);
+        try {
+            const result = await ApiService.deleteItemsPermanently([{ id: item.id, type: item.type }]);
+            if (result.success) {
+                TrashHandler.loadTrashItems();
+            } else {
+                UIManager.handleBackendError(result);
+            }
+        } catch (e) {
+            console.error(e);
+            UIManager.handleBackendError({ message: window.t('dialog.delete_failed') });
+        } finally {
+            UIManager.stopProgress();
+            UIManager.setInteractionLock(false);
+        }
+    },
+
     setupBulkActions() {
         TrashView.restoreBtn.addEventListener('click', async () => {
             const count = AppState.selectedItems.length;
@@ -271,171 +319,21 @@ const TrashHandler = {
     },
 
     setupSelection() {
-        const containerEl = TrashView.section;
-        let isDragging = false;
-        let startX = 0, startY = 0;
-        let autoScrollFrameId = null;
-        let lastClientX = 0, lastClientY = 0;
-
-        const updateSelectionBox = (clientX, clientY) => {
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.trash-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            const viewTop = rect.top + headerHeight;
-            
-            const clampedX = Math.max(rect.left, Math.min(rect.right, clientX));
-            const clampedY = Math.max(viewTop, Math.min(rect.bottom, clientY));
-
-            const currentContentX = clampedX - rect.left;
-            const currentContentY = clampedY - rect.top + containerEl.scrollTop;
-
-            const newLeft = Math.min(startX, currentContentX);
-            const newTop = Math.min(startY, currentContentY);
-            const newWidth = Math.abs(startX - currentContentX);
-            const newHeight = Math.abs(startY - currentContentY);
-
-            Object.assign(TrashView.selectionBox.style, { 
-                left: `${newLeft}px`, 
-                top: `${newTop}px`, 
-                width: `${newWidth}px`, 
-                height: `${newHeight}px` 
-            });
-
-            const boxRect = TrashView.selectionBox.getBoundingClientRect();
-            const trashLookup = new Map();
-            (AppState.trashItems || []).forEach(i => trashLookup.set(`${i.type}:${i.id}`, i));
-            const selectedKeySet = new Set(AppState.selectedItems.map(i => `${i.type}:${i.id}`));
-            const ctrlHeld = Boolean(window.event?.ctrlKey);
-
-            // Batch geometry reads before mutating classes to prevent layout thrashing
-            const measurements = [];
-            TrashView.listBody.querySelectorAll('.trash-item').forEach(itemEl => {
-                const itemRect = itemEl.getBoundingClientRect();
-                const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                measurements.push({
-                    itemEl,
-                    intersects,
-                    itemId: parseFloat(itemEl.dataset.id),
-                    itemType: itemEl.dataset.type,
-                });
-            });
-
-            let removedAny = false;
-            measurements.forEach(({ itemEl, intersects, itemId, itemType }) => {
-                const key = `${itemType}:${itemId}`;
-                const isSelected = selectedKeySet.has(key);
-
-                if (intersects) {
-                    if (!isSelected) {
-                        itemEl.classList.add('selected');
-                        const itemData = trashLookup.get(key);
-                        if (itemData) {
-                            AppState.selectedItems.push(itemData);
-                            selectedKeySet.add(key);
-                        }
-                    }
-                } else if (!ctrlHeld && isSelected) {
-                    itemEl.classList.remove('selected');
-                    selectedKeySet.delete(key);
-                    removedAny = true;
-                }
-            });
-
-            if (removedAny) {
-                const retained = AppState.selectedItems.filter(i => selectedKeySet.has(`${i.type}:${i.id}`));
-                AppState.selectedItems.splice(0, AppState.selectedItems.length, ...retained);
-            }
-            TrashView.updateBulkActionState();
-        };
-
-        const autoScrollLoop = () => {
-            if (!isDragging) return;
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.trash-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            const viewTop = rect.top + headerHeight;
-            let scrolled = false;
-
-            const BASE_SPEED = 2;
-            const MAX_SPEED = 30;
-            const SENSITIVITY = 0.4;
-
-            if (lastClientY < viewTop) {
-                if (containerEl.scrollTop > 0) {
-                    const dist = viewTop - lastClientY;
-                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
-                    containerEl.scrollTop -= speed;
-                    scrolled = true;
-                }
-            } else if (lastClientY > rect.bottom) {
-                const maxScroll = containerEl.scrollHeight - containerEl.clientHeight;
-                if (containerEl.scrollTop < maxScroll) {
-                    const dist = lastClientY - rect.bottom;
-                    const speed = Math.min(MAX_SPEED, BASE_SPEED + (dist * SENSITIVITY));
-                    containerEl.scrollTop += speed;
-                    scrolled = true;
-                }
-            }
-
-            if (scrolled) updateSelectionBox(lastClientX, lastClientY);
-            autoScrollFrameId = requestAnimationFrame(autoScrollLoop);
-        };
-
-        containerEl.addEventListener('mousedown', e => {
-            const clickedItem = e.target.closest('.trash-item');
-            if (clickedItem && clickedItem.classList.contains('selected')) return;
-            if (e.target.closest('.trash-action-btn')) return;
-
-            const rect = containerEl.getBoundingClientRect();
-            const headerEl = containerEl.querySelector('.trash-list-header');
-            const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-            if (e.clientY < rect.top + headerHeight) return;
-
-            containerEl.classList.add('is-selecting');
-            isDragging = false; 
-            startX = e.clientX - rect.left; 
-            startY = e.clientY - rect.top + containerEl.scrollTop;
-            
-            Object.assign(TrashView.selectionBox.style, { left: `${startX}px`, top: `${startY}px`, width: '0px', height: '0px', display: 'block' });
-
-            if (!clickedItem && !e.ctrlKey) {
-                TrashView.listBody.querySelectorAll('.trash-item.selected').forEach(el => el.classList.remove('selected'));
-                AppState.selectedItems.length = 0;
-                TrashView.updateBulkActionState();
-            }
-
-            const onMouseMove = (moveE) => {
-                lastClientX = moveE.clientX;
-                lastClientY = moveE.clientY;
-
-                if (!isDragging) {
-                     if (Math.abs(moveE.clientX - e.clientX) < 5 && Math.abs(moveE.clientY - e.clientY) < 5) return;
-                     isDragging = true;
-                     moveE.preventDefault();
-                     if (!e.ctrlKey) {
-                         TrashView.listBody.querySelectorAll('.trash-item.selected').forEach(el => el.classList.remove('selected'));
-                         AppState.selectedItems.length = 0;
-                     }
-                     if (!autoScrollFrameId) autoScrollLoop();
-                }
-                updateSelectionBox(moveE.clientX, moveE.clientY);
-            };
-
-            const onMouseUp = () => {
-                containerEl.classList.remove('is-selecting');
-                isDragging = false; 
-                TrashView.selectionBox.style.display = 'none';
-                if (autoScrollFrameId) {
-                    cancelAnimationFrame(autoScrollFrameId);
-                    autoScrollFrameId = null;
-                }
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-                TrashView.updateBulkActionState();
-            };
-            
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+        SelectionManager.bind({
+            containerEl: TrashView.section,
+            getSelectionBox: () => TrashView.selectionBox,
+            headerSelector: '.trash-list-header',
+            itemSelector: '.trash-item',
+            selectableSelector: '.trash-item',
+            ignoreSelector: '.trash-action-btn',
+            getScopeRoot: () => TrashView.listBody,
+            buildItemLookup: () => {
+                const trashLookup = new Map();
+                (AppState.trashItems || []).forEach(i => trashLookup.set(`${i.type}:${i.id}`, i));
+                return trashLookup;
+            },
+            toSelectedEntry: (itemData) => itemData,
+            onUpdate: () => TrashView.updateBulkActionState(),
         });
     },
 

@@ -166,7 +166,7 @@ const FileTreeView = {
             const ul = document.createElement('ul');
             
             // Initial Expansion Check: Verify if this folder is in the expandedFolders state
-            const isExpanded = FileTreeModel._isFolderExpanded(folder.id);
+            const isExpanded = FileTreeHandler._isFolderExpanded(folder.id);
             const wasExpanded = previouslyExpanded.has(folder.id);
 
             // Determine if we should show it expanded

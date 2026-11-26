@@ -1,4 +1,22 @@
 const FileTreeHandler = {
+    expandedFolders: {},
+
+    /** Locate a folder's expansion-state subtree via breadth-first traversal. */
+    _findStateNode(id) {
+        if (FileTreeHandler.expandedFolders[id]) return FileTreeHandler.expandedFolders[id];
+        const queue = Object.values(FileTreeHandler.expandedFolders);
+        while (queue.length > 0) {
+            const current = queue.shift();
+            if (current[id]) return current[id];
+            Object.values(current).forEach(child => queue.push(child));
+        }
+        return null;
+    },
+
+    /** Return true if the given folder ID is currently marked expanded. */
+    _isFolderExpanded(id) {
+        return Boolean(FileTreeHandler._findStateNode(id));
+    },
 
     render(AppState, navigateTo) {
         // 1. Capture currently expanded folder IDs to maintain state across renders
@@ -31,8 +49,8 @@ const FileTreeHandler = {
     
         if (rootFolder) {
             // Ensure root is always expanded in the state
-            if (!FileTreeModel.expandedFolders[rootFolder.id]) {
-                FileTreeModel.expandedFolders[rootFolder.id] = {};
+            if (!FileTreeHandler.expandedFolders[rootFolder.id]) {
+                FileTreeHandler.expandedFolders[rootFolder.id] = {};
             }
 
             // 2. Pass the ancestor set down the recursive build process.
@@ -72,9 +90,9 @@ const FileTreeHandler = {
         }
 
         if (parentId === null) {
-            if (!FileTreeModel.expandedFolders[id]) FileTreeModel.expandedFolders[id] = {};
+            if (!FileTreeHandler.expandedFolders[id]) FileTreeHandler.expandedFolders[id] = {};
         } else {
-            const parentNode = FileTreeModel._findStateNode(parentId);
+            const parentNode = FileTreeHandler._findStateNode(parentId);
             if (parentNode) {
                 if (!parentNode[id]) parentNode[id] = {};
             }
@@ -101,7 +119,7 @@ const FileTreeHandler = {
         if (parentId === null) {
             // Root
         } else {
-            const parentNode = FileTreeModel._findStateNode(parentId);
+            const parentNode = FileTreeHandler._findStateNode(parentId);
             if (parentNode && parentNode[id]) {
                 delete parentNode[id];
             }
@@ -132,12 +150,12 @@ const FileTreeHandler = {
             });
         };
 
-        if (FileTreeModel.expandedFolders[rootId]) {
-            traverseAndCompare(FileTreeModel.expandedFolders[rootId], 1); 
+        if (FileTreeHandler.expandedFolders[rootId]) {
+            traverseAndCompare(FileTreeHandler.expandedFolders[rootId], 1); 
         }
 
         // 2. Identify folders to open based on the target path
-        let currentLevel = FileTreeModel.expandedFolders;
+        let currentLevel = FileTreeHandler.expandedFolders;
         for (let i = 0; i < targetPathIds.length; i++) {
             const id = targetPathIds[i];
             if (currentLevel[id]) {

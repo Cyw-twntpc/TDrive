@@ -10,6 +10,14 @@ const FileListView = {
     ftDetailsBtn: document.getElementById('ft-details-btn'),
     ftTrashBtn: document.getElementById('ft-trash-btn'),
     ftAddPlaylistBtn: document.getElementById('ft-add-playlist-btn'),
+    _renderState: {
+        list: [],
+        index: 0,
+        chunkSize: 50,
+        observer: null,
+        appState: null,
+        isGrid: false,
+    },
 
     PREVIEW_EXTENSIONS: {
         image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
@@ -190,9 +198,9 @@ const FileListView = {
         }
 
         // Clean up previous observer
-        if (FileListModel._renderState.observer) {
-            FileListModel._renderState.observer.disconnect();
-            FileListModel._renderState.observer = null;
+        if (FileListView._renderState.observer) {
+            FileListView._renderState.observer.disconnect();
+            FileListView._renderState.observer = null;
         }
 
         // Prepare render list
@@ -200,10 +208,10 @@ const FileListView = {
         contents.folders.forEach(f => renderList.push({ item: f, isFolder: true }));
         contents.files.forEach(f => renderList.push({ item: f, isFolder: false }));
 
-        FileListModel._renderState.list = renderList;
-        FileListModel._renderState.index = 0;
-        FileListModel._renderState.appState = AppState;
-        FileListModel._renderState.isGrid = isGrid;
+        FileListView._renderState.list = renderList;
+        FileListView._renderState.index = 0;
+        FileListView._renderState.appState = AppState;
+        FileListView._renderState.isGrid = isGrid;
 
         FileListView._renderNextChunk();
 
@@ -213,7 +221,7 @@ const FileListView = {
     },
 
     _renderNextChunk() {
-        const state = FileListModel._renderState;
+        const state = FileListView._renderState;
         if (state.index >= state.list.length) return;
 
         const fragment = document.createDocumentFragment();
