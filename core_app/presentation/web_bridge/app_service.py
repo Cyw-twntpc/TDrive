@@ -3,6 +3,7 @@ import asyncio
 import time
 from typing import Dict, Any, List, Callable
 
+from core_app.core.errors import ErrorCode
 from core_app.core.shared_state import SharedState
 from core_app.infrastructure.database.main_db.database import DatabaseConnection
 from core_app.infrastructure.database.main_db.repositories.file_repository import FileRepository
@@ -60,7 +61,10 @@ class TDriveService:
         self.video_player = VideoStreamer(self.buffer, self.db_handler)
         self.audio_player = AudioPlayerManager()
         self._audio_play_seq: int = 0
-        self.playlist_manager = PlaylistManager(db_handler=self.db_handler)
+        self.playlist_manager = PlaylistManager(
+            db_handler=self.db_handler,
+            account_scope_getter=lambda: getattr(self._shared_state, "api_id", None),
+        )
 
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
@@ -302,7 +306,7 @@ class TDriveService:
                 logger.warning("Timed out waiting for background tasks to cancel during shutdown.")
 
         if getattr(self, "audio_player", None):
-            self.audio_player.cleanup()
+            await asyncio.to_thread(self.audio_player.cleanup)
 
         if getattr(self, "video_player", None):
             await self.video_player.stop()
@@ -366,7 +370,10 @@ class TDriveService:
         if getattr(self, "audio_player", None):
             state = self.audio_player.get_state().get("state")
             if state in ("playing", "buffering"):
-                self.audio_player.control("pause")
+                if hasattr(self.audio_player, "dispatch_control"):
+                    self.audio_player.dispatch_control("pause", 0)
+                else:
+                    self.audio_player.control("pause")
 
         # Ensure proxy is running
         if not self.video_player.runner:
@@ -384,9 +391,18 @@ class TDriveService:
         return {"success": True, "stream_url": url, "file_name": file_name}
 
     async def play_audio(self, file_id: int) -> Dict[str, Any]:
-        """Start streaming proxy if needed and begin headless VLC audio playback."""
+        """Start streaming proxy if needed and begin headless VLC audio playback on its worker."""
         self._audio_play_seq += 1
         req_seq = self._audio_play_seq
+
+        loop = asyncio.get_running_loop()
+        file_info = await loop.run_in_executor(
+            None,
+            lambda: FileRepository(self.db_handler).get_active_stream_file_info(file_id),
+        )
+        if not file_info or int(file_info.get("size") or 0) <= 0:
+            logger.warning("Audio track not found or in trash for file_id=%s", file_id)
+            return {"success": False, "error_code": ErrorCode.PATH_NOT_FOUND}
 
         if not self.video_player.runner:
             await self.video_player.start()
@@ -394,12 +410,9 @@ class TDriveService:
         url = self.video_player.get_stream_url(file_id)
         if not url:
             logger.error("Failed to generate audio stream URL for file_id=%s", file_id)
-            return {"success": False}
+            return {"success": False, "error_code": ErrorCode.INTERNAL_ERROR}
 
-        loop = asyncio.get_running_loop()
-        file_name = await loop.run_in_executor(
-            None, self._get_file_name_by_id, file_id, "Unknown Audio"
-        )
+        file_name = file_info.get("name") or "Unknown Audio"
         # Ignore stale async setup if a newer track or stop superseded this request.
         if req_seq != self._audio_play_seq:
             return {
@@ -411,7 +424,11 @@ class TDriveService:
                 "state": self.audio_player.get_state(),
             }
 
-        res = self.audio_player.play_url(file_id, url, file_name=file_name)
+        vlc_executor = getattr(self.audio_player, "vlc_executor", None)
+        res = await loop.run_in_executor(
+            vlc_executor,
+            lambda: self.audio_player.play_url(file_id, url, file_name=file_name),
+        )
         return {
             "success": bool(res.get("success")),
             "file_id": file_id,
@@ -421,31 +438,21 @@ class TDriveService:
         }
 
     def control_audio(self, action: str, value: int = 0) -> Dict[str, Any]:
-        """Dispatch synchronous audio transport/volume commands."""
+        """Dispatch non-blocking audio transport/volume commands."""
         if action == "stop":
             # Invalidate any in-flight play_audio request before stopping playback.
             self._audio_play_seq += 1
+        if hasattr(self.audio_player, "dispatch_control"):
+            return self.audio_player.dispatch_control(action, value)
         return self.audio_player.control(action, value)
 
     async def preload_audio(self, file_id: int) -> None:
-        """Warm the initial stream chunk in StreamBuffer for an upcoming track."""
+        """Warm the initial stream chunk in StreamBuffer for an upcoming active track."""
         try:
-            def _lookup():
-                conn = self.db_handler._get_conn()
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT f.id AS content_id, f.size, f.hash
-                    FROM file_folder_map m
-                    JOIN files f ON m.file_id = f.id
-                    WHERE m.id = ?
-                    """,
-                    (file_id,),
-                )
-                return cur.fetchone()
-
-            row = await asyncio.to_thread(_lookup)
-            if not row or not row["size"] or int(row["size"]) <= 0:
+            row = await asyncio.to_thread(
+                lambda: FileRepository(self.db_handler).get_active_stream_file_info(file_id)
+            )
+            if not row or not row.get("size") or int(row["size"]) <= 0:
                 return
             size = int(row["size"])
             await self.buffer.read(

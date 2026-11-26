@@ -1,10 +1,12 @@
+import copy
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from core_app.core.errors import ErrorCode
 from core_app.core.settings_manager import SettingsManager
@@ -22,6 +24,8 @@ class PlaylistManager:
         storage_dir: str = "file/user_data",
         filename: str = "playlists.json",
         db_handler=None,
+        account_scope: Any = None,
+        account_scope_getter: Optional[Callable[[], Any]] = None,
     ):
         if storage_dir in (
             "file/user_data",
@@ -34,40 +38,74 @@ class PlaylistManager:
             resolved_dir = os.path.abspath(storage_dir)
 
         self.storage_dir = resolved_dir
+        self._base_filename = filename
         self.playlists_file = os.path.join(self.storage_dir, filename)
         self._db_handler = db_handler
+        self._account_scope = account_scope
+        self._account_scope_getter = account_scope_getter
         self._lock = threading.RLock()
-        self._ensure_file_exists()
+        self._cache_sig: Optional[tuple[str, int, int]] = None
+        self._cached_data: Optional[dict[str, Any]] = None
+        self._ensure_file_exists(self._get_active_playlists_file())
 
     def _get_db(self):
         return self._db_handler or DatabaseConnection()
 
-    def _ensure_file_exists(self) -> None:
+    def _get_active_playlists_file(self) -> str:
+        """Resolve the JSON storage path scoped to the active account when available."""
+        raw_scope = self._account_scope_getter() if self._account_scope_getter is not None else self._account_scope
+        if raw_scope is None:
+            return self.playlists_file
+        scope_str = str(raw_scope).strip()
+        if not scope_str:
+            return self.playlists_file
+        sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", scope_str)
+        base, ext = os.path.splitext(self._base_filename)
+        return os.path.join(self.storage_dir, f"{base}_{sanitized}{ext or '.json'}")
+
+    def _ensure_file_exists(self, target_path: Optional[str] = None) -> None:
         """Create the local playlist storage file if it does not yet exist."""
         with self._lock:
+            resolved_path = target_path or self._get_active_playlists_file()
             os.makedirs(self.storage_dir, exist_ok=True)
-            if not os.path.exists(self.playlists_file):
-                self._write_data({"playlists": []})
+            if not os.path.exists(resolved_path):
+                self._write_data({"playlists": []}, target_path=resolved_path)
 
     def _read_data(self) -> dict[str, Any]:
         with self._lock:
-            self._ensure_file_exists()
+            target_path = self._get_active_playlists_file()
+            self._ensure_file_exists(target_path)
             try:
-                with open(self.playlists_file, "r", encoding="utf-8") as f:
+                st = os.stat(target_path)
+                sig = (target_path, st.st_mtime_ns, st.st_size)
+                if self._cache_sig == sig and self._cached_data is not None:
+                    return copy.deepcopy(self._cached_data)
+
+                with open(target_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and isinstance(data.get("playlists"), list):
-                    return data
+                    self._cache_sig = sig
+                    self._cached_data = copy.deepcopy(data)
+                    return copy.deepcopy(data)
             except Exception as exc:
-                logger.error("Failed to read playlists file %s: %s", self.playlists_file, exc)
+                logger.error("Failed to read playlists file %s: %s", target_path, exc)
             return {"playlists": []}
 
-    def _write_data(self, data: dict[str, Any]) -> None:
+    def _write_data(self, data: dict[str, Any], target_path: Optional[str] = None) -> None:
         with self._lock:
+            resolved_path = target_path or self._get_active_playlists_file()
             os.makedirs(self.storage_dir, exist_ok=True)
-            tmp_path = f"{self.playlists_file}.tmp"
+            tmp_path = f"{resolved_path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.playlists_file)
+            os.replace(tmp_path, resolved_path)
+            try:
+                st = os.stat(resolved_path)
+                self._cache_sig = (resolved_path, st.st_mtime_ns, st.st_size)
+                self._cached_data = copy.deepcopy(data)
+            except OSError:
+                self._cache_sig = None
+                self._cached_data = None
 
     @staticmethod
     def _summarize(playlist: dict[str, Any]) -> dict[str, Any]:
