@@ -56,30 +56,41 @@ class MetadataManager:
         if hasattr(self.db, 'sync_manager'):
              self.db.sync_manager.set_callback(self._trigger_background_sync, self.shared_state.loop)
 
-    async def _trigger_background_sync(self):
+    def reset_state(self) -> None:
+        """Clear cached cloud maps and snapshot pointers (used during logout isolation)."""
+        self._map_cache.clear()
+        self._last_snapshot_msg_id = None
+        self._last_snapshot_group_id = None
+        self._sync_pending = False
+
+    async def _trigger_background_sync(self) -> bool:
         """Callback for SyncManager to trigger DB upload, coalescing concurrent triggers."""
         if not self.shared_state.is_logged_in or not self.shared_state.client:
             logger.debug("Skipping background sync: Not logged in.")
-            return
+            return True
 
         if self._lock.locked():
             self._sync_pending = True
             logger.debug("Coalescing background sync: previous sync already in progress.")
-            return
+            return True
 
         try:
             while True:
                 self._sync_pending = False
                 logger.debug("Executing adaptive background sync...")
-                await self.sync_db_to_cloud(
+                ok = await self.sync_db_to_cloud(
                     self.shared_state.client,
                     self.shared_state.group_id,
                     self.shared_state.api_id
                 )
+                if ok is False:
+                    return False
                 if not self._sync_pending:
                     break
+            return True
         except Exception as e:
             logger.error(f"Background sync failed: {e}")
+            return False
 
     # --- Database Snapshot Management ---
 
@@ -129,13 +140,17 @@ class MetadataManager:
         elif isinstance(group_id, int):
             group_ids_to_search.append(group_id)
 
-        try:
-            discovered_groups = await telegram_comms.get_all_tdrive_groups(self.shared_state)
-            for idx, tg_id, _name in discovered_groups:
-                group_ids_to_search.append(tg_id)
-                self._record_group_mapping(idx, tg_id)
-        except Exception as ge:
-            logger.warning(f"Could not discover TDrive groups from client: {ge}")
+        existing_map = getattr(self.shared_state, 'group_id_map', None) if hasattr(self, 'shared_state') and self.shared_state else None
+        if existing_map:
+            group_ids_to_search.extend(existing_map.values())
+        else:
+            try:
+                discovered_groups = await telegram_comms.get_all_tdrive_groups(self.shared_state)
+                for idx, tg_id, _name in discovered_groups:
+                    group_ids_to_search.append(tg_id)
+                    self._record_group_mapping(idx, tg_id)
+            except Exception as ge:
+                logger.warning(f"Could not discover TDrive groups from client: {ge}")
 
         if hasattr(self, 'shared_state') and self.shared_state and getattr(self.shared_state, 'group_id', None):
             group_ids_to_search.append(self.shared_state.group_id)
@@ -291,16 +306,20 @@ class MetadataManager:
                 except Exception:
                     logger.warning("Failed to remove corrupt transaction log file.", exc_info=True)
 
-    async def sync_db_to_cloud(self, client, group_id: int, api_id: int):
+    async def sync_db_to_cloud(self, client, group_id: int, api_id: int) -> bool:
         """
         Dumps in-memory DB, compresses, encrypts, and uploads.
+        Returns True on successful upload, False on integrity failure or upload error.
         """
         async with self._lock:
             try:
                 # 0. Pre-Sync Integrity Check
                 if hasattr(self.db, 'run_integrity_check') and not self.db.run_integrity_check():
                     logger.error("DB integrity check failed. Aborting cloud sync.")
-                    return
+                    return False
+
+                sync_mgr = getattr(self.db, 'sync_manager', None)
+                sync_seq = getattr(sync_mgr, '_change_seq', None) if sync_mgr is not None else None
 
                 def _dump_and_rotate():
                     with self.db._db_lock:
@@ -337,6 +356,8 @@ class MetadataManager:
                 # 5. Clear Log: Remove the backed-up log since it's now in cloud
                 if hasattr(self.db, 'transaction_logger'):
                     self.db.transaction_logger.clear()
+                if sync_mgr is not None and hasattr(sync_mgr, 'mark_synced'):
+                    sync_mgr.mark_synced(sync_seq)
                 
                 # Cleanup old snapshots reliably using in-memory tracker across storage groups
                 try:
@@ -353,9 +374,11 @@ class MetadataManager:
                         await client.delete_messages(group_id, ids_to_del)
                 except Exception:
                     logger.warning("Failed to clean up old database snapshots.", exc_info=True)
+                return True
                 
             except Exception as e:
                 logger.error(f"Failed to sync DB to cloud: {e}", exc_info=True)
+                return False
 
     # --- Map File Management ---
 
