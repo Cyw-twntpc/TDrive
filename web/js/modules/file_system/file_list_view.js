@@ -9,15 +9,23 @@ const FileListView = {
     ftShareBtn: document.getElementById('ft-share-btn'),
     ftDetailsBtn: document.getElementById('ft-details-btn'),
     ftTrashBtn: document.getElementById('ft-trash-btn'),
+    ftAddPlaylistBtn: document.getElementById('ft-add-playlist-btn'),
 
     PREVIEW_EXTENSIONS: {
         image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
         video: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'],
+        audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'wma', 'aac'],
         document: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'],
         text: ['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
                'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',
                'rb', 'php', 'r', 'swift', 'kt', 'scala', 'lua', 'pl', 'perl', 'tex',
                'txt', 'log', 'cfg', 'conf', 'env', 'gitignore', 'dockerfile']
+    },
+
+    isAudioFile(fileName) {
+        if (!fileName || !fileName.includes('.')) return false;
+        const ext = fileName.split('.').pop().toLowerCase();
+        return FileListView.PREVIEW_EXTENSIONS.audio.includes(ext);
     },
 
     /** Bind shared drag-source and drop-target behavior for list and grid file items. */
@@ -77,23 +85,20 @@ const FileListView = {
         }
 
         const ext = item.name.split('.').pop().toLowerCase();
-        if (FileListView.PREVIEW_EXTENSIONS.image.includes(ext)) {
-            itemEl.addEventListener('dblclick', () => {
-                itemEl.dispatchEvent(new CustomEvent('open-gallery', { detail: { id: item.id }, bubbles: true }));
-            });
-        } else if (FileListView.PREVIEW_EXTENSIONS.video.includes(ext)) {
-            itemEl.addEventListener('dblclick', () => {
-                itemEl.dispatchEvent(new CustomEvent('play-video', { detail: { id: item.id }, bubbles: true }));
-            });
-        } else if (FileListView.PREVIEW_EXTENSIONS.document.includes(ext)) {
-            itemEl.addEventListener('dblclick', () => {
-                itemEl.dispatchEvent(new CustomEvent('preview-document', { detail: { id: item.id }, bubbles: true }));
-            });
-        } else if (FileListView.PREVIEW_EXTENSIONS.text.includes(ext)) {
-            itemEl.addEventListener('dblclick', () => {
-                itemEl.dispatchEvent(new CustomEvent('preview-text', { detail: { id: item.id, name: item.name }, bubbles: true }));
-            });
-        }
+        const eventSpec = [
+            [FileListView.PREVIEW_EXTENSIONS.image, 'open-gallery', { id: item.id }],
+            [FileListView.PREVIEW_EXTENSIONS.video, 'play-video', { id: item.id }],
+            [FileListView.PREVIEW_EXTENSIONS.audio, 'play-audio', { id: item.id, name: item.name }],
+            [FileListView.PREVIEW_EXTENSIONS.document, 'preview-document', { id: item.id }],
+            [FileListView.PREVIEW_EXTENSIONS.text, 'preview-text', { id: item.id, name: item.name }],
+        ].find(([exts]) => exts.includes(ext));
+
+        if (!eventSpec) return;
+
+        itemEl.addEventListener('dblclick', () => {
+            if (item.isUploading || itemEl.classList.contains('is-uploading')) return;
+            itemEl.dispatchEvent(new CustomEvent(eventSpec[1], { detail: eventSpec[2], bubbles: true }));
+        });
     },
 
     updateToolbarState(AppState) {
@@ -108,8 +113,20 @@ const FileListView = {
             
             // Details is allowed for multiple selection (aggregate info)
             FileListView.ftDetailsBtn.disabled = false;
+
+            const addPlBtn = FileListView.ftAddPlaylistBtn || document.getElementById('ft-add-playlist-btn');
+            if (addPlBtn) {
+                const hasAudio = AppState.selectedItems.some(
+                    item => item.type === 'file' && FileListView.isAudioFile(item.name)
+                );
+                addPlBtn.classList.toggle('hidden', !hasAudio);
+            }
         } else {
             FileListView.floatingToolbar.classList.remove('visible');
+            const addPlBtn = FileListView.ftAddPlaylistBtn || document.getElementById('ft-add-playlist-btn');
+            if (addPlBtn) {
+                addPlBtn.classList.add('hidden');
+            }
         }
     },
 
@@ -331,6 +348,10 @@ const FileListView = {
             }
         }
 
+        const addPlaylistBtnHtml = (!isFolder && FileListView.isAudioFile(item.name))
+            ? `<button class="item-action-btn add-playlist-btn" title="${window.t('music.add_to_playlist')}"><i class="fas fa-plus-circle"></i></button>`
+            : '';
+
         itemEl.innerHTML = `
             <div class="col file-item-col name">
                 <div class="name-col-main">
@@ -342,6 +363,7 @@ const FileListView = {
                     </div>
                 </div>
                 <div class="name-col-actions">
+                    ${addPlaylistBtnHtml}
                     <button class="item-action-btn rename-btn" title="${window.t('menu.rename')}"><i class="fas fa-pencil-alt"></i></button>
                     <button class="item-action-btn download-btn" title="${window.t('menu.download')}"><i class="fas fa-download"></i></button>
                     <button class="item-action-btn delete-btn" title="${window.t('menu.move_to_trash')}"><i class="fas fa-trash"></i></button>
@@ -358,6 +380,16 @@ const FileListView = {
         
         // Dispatch custom events for actions to be handled by a central listener in main.js.
         const itemDetail = { ...item, type: isFolder ? 'folder' : 'file' };
+        const addPlBtn = itemEl.querySelector('.add-playlist-btn');
+        if (addPlBtn) {
+            addPlBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                itemEl.dispatchEvent(new CustomEvent('item-add-playlist', {
+                    detail: { ids: [item.id], names: [item.name] },
+                    bubbles: true
+                }));
+            });
+        }
         itemEl.querySelector('.rename-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-rename', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.download-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-download', { detail: itemDetail, bubbles: true })); });
         itemEl.querySelector('.delete-btn').addEventListener('click', e => { e.stopPropagation(); itemEl.dispatchEvent(new CustomEvent('item-delete', { detail: itemDetail, bubbles: true })); });

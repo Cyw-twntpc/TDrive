@@ -32,6 +32,8 @@ class FileService:
         self.buffer = buffer
         self.preview_cache = preview_cache or PreviewCacheManager()
         self.previewer = ImagePreviewer()
+        self._active_preview_downloads: Dict[int, asyncio.Future] = {}
+        self._active_doc_downloads: Dict[tuple, asyncio.Future] = {}
         self.defrag_worker = DefragWorker(shared_state, self)
         self.defrag_worker.start()
         from core_app.application.preview.text.viewer import TextPreviewer
@@ -66,8 +68,8 @@ class FileService:
             file_ids = [row['file_id'] for row in files_info]
             id_map = {row['file_id']: row['map_id'] for row in files_info}
             
-            # 2. Local-First Cache Retrieval
-            thumbs = self.thumb_manager.get_thumbnails(file_ids)
+            # 2. Local-First Cache Retrieval (offloaded so SQLite/base64 never blocks event loop)
+            thumbs = await asyncio.to_thread(self.thumb_manager.get_thumbnails, file_ids)
             
             # 3. Check for missing thumbnails and download their packages
             # Absolutely strictly ONLY consider files that are explicitly marked with has_thumb=1
@@ -101,10 +103,10 @@ class FileService:
                                     client, target_gid, [raw_id], pkg['thumbs_db_hash']
                                 )
                                 if db_bytes:
-                                    self.thumb_manager.import_package_bytes(db_bytes)
+                                    await asyncio.to_thread(self.thumb_manager.import_package_bytes, db_bytes)
                         
                         # Re-fetch from local cache after importing missing packages
-                        thumbs = self.thumb_manager.get_thumbnails(file_ids)
+                        thumbs = await asyncio.to_thread(self.thumb_manager.get_thumbnails, file_ids)
 
             # 4. Convert Content IDs (file_id) to Map IDs (file_folder_map.id) for frontend
             if return_file_id_keys:
@@ -154,52 +156,105 @@ class FileService:
 
             content_id = info['content_id']
 
-            # 2. Check Cache (keyed by content_id, not map_id)
+            # 2. Tier 1: In-Memory Image Preview LRU Cache
             preview_b64 = self.previewer.get_cached_preview(content_id)
             if preview_b64:
                 return {"success": True, "preview": preview_b64}
 
-            # 3. Download
-            client = await utils.ensure_client_connected(self.shared_state)
-            if not client:
-                logger.error("Client not connected")
-                return {"success": False}
-
-            preview_bytes = None
-
-            if info['preview_msg_id']:
-                logger.debug(f"Downloading preview for file map {map_id} (content {content_id})...")
-                g_idx, raw_id = utils.decode_global_msg_id(info['preview_msg_id'])
-                target_gid = self.shared_state.get_telegram_group_id(g_idx)
-                preview_bytes = await telegram_comms.download_data_as_bytes(
-                    client, target_gid, [raw_id], info['preview_hash']
+            # 2b. Tier 2: Disk SQLite Preview Cache (uncompressed image bytes)
+            if self.preview_cache:
+                cached = await asyncio.to_thread(
+                    self.preview_cache.get, content_id, info['file_hash'], ('image_preview',)
                 )
-            else:
-                # Fallback: Download first chunk of original file if no preview exists
-                logger.debug(f"No preview found for {map_id}, attempting fallback to original file...")
-                try:
-                    chunks = await self.shared_state.metadata_manager.get_file_chunks(
-                        client, self.shared_state.api_id, content_id
+                if cached and cached.get('data'):
+                    self.previewer.cache_preview(content_id, cached['data'])
+                    b64_str = await asyncio.to_thread(
+                        lambda d: base64.b64encode(d).decode('utf-8'), cached['data']
                     )
-                    if chunks and len(chunks) > 0:
-                        first_chunk = chunks[0]
-                        chunk_msg_id = first_chunk[1]
-                        g_idx, raw_id = utils.decode_global_msg_id(chunk_msg_id)
-                        target_gid = self.shared_state.get_telegram_group_id(g_idx)
-                        preview_bytes = await telegram_comms.download_data_as_bytes(
-                            client, target_gid, [raw_id], info['file_hash']
+                    return {"success": True, "preview": b64_str}
+
+            # 3. Tier 3: Download with in-flight deduplication per content_id
+            if content_id in self._active_preview_downloads:
+                try:
+                    shared_b64 = await self._active_preview_downloads[content_id]
+                    if shared_b64:
+                        return {"success": True, "preview": shared_b64}
+                    return {"success": False}
+                except Exception:
+                    pass
+
+            loop = asyncio.get_running_loop()
+            download_future = loop.create_future()
+            self._active_preview_downloads[content_id] = download_future
+
+            try:
+                client = await utils.ensure_client_connected(self.shared_state)
+                if not client:
+                    logger.error("Client not connected")
+                    if not download_future.done():
+                        download_future.set_result(None)
+                    return {"success": False}
+
+                preview_bytes = None
+
+                if info['preview_msg_id']:
+                    logger.debug(f"Downloading preview for file map {map_id} (content {content_id})...")
+                    g_idx, raw_id = utils.decode_global_msg_id(info['preview_msg_id'])
+                    target_gid = self.shared_state.get_telegram_group_id(g_idx)
+                    preview_bytes = await telegram_comms.download_data_as_bytes(
+                        client, target_gid, [raw_id], info['preview_hash']
+                    )
+                else:
+                    # Fallback: Download original file when no resized preview exists
+                    logger.debug(f"No preview found for {map_id}, attempting fallback to original file...")
+                    try:
+                        chunks = await self.shared_state.metadata_manager.get_file_chunks(
+                            client, self.shared_state.api_id, content_id
                         )
-                except Exception as fb_e:
-                    logger.warning(f"Fallback preview download failed: {fb_e}")
+                        if chunks and len(chunks) == 1:
+                            chunk_msg_id = chunks[0][1]
+                            g_idx, raw_id = utils.decode_global_msg_id(chunk_msg_id)
+                            target_gid = self.shared_state.get_telegram_group_id(g_idx)
+                            preview_bytes = await telegram_comms.download_data_as_bytes(
+                                client, target_gid, [raw_id], info['file_hash']
+                            )
+                        elif chunks and len(chunks) > 1 and (info['size'] or 0) <= 32 * 1024 * 1024:
+                            preview_bytes = await self._download_full_file(
+                                content_id, info['size'], info['file_hash']
+                            )
+                    except Exception as fb_e:
+                        logger.warning(f"Fallback preview download failed: {fb_e}")
 
-            if preview_bytes:
-                # 4. Cache (keyed by content_id) and Return
-                self.previewer.cache_preview(content_id, preview_bytes)
-                b64_str = base64.b64encode(preview_bytes).decode('utf-8')
-                return {"success": True, "preview": b64_str}
+                if preview_bytes:
+                    self.previewer.cache_preview(content_id, preview_bytes)
+                    if self.preview_cache:
+                        await asyncio.to_thread(
+                            self.preview_cache.put,
+                            content_id,
+                            preview_bytes,
+                            'image_preview',
+                            info['file_hash'],
+                            len(preview_bytes),
+                            None,
+                            False,
+                        )
+                    b64_str = await asyncio.to_thread(
+                        lambda d: base64.b64encode(d).decode('utf-8'), preview_bytes
+                    )
+                    if not download_future.done():
+                        download_future.set_result(b64_str)
+                    return {"success": True, "preview": b64_str}
 
-            logger.error("Download failed")
-            return {"success": False}
+                logger.error("Download failed")
+                if not download_future.done():
+                    download_future.set_result(None)
+                return {"success": False}
+            except Exception as exc:
+                if not download_future.done():
+                    download_future.set_exception(exc)
+                raise
+            finally:
+                self._active_preview_downloads.pop(content_id, None)
 
         except Exception as e:
             logger.error(f"Error fetching preview: {e}", exc_info=True)
@@ -485,27 +540,28 @@ class FileService:
                 trash_repo = TrashRepository(db)
                 
                 old_parent_ids = set()
-                conn = db._get_conn()
-                cursor = conn.cursor()
-                
-                for item in items:
-                    item_id, item_type = item['id'], item['type']
-                    if item_type == 'folder':
-                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['parent_id'] is not None:
-                            old_parent_ids.add(row['parent_id'])
-                    else:
-                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['folder_id'] is not None:
-                            old_parent_ids.add(row['folder_id'])
+                with db.batch_write():
+                    conn = db._get_conn()
+                    cursor = conn.cursor()
                     
-                    trash_repo.soft_delete_item(item_id, item_type)
-                    
-                cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
-                rb_row = cursor.fetchone()
-                rb_id = rb_row['id'] if rb_row else None
+                    for item in items:
+                        item_id, item_type = item['id'], item['type']
+                        if item_type == 'folder':
+                            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['parent_id'] is not None:
+                                old_parent_ids.add(row['parent_id'])
+                        else:
+                            cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['folder_id'] is not None:
+                                old_parent_ids.add(row['folder_id'])
+                        
+                        trash_repo.soft_delete_item(item_id, item_type)
+                        
+                    cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
+                    rb_row = cursor.fetchone()
+                    rb_id = rb_row['id'] if rb_row else None
                 
                 return list(old_parent_ids), rb_id
             
@@ -544,29 +600,30 @@ class FileService:
                 trash_repo = TrashRepository(db)
                 
                 new_parent_ids = set()
-                conn = db._get_conn()
-                cursor = conn.cursor()
-                
                 restored_names = []
-                for item in items:
-                    item_id, item_type = item['id'], item['type']
-                    name = trash_repo.restore_item(item_id, item_type)
-                    restored_names.append(name)
+                with db.batch_write():
+                    conn = db._get_conn()
+                    cursor = conn.cursor()
                     
-                    if item_type == 'folder':
-                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['parent_id'] is not None:
-                            new_parent_ids.add(row['parent_id'])
-                    else:
-                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['folder_id'] is not None:
-                            new_parent_ids.add(row['folder_id'])
-                            
-                cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
-                rb_row = cursor.fetchone()
-                rb_id = rb_row['id'] if rb_row else None
+                    for item in items:
+                        item_id, item_type = item['id'], item['type']
+                        name = trash_repo.restore_item(item_id, item_type)
+                        restored_names.append(name)
+                        
+                        if item_type == 'folder':
+                            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['parent_id'] is not None:
+                                new_parent_ids.add(row['parent_id'])
+                        else:
+                            cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['folder_id'] is not None:
+                                new_parent_ids.add(row['folder_id'])
+                                
+                    cursor.execute("SELECT id FROM folders WHERE parent_id IS NULL AND name = 'Recycle Bin'")
+                    rb_row = cursor.fetchone()
+                    rb_id = rb_row['id'] if rb_row else None
                             
                 return restored_names, list(new_parent_ids), rb_id
             
@@ -606,15 +663,16 @@ class FileService:
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
                 deletion_results = []
-                for item in items:
-                    item_id, item_type = item['id'], item['type']
-                    if item_type == 'folder':
-                        res_list = trash_repo.remove_folder(item_id)
-                        deletion_results.extend(res_list)
-                    else:
-                        res = trash_repo.remove_file(item_id)
-                        if res: deletion_results.append(res)
-                    logger.info(f"Marked {item_type} id {item_id} for permanent deletion.")
+                with db.batch_write():
+                    for item in items:
+                        item_id, item_type = item['id'], item['type']
+                        if item_type == 'folder':
+                            res_list = trash_repo.remove_folder(item_id)
+                            deletion_results.extend(res_list)
+                        else:
+                            res = trash_repo.remove_file(item_id)
+                            if res: deletion_results.append(res)
+                logger.info(f"Marked {len(items)} items for permanent deletion.")
                 return deletion_results
 
             deletion_results = await asyncio.to_thread(_sync_delete)
@@ -645,7 +703,9 @@ class FileService:
                     for i in range(0, len(raw_list), 100):
                         chunk = raw_list[i:i + 100]
                         await client.delete_messages(target_gid, chunk)
-            
+
+            await self._invalidate_deleted_caches(deletion_results)
+
             # Adaptive sync handled by DatabaseConnection
             return {"success": True}
 
@@ -675,7 +735,8 @@ class FileService:
                 FileRepository(db)
                 FolderRepository(db)
                 trash_repo = TrashRepository(db)
-                return trash_repo.empty_trash()
+                with db.batch_write():
+                    return trash_repo.empty_trash()
 
             deletion_results = await asyncio.to_thread(_sync_empty)
             
@@ -703,13 +764,51 @@ class FileService:
                     for i in range(0, len(raw_list), 100):
                         chunk = raw_list[i:i + 100]
                         await client.delete_messages(target_gid, chunk)
-            
+
+            await self._invalidate_deleted_caches(deletion_results)
+
             # Adaptive sync handled by DatabaseConnection
             return {"success": True}
 
         except Exception as e:
             logger.error(f"Error emptying trash: {e}", exc_info=True)
             return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
+
+    async def _invalidate_deleted_caches(self, deletion_results: List[Dict[str, Any]]) -> None:
+        """Evict memory and disk preview/thumbnail/stream caches for orphaned deleted files."""
+        orphan_ids = list({
+            res['file_id'] for res in (deletion_results or [])
+            if isinstance(res, dict) and res.get('orphan') and res.get('file_id')
+        })
+        if not orphan_ids:
+            return
+        for fid in orphan_ids:
+            if getattr(self, 'previewer', None):
+                self.previewer.invalidate(fid)
+            if getattr(self, 'text_previewer', None):
+                self.text_previewer.invalidate(fid)
+            if self.buffer and hasattr(self.buffer, 'invalidate_file'):
+                self.buffer.invalidate_file(fid)
+        if self.preview_cache:
+            await asyncio.to_thread(self.preview_cache.delete_many, orphan_ids)
+        if self.thumb_manager and hasattr(self.thumb_manager, 'delete_thumbnails'):
+            await asyncio.to_thread(self.thumb_manager.delete_thumbnails, orphan_ids)
+
+    def evict_idle_memory_caches(self, max_idle_seconds: float = 300.0) -> int:
+        """Evict idle image and text entries from in-memory caches after inactivity."""
+        evicted = 0
+        if getattr(self, 'previewer', None) and hasattr(self.previewer, 'evict_idle'):
+            evicted += self.previewer.evict_idle(max_idle_seconds)
+        if getattr(self, 'text_previewer', None) and hasattr(self.text_previewer, 'evict_idle'):
+            evicted += self.text_previewer.evict_idle(max_idle_seconds)
+        return evicted
+
+    def clear_memory_caches(self) -> None:
+        """Release all in-memory preview caches on logout or shutdown."""
+        if getattr(self, 'previewer', None):
+            self.previewer.clear_cache()
+        if getattr(self, 'text_previewer', None):
+            self.text_previewer.clear_cache()
 
     async def get_trash_items(self) -> Dict[str, Any]:
         try:
@@ -765,23 +864,24 @@ class FileService:
                 
                 # Fetch old parent IDs before moving
                 old_parent_ids = set()
-                conn = db._get_conn()
-                cursor = conn.cursor()
-                
-                for item in items:
-                    item_id, item_type = item['id'], item['type']
-                    if item_type == 'folder':
-                        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['parent_id'] is not None:
-                            old_parent_ids.add(row['parent_id'])
-                        folder_repo.move_folder(item_id, target_folder_id)
-                    else:
-                        cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
-                        row = cursor.fetchone()
-                        if row and row['folder_id'] is not None:
-                            old_parent_ids.add(row['folder_id'])
-                        file_repo.move_file(item_id, target_folder_id)
+                with db.batch_write():
+                    conn = db._get_conn()
+                    cursor = conn.cursor()
+                    
+                    for item in items:
+                        item_id, item_type = item['id'], item['type']
+                        if item_type == 'folder':
+                            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['parent_id'] is not None:
+                                old_parent_ids.add(row['parent_id'])
+                            folder_repo.move_folder(item_id, target_folder_id)
+                        else:
+                            cursor.execute("SELECT folder_id FROM file_folder_map WHERE id = ?", (item_id,))
+                            row = cursor.fetchone()
+                            if row and row['folder_id'] is not None:
+                                old_parent_ids.add(row['folder_id'])
+                            file_repo.move_file(item_id, target_folder_id)
                 return list(old_parent_ids)
 
             old_parent_ids = await asyncio.to_thread(_sync_move)
@@ -805,3 +905,14 @@ class FileService:
         except Exception as e:
             logger.error(f"Unknown error moving items: {e}", exc_info=True)
             return {"success": False, "error_code": errors.ErrorCode.INTERNAL_ERROR}
+
+    def get_all_audio_files_sync(self) -> Dict[str, Any]:
+        """Synchronously return all active cloud audio files with folder metadata."""
+        try:
+            db = DatabaseConnection()
+            file_repo = FileRepository(db)
+            items = file_repo.get_all_audio_files()
+            return {"success": True, "items": items}
+        except Exception as e:
+            logger.error(f"Error fetching all audio files: {e}", exc_info=True)
+            return {"success": False, "items": [], "error_code": errors.ErrorCode.DB_READ_FAILED}

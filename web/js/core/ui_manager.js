@@ -32,7 +32,8 @@ const UIManager = {
             case 'ppt': case 'pptx': return 'fa-solid fa-file-powerpoint';
             case 'zip': case 'rar': case '7z': case 'tar': return 'fa-solid fa-file-zipper';
             case 'jpg': case 'jpeg': case 'png': case 'gif': return 'fa-solid fa-file-image';
-            case 'mp3': case 'wav': return 'fa-solid fa-file-audio';
+            case 'mp3': case 'wav': case 'flac': case 'ogg': case 'm4a': case 'wma': case 'aac':
+                return 'fa-solid fa-file-audio';
             case 'mp4': case 'mov': case 'avi': return 'fa-solid fa-file-video';
             case 'py': case 'js': case 'html': case 'css': case 'json': return 'fa-solid fa-file-code';
             default: return 'fa-solid fa-file';
@@ -66,7 +67,8 @@ const UIManager = {
             case 'jpg': case 'jpeg': return window.t('file_list.type_jpg');
             case 'png': return window.t('file_list.type_png');
             case 'gif': return window.t('file_list.type_gif');
-            case 'mp3': case 'wav': case 'aac': return (extension.toUpperCase() + ' ' + window.t('file_list.type_audio'));
+            case 'mp3': case 'wav': case 'flac': case 'ogg': case 'm4a': case 'wma': case 'aac':
+                return (extension.toUpperCase() + ' ' + window.t('file_list.type_audio'));
             case 'mp4': case 'mov': case 'avi': case 'mkv': return (extension.toUpperCase() + ' ' + window.t('file_list.type_video'));
             case 'py': return window.t('file_list.type_py');
             case 'js': return window.t('file_list.type_js');

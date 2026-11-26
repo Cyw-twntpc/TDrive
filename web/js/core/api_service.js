@@ -144,4 +144,19 @@ const ApiService = {
         ApiService._callBridgeSignal('get_preview_text', 'queryResultReady', fileId),
     getTextPage: (fileId, pageIndex) =>
         ApiService._callBridgeSignal('get_text_page', 'queryResultReady', fileId, pageIndex),
+
+    // --- Audio Player & Local Playlist API ---
+    playAudio: (fileId) => ApiService._callBridgeSignal('play_audio', 'queryResultReady', fileId),
+    preloadAudio: (fileId) => ApiService._fireAndForget('preload_audio', Number(fileId)),
+    controlAudio: (action, value = 0) => ApiService._callBridge('control_audio', action, Math.round(Number(value) || 0)),
+    getAllAudioFiles: () => ApiService._callBridge('get_all_audio_files'),
+    getPlaylists: () => ApiService._callBridge('get_playlists'),
+    getPlaylistItems: (playlistId) => ApiService._callBridge('get_playlist_items', playlistId),
+    createPlaylist: (name) => ApiService._callBridge('create_playlist', name),
+    renamePlaylist: (playlistId, newName) => ApiService._callBridge('rename_playlist', playlistId, newName),
+    deletePlaylist: (playlistId) => ApiService._callBridge('delete_playlist', playlistId),
+    addToPlaylist: (playlistId, mapIds) => ApiService._callBridge('add_to_playlist', playlistId, JSON.stringify(mapIds || [])),
+    removeFromPlaylist: (playlistId, mapId) => ApiService._callBridge('remove_from_playlist', playlistId, Number(mapId)),
+    reorderPlaylistItems: (playlistId, orderedMapIds) =>
+        ApiService._callBridge('reorder_playlist_items', playlistId, JSON.stringify(orderedMapIds || [])),
 };

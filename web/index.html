@@ -167,6 +167,7 @@
                     <button class="toolbar-btn" id="ft-move-btn" data-i18n-title="menu.move"><i class="fas fa-arrow-right-to-bracket"></i></button>
                     <button class="toolbar-btn" id="ft-rename-btn" data-i18n-title="menu.rename"><i class="fas fa-pencil-alt"></i></button>
                     <div class="toolbar-separator"></div>
+                    <button class="toolbar-btn hidden" id="ft-add-playlist-btn" data-i18n-title="music.add_to_playlist"><i class="fas fa-list-ul"></i></button>
                     <button class="toolbar-btn" id="ft-share-btn" data-i18n-title="menu.share_soon"><i class="fas fa-share-alt"></i></button>
                     <button class="toolbar-btn" id="ft-details-btn" data-i18n-title="menu.details"><i class="fas fa-info-circle"></i></button>
                     <div class="toolbar-separator"></div>
@@ -530,6 +531,172 @@
     </div>
 
     <div id="interaction-lock-overlay"></div>
+
+    <!-- 3-Stage Progressive Audio Studio (Mini -> Bar -> Window) -->
+    <div id="audio-studio-backdrop" class="audio-studio-backdrop hidden"></div>
+    <section id="audio-studio" class="audio-studio unselectable" data-mode="mini" aria-label="Audio Studio">
+        <!-- Stage 1: Mini Floating Indicator Pill -->
+        <div class="audio-mini-pill" id="audio-mini-pill">
+            <div class="audio-mini-trigger" id="audio-mini-expand-bar-btn" data-i18n-title="music.expand_bar">
+                <div class="audio-eq-bars" id="audio-mini-eq">
+                    <span></span><span></span><span></span>
+                </div>
+                <i class="fas fa-music audio-idle-icon"></i>
+                <span id="audio-mini-title" class="audio-mini-title" data-i18n="music.library_title"></span>
+            </div>
+            <div class="audio-mini-actions">
+                <button id="audio-mini-play-btn" class="audio-icon-btn sm" data-i18n-title="music.play_pause"><i class="fas fa-play"></i></button>
+                <button id="audio-mini-expand-window-btn" class="audio-icon-btn sm" data-i18n-title="music.open_studio"><i class="fas fa-expand-alt"></i></button>
+            </div>
+        </div>
+
+        <!-- Stage 3: Expanded Music & Playlist Management Studio -->
+        <div class="audio-studio-window-body" id="audio-studio-window-body">
+            <div class="audio-studio-header">
+                <div class="audio-studio-title-group">
+                    <i class="fas fa-compact-disc audio-studio-logo-icon"></i>
+                    <h2 data-i18n="music.studio_title"></h2>
+                </div>
+                <div class="audio-studio-search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="audio-studio-search-input" data-i18n-placeholder="music.search_placeholder" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="audio-studio-window-actions">
+                    <button id="audio-window-to-bar-btn" class="audio-icon-btn" data-i18n-title="music.collapse_to_bar"><i class="fas fa-chevron-down"></i></button>
+                    <button id="audio-window-to-mini-btn" class="audio-icon-btn" data-i18n-title="music.minimize"><i class="fas fa-minus"></i></button>
+                </div>
+            </div>
+
+            <div class="audio-studio-workspace">
+                <aside class="audio-studio-sidebar">
+                    <div class="audio-sidebar-section">
+                        <div class="audio-sidebar-label" data-i18n="music.section_library"></div>
+                        <button class="audio-sidebar-item active" id="audio-nav-all" data-view="all">
+                            <span class="audio-sidebar-item-left"><i class="fas fa-music"></i> <span data-i18n="music.all_music"></span></span>
+                            <span class="audio-count-badge" id="audio-count-all">0</span>
+                        </button>
+                        <button class="audio-sidebar-item" id="audio-nav-folders" data-view="folders">
+                            <span class="audio-sidebar-item-left"><i class="fas fa-folder-open"></i> <span data-i18n="music.by_folder"></span></span>
+                            <span class="audio-count-badge" id="audio-count-folders">0</span>
+                        </button>
+                    </div>
+
+                    <div class="audio-sidebar-section playlists-section">
+                        <div class="audio-sidebar-label-row">
+                            <span class="audio-sidebar-label" data-i18n="music.section_playlists"></span>
+                            <button id="audio-new-playlist-btn" class="audio-sidebar-add-btn" data-i18n-title="music.new_playlist">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                        <ul id="audio-playlist-sidebar-list" class="audio-playlist-sidebar-list"></ul>
+                    </div>
+                </aside>
+
+                <div class="audio-studio-main">
+                    <div class="audio-view-toolbar">
+                        <div class="audio-view-heading">
+                            <h3 id="audio-view-title"></h3>
+                            <span id="audio-view-count" class="audio-view-count"></span>
+                            <div id="audio-playlist-manage-btns" class="audio-playlist-manage-btns hidden">
+                                <button id="audio-playlist-rename-btn" class="audio-btn-ghost sm" data-i18n-title="music.rename_playlist"><i class="fas fa-pencil-alt"></i></button>
+                                <button id="audio-playlist-delete-btn" class="audio-btn-ghost sm danger" data-i18n-title="music.delete_playlist"><i class="fas fa-trash-alt"></i></button>
+                            </div>
+                        </div>
+                        <div class="audio-view-actions">
+                            <button id="audio-play-all-btn" class="btn audio-action-primary"><i class="fas fa-play"></i> <span data-i18n="music.play_all"></span></button>
+                            <button id="audio-shuffle-all-btn" class="btn btn-secondary audio-action-secondary"><i class="fas fa-random"></i> <span data-i18n="music.shuffle_play"></span></button>
+                        </div>
+                    </div>
+
+                    <div class="audio-track-table-header">
+                        <span class="col-idx">#</span>
+                        <span class="col-name audio-sortable-col asc" data-sort="name"><span data-i18n="music.col_track"></span><span class="sort-icon"></span></span>
+                        <span class="col-folder audio-sortable-col" data-sort="folder"><span data-i18n="music.col_folder"></span><span class="sort-icon"></span></span>
+                        <span class="col-ext audio-sortable-col" data-sort="format"><span data-i18n="music.col_format"></span><span class="sort-icon"></span></span>
+                        <span class="col-actions" data-i18n="music.col_actions"></span>
+                    </div>
+                    <div id="audio-studio-track-list" class="audio-studio-track-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stage 2: Active Queue Drawer inside Bar Mode -->
+        <div class="audio-bar-queue-panel" id="audio-bar-queue-panel">
+            <div class="audio-bar-queue-header" id="audio-bar-queue-header">
+                <span class="audio-bar-queue-title"><i class="fas fa-stream"></i> <span data-i18n="music.now_playing_queue"></span></span>
+                <div class="audio-bar-queue-header-right">
+                    <span id="audio-bar-queue-count" class="audio-count-badge">0</span>
+                    <button id="audio-bar-queue-toggle-btn" class="audio-icon-btn sm" data-i18n-title="music.toggle_queue">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="audio-bar-queue-list" class="audio-bar-queue-list"></div>
+        </div>
+
+        <!-- Stage 2 & Shared Bottom Transport Bar -->
+        <div class="audio-transport-bar" id="audio-transport-bar">
+            <div class="audio-bar-track-info">
+                <div class="audio-bar-art">
+                    <div class="audio-eq-bars" id="audio-bar-eq">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <i class="fas fa-music audio-bar-idle-icon"></i>
+                </div>
+                <div class="audio-bar-meta">
+                    <div id="audio-bar-title" class="audio-bar-title" data-i18n="music.no_track_playing"></div>
+                    <div id="audio-bar-subtitle" class="audio-bar-subtitle"></div>
+                </div>
+            </div>
+
+            <div class="audio-bar-center">
+                <div class="audio-transport-buttons">
+                    <button id="audio-prev-btn" class="audio-icon-btn" data-i18n-title="music.prev_track"><i class="fas fa-step-backward"></i></button>
+                    <button id="audio-play-pause-btn" class="audio-play-btn" data-i18n-title="music.play_pause"><i class="fas fa-play"></i></button>
+                    <button id="audio-next-btn" class="audio-icon-btn" data-i18n-title="music.next_track"><i class="fas fa-step-forward"></i></button>
+                </div>
+                <div class="audio-progress-row">
+                    <span id="audio-time-current" class="audio-time-label">00:00</span>
+                    <input type="range" id="audio-seek-slider" class="audio-seek-slider" min="0" max="1000" value="0">
+                    <span id="audio-time-total" class="audio-time-label">00:00</span>
+                </div>
+            </div>
+
+            <div class="audio-bar-right">
+                <button id="audio-loop-btn" class="audio-icon-btn sm" data-i18n-title="music.mode_loop_all"><i class="fas fa-redo"></i></button>
+                <div class="audio-volume-group">
+                    <button id="audio-mute-btn" class="audio-icon-btn sm" data-i18n-title="music.mute"><i class="fas fa-volume-up"></i></button>
+                    <input type="range" id="audio-volume-slider" class="audio-volume-slider" min="0" max="100" value="80">
+                </div>
+                <button id="audio-bar-open-window-btn" class="audio-studio-expand-btn" data-i18n-title="music.open_studio">
+                    <i class="fas fa-list-ul"></i> <span data-i18n="music.btn_playlists_library"></span> <i class="fas fa-chevron-up"></i>
+                </button>
+                <button id="audio-stop-btn" class="audio-icon-btn sm danger" data-i18n-title="music.stop_close"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Add-to-Playlist Picker Modal -->
+    <div id="playlist-picker-modal" class="modal-overlay hidden unselectable">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 data-i18n="music.picker_title"></h2>
+                <button id="playlist-picker-close-btn" class="close-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="playlist-picker-target-info" class="playlist-picker-target-info"></p>
+                <div id="playlist-picker-list" class="playlist-picker-list"></div>
+                <div class="playlist-picker-create-row">
+                    <input type="text" id="playlist-picker-new-name" class="modal-input" data-i18n-placeholder="music.new_playlist_placeholder" spellcheck="false" autocomplete="off">
+                    <button id="playlist-picker-create-btn" class="btn" data-i18n="music.btn_create_and_add"></button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="playlist-picker-cancel-btn" class="btn btn-secondary" data-i18n="dialog.btn_cancel"></button>
+            </div>
+        </div>
+    </div>
+
     <script type="text/javascript" src="js/i18n.js?v=7"></script>
     <script type="text/javascript" src="js/core/state.js?v=7"></script>
     <script type="text/javascript" src="js/core/api_service.js?v=9"></script>
@@ -554,6 +721,7 @@
     <script type="text/javascript" src="js/modules/gallery/gallery_handler.js?v=6"></script>
     <script type="text/javascript" src="js/modules/preview/text_handler.js?v=5"></script>
     <script type="text/javascript" src="js/modules/preview/document_handler.js?v=2"></script>
-    <script type="text/javascript" src="js/main.js?v=6"></script>
+    <script type="text/javascript" src="js/modules/preview/audio_handler.js?v=1"></script>
+    <script type="text/javascript" src="js/main.js?v=7"></script>
 </body>
 </html>

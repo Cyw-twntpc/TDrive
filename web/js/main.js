@@ -39,6 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (pageId === 'trash') {
              TrashHandler.loadTrashItems();
         }
+        if (typeof AudioPlayerHandler !== 'undefined' && typeof AudioPlayerHandler.updateVisibilityForPage === 'function') {
+            AudioPlayerHandler.updateVisibilityForPage(pageId);
+        }
     }
     window.switchPage = switchPage;
 
@@ -258,6 +261,31 @@ document.addEventListener('DOMContentLoaded', () => {
             ActionController.handlePlayVideo(e.detail.id);
         });
 
+        document.addEventListener('play-audio', (e) => {
+            if (typeof AudioPlayerHandler !== 'undefined' && e.detail) {
+                AudioPlayerHandler.playFromFileList(e.detail.id, e.detail.name);
+            }
+        });
+
+        document.addEventListener('item-add-playlist', (e) => {
+            if (typeof AudioPlayerHandler !== 'undefined' && e.detail) {
+                AudioPlayerHandler.openPlaylistPicker(e.detail.ids || [], e.detail.names || []);
+            }
+        });
+
+        document.getElementById('ft-add-playlist-btn')?.addEventListener('click', () => {
+            if (typeof AudioPlayerHandler === 'undefined' || typeof FileListView === 'undefined') return;
+            const audioItems = AppState.selectedItems.filter(
+                item => item.type === 'file' && FileListView.isAudioFile(item.name)
+            );
+            if (audioItems.length > 0) {
+                AudioPlayerHandler.openPlaylistPicker(
+                    audioItems.map(i => i.id),
+                    audioItems.map(i => i.name)
+                );
+            }
+        });
+
         document.addEventListener('preview-text', (e) => {
             if (TextHandler) TextHandler.openPreview(e.detail.id, e.detail.name);
         });
@@ -323,6 +351,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         FileListHandler.init(renderListAndSyncManager, () => {});
         TrashHandler.init();
+        if (typeof AudioPlayerHandler !== 'undefined') {
+            AudioPlayerHandler.init();
+        }
+        if (window.tdrive_bridge.logout_completed && typeof window.tdrive_bridge.logout_completed.connect === 'function') {
+            window.tdrive_bridge.logout_completed.connect(() => {
+                if (typeof AudioPlayerHandler !== 'undefined') AudioPlayerHandler.reset();
+            });
+        }
         UIManager.setupPopovers();
         SettingsHandler.setupEventListeners();
         

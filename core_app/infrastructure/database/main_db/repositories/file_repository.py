@@ -7,6 +7,9 @@ from .base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 
+AUDIO_EXTENSIONS = ('.mp3', '.wav', '.flac', '.ogg', '.m4a', '.wma', '.aac')
+
+
 class FileRepository(BaseRepository):
     def find_file_by_hash(self, file_hash: str) -> int | None:
         conn = self._get_conn()
@@ -240,4 +243,66 @@ class FileRepository(BaseRepository):
         except sqlite3.OperationalError as e:
             logger.error(f"FTS5 Search failed: {e}")
             # Fallback or empty results
+
+    def _format_audio_row(self, row: sqlite3.Row) -> dict:
+        """Convert a database audio file row into a frontend-ready dictionary."""
+        return {
+            "id": row["map_id"],
+            "file_id": row["file_id"],
+            "file_hash": row["file_hash"],
+            "name": row["name"],
+            "parent_id": row["folder_id"],
+            "folder_id": row["folder_id"],
+            "folder_name": row["folder_name"],
+            "folder_path": row["folder_path"],
+            "raw_size": row["size"],
+            "size": self._format_size(row["size"]),
+            "raw_date": row["modif_date"] or 0,
+            "modif_date": self._format_timestamp(row["modif_date"]),
+        }
+
+    def get_all_audio_files(self) -> list[dict]:
+        """Return all non-trashed audio files under TDrive with resolved folder paths."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        sql = """
+        WITH RECURSIVE folder_tree(id, name, path) AS (
+            SELECT id, name, name
+            FROM folders
+            WHERE parent_id IS NULL AND name = 'TDrive'
+            UNION ALL
+            SELECT f.id, f.name, ft.path || ' / ' || f.name
+            FROM folders f
+            JOIN folder_tree ft ON f.parent_id = ft.id
+            WHERE f.name != 'Recycle Bin'
+              AND NOT EXISTS (
+                  SELECT 1 FROM trash_metadata tm
+                  WHERE tm.item_id = f.id AND tm.item_type = 'folder'
+              )
+        )
+        SELECT
+            m.id AS map_id,
+            m.file_id AS file_id,
+            fl.hash AS file_hash,
+            m.name AS name,
+            m.folder_id AS folder_id,
+            ft.name AS folder_name,
+            ft.path AS folder_path,
+            fl.size AS size,
+            m.modif_date AS modif_date
+        FROM file_folder_map m
+        JOIN files fl ON m.file_id = fl.id
+        JOIN folder_tree ft ON m.folder_id = ft.id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM trash_metadata tm
+            WHERE tm.item_id = m.id AND tm.item_type = 'file'
+        )
+        ORDER BY m.name COLLATE NOCASE ASC
+        """
+        cursor.execute(sql)
+        return [
+            self._format_audio_row(row)
+            for row in cursor.fetchall()
+            if row["name"] and row["name"].lower().endswith(AUDIO_EXTENSIONS)
+        ]
 

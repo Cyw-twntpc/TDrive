@@ -22,6 +22,7 @@ class Bridge(QObject):
     # --- UI Update Signals ---
     queryResultReady = Signal(dict)
     play_video_requested = Signal(str, str)
+    audio_state_changed = Signal(str)
     
     # --- Authentication and State Signals ---
     login_event = Signal(dict)
@@ -56,6 +57,11 @@ class Bridge(QObject):
         self._service._transfer_service.set_file_status_callback(self.file_status_changed.emit)
         # Connect Folder Refresh Signal
         self._service._transfer_service.set_refresh_callback(self.folder_content_refresh_required.emit)
+        # Connect Audio Player State Signal
+        if getattr(self._service, "audio_player", None) is not None:
+            self._service.audio_player.set_state_callback(
+                lambda state: self.audio_state_changed.emit(json.dumps(state))
+            )
         
         from core_app.core.settings_manager import SettingsManager
         self._settings_manager = SettingsManager()
@@ -311,6 +317,77 @@ class Bridge(QObject):
                 self.queryResultReady.emit(error_payload)
         
         self._fire_and_forget(task_wrapper())
+
+    @staticmethod
+    def _parse_json_list(raw_json: str) -> list:
+        """Safely decode a JSON string expected to represent a list."""
+        try:
+            parsed = json.loads(raw_json) if raw_json else []
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid JSON array payload: %s", exc)
+            return []
+
+    @Slot(int, str)
+    def play_audio(self, file_id: int, request_id: str):
+        """Start streaming audio playback for a cloud file map ID."""
+        coro = self._service.play_audio(file_id)
+        self._run_background_task(coro, self.queryResultReady, request_id)
+
+    @Slot(str, int, result=dict)
+    def control_audio(self, action: str, value: int):
+        """Execute synchronous audio player control action (toggle/pause/resume/stop/seek/volume/mute)."""
+        return self._service.control_audio(action, value)
+
+    @Slot(int)
+    def preload_audio(self, file_id: int):
+        """Trigger non-blocking background preload of the next queued audio track."""
+        self._fire_and_forget(self._service.preload_audio(file_id))
+
+    @Slot(result=dict)
+    def get_all_audio_files(self):
+        """Return all active audio files stored across cloud folders."""
+        return self._service.get_all_audio_files()
+
+    @Slot(result=dict)
+    def get_playlists(self):
+        """Return all locally persisted playlists."""
+        return self._service.get_playlists()
+
+    @Slot(str, result=dict)
+    def get_playlist_items(self, playlist_id: str):
+        """Return tracks inside a specific local playlist."""
+        return self._service.get_playlist_items(playlist_id)
+
+    @Slot(str, result=dict)
+    def create_playlist(self, name: str):
+        """Create a new local playlist."""
+        return self._service.create_playlist(name)
+
+    @Slot(str, str, result=dict)
+    def rename_playlist(self, playlist_id: str, new_name: str):
+        """Rename a local playlist."""
+        return self._service.rename_playlist(playlist_id, new_name)
+
+    @Slot(str, result=dict)
+    def delete_playlist(self, playlist_id: str):
+        """Delete a local playlist."""
+        return self._service.delete_playlist(playlist_id)
+
+    @Slot(str, str, result=dict)
+    def add_to_playlist(self, playlist_id: str, map_ids_json: str):
+        """Add track map IDs (JSON array) to a local playlist."""
+        return self._service.add_to_playlist(playlist_id, self._parse_json_list(map_ids_json))
+
+    @Slot(str, int, result=dict)
+    def remove_from_playlist(self, playlist_id: str, map_id: int):
+        """Remove a track by map ID from a local playlist."""
+        return self._service.remove_from_playlist(playlist_id, map_id)
+
+    @Slot(str, str, result=dict)
+    def reorder_playlist_items(self, playlist_id: str, ordered_map_ids_json: str):
+        """Reorder tracks in a local playlist using a JSON array of map IDs."""
+        return self._service.reorder_playlist_items(playlist_id, self._parse_json_list(ordered_map_ids_json))
 
     # --- File and Folder Service Slots (Event-driven) ---
     @Slot(int, str)
