@@ -5,6 +5,8 @@ import mimetypes
 from aiohttp import web
 from typing import TYPE_CHECKING
 
+from core_app.infrastructure.database.main_db.repositories.file_repository import AUDIO_EXTENSIONS
+
 if TYPE_CHECKING:
     from core_app.application.preview.buffer import StreamBuffer
     from core_app.infrastructure.database.main_db.database import DatabaseConnection
@@ -109,6 +111,11 @@ class VideoStreamer:
             remaining = chunk_length
 
             READ_BLOCK = 64 * 1024
+            category = (
+                "audio_chunk"
+                if (file_name and file_name.lower().endswith(AUDIO_EXTENSIONS))
+                else "video_chunk"
+            )
 
             while remaining > 0:
                 if request.transport and request.transport.is_closing():
@@ -116,7 +123,9 @@ class VideoStreamer:
 
                 read_size = min(remaining, READ_BLOCK)
 
-                data = await self.buffer.read(content_id, offset, read_size, file_size, file_hash)
+                data = await self.buffer.read(
+                    content_id, offset, read_size, file_size, file_hash, category=category
+                )
                 if not data:
                     break
 

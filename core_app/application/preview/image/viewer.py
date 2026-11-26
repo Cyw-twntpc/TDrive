@@ -1,5 +1,6 @@
 import logging
 import base64
+import time
 from typing import Optional
 from collections import OrderedDict
 from PySide6.QtGui import QImage, QImageReader
@@ -9,28 +10,58 @@ logger = logging.getLogger(__name__)
 
 
 class LRUCache:
-    def __init__(self, capacity_mb: int = 200):
+    def __init__(self, capacity_mb: int = 100):
         self.capacity_bytes = capacity_mb * 1024 * 1024
         self.current_size = 0
         self.cache = OrderedDict()
+        self._timestamps: dict[int, float] = {}
 
     def get(self, key: int) -> Optional[bytes]:
         if key not in self.cache:
             return None
         self.cache.move_to_end(key)
+        self._timestamps[key] = time.monotonic()
         return self.cache[key]
 
     def put(self, key: int, value: bytes):
+        if len(value) > self.capacity_bytes:
+            return
         if key in self.cache:
             self.current_size -= len(self.cache[key])
             self.cache.move_to_end(key)
 
         self.cache[key] = value
+        self._timestamps[key] = time.monotonic()
         self.current_size += len(value)
 
         while self.current_size > self.capacity_bytes and self.cache:
-            _, evicted_val = self.cache.popitem(last=False)
+            evicted_key, evicted_val = self.cache.popitem(last=False)
+            self._timestamps.pop(evicted_key, None)
             self.current_size -= len(evicted_val)
+
+    def delete(self, key: int):
+        """Remove a single cached item if present and update current byte count."""
+        val = self.cache.pop(key, None)
+        self._timestamps.pop(key, None)
+        if val is not None:
+            self.current_size = max(0, self.current_size - len(val))
+
+    def evict_idle(self, max_idle_seconds: float) -> int:
+        """Evict cached items that have not been read within max_idle_seconds."""
+        now = time.monotonic()
+        stale_keys = [
+            k for k, ts in self._timestamps.items()
+            if (now - ts) >= max_idle_seconds
+        ]
+        for k in stale_keys:
+            self.delete(k)
+        return len(stale_keys)
+
+    def clear(self):
+        """Clear all cached items from memory."""
+        self.cache.clear()
+        self._timestamps.clear()
+        self.current_size = 0
 
 
 class ImagePreviewer:
@@ -40,7 +71,7 @@ class ImagePreviewer:
     """
 
     def __init__(self):
-        self._preview_cache = LRUCache(capacity_mb=200)
+        self._preview_cache = LRUCache(capacity_mb=100)
 
     def generate(self, file_path: str) -> Optional[bytes]:
         """
@@ -99,3 +130,15 @@ class ImagePreviewer:
         if data:
             return base64.b64encode(data).decode('utf-8')
         return None
+
+    def invalidate(self, content_id: int):
+        """Invalidate cached image preview for a deleted file."""
+        self._preview_cache.delete(content_id)
+
+    def evict_idle(self, max_idle_seconds: float = 300.0) -> int:
+        """Evict idle image previews older than max_idle_seconds from memory."""
+        return self._preview_cache.evict_idle(max_idle_seconds)
+
+    def clear_cache(self):
+        """Release all in-memory image previews."""
+        self._preview_cache.clear()

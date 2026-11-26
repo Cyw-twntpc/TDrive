@@ -366,3 +366,22 @@ async def download_single_chunk(client, message, progress_callback: Callable | N
     async def _download_chunk():
         return await client.download_media(message, file=bytes, progress_callback=progress_callback)
     return await _retry_with_backoff(_download_chunk)
+
+
+async def download_encrypted_chunk(client, group_id: int, raw_msg_id: int) -> Optional[bytes]:
+    """Download the raw AES-256-GCM ciphertext bytes of a single Telegram chunk without decrypting."""
+    try:
+        messages = await client.get_messages(group_id, ids=[raw_msg_id])
+        messages = [m for m in (messages or []) if m]
+        if not messages:
+            logger.warning(f"download_encrypted_chunk: no message returned for raw_msg_id={raw_msg_id}")
+            return None
+
+        encrypted_bytes = await messages[0].download_media(file=bytes)
+        if not encrypted_bytes:
+            logger.warning(f"download_encrypted_chunk: empty media for raw_msg_id={raw_msg_id}")
+            return None
+        return encrypted_bytes
+    except Exception as e:
+        logger.error(f"download_encrypted_chunk failed for msg_id={raw_msg_id}: {e}", exc_info=True)
+        return None

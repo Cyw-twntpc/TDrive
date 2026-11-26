@@ -1,6 +1,7 @@
 import logging
 import gzip
 import asyncio
+import time
 from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
@@ -51,48 +52,138 @@ class TextPreviewer:
 
     def __init__(self, preview_cache, download_full_file):
         self._memory_cache: OrderedDict[int, bytes] = OrderedDict()
-        self._memory_cache_max_bytes = 256 * 1024 * 1024
+        self._memory_hashes: dict[int, str] = {}
+        self._memory_timestamps: dict[int, float] = {}
+        self._memory_cache_max_bytes = 128 * 1024 * 1024
         self._memory_cache_bytes = 0
         self._preview_cache = preview_cache
         self._download_full_file = download_full_file
         self._page_indexes: dict[int, list[int]] = {}
         self._encodings: dict[int, str] = {}
+        self._active_downloads: dict[int, asyncio.Future] = {}
 
-    def _add_to_memory_cache(self, content_id: int, data: bytes):
+    def _add_to_memory_cache(self, content_id: int, data: bytes, file_hash: str | None = None):
+        size = len(data)
+        if size > self._memory_cache_max_bytes:
+            return
         if content_id in self._memory_cache:
             self._memory_cache_bytes -= len(self._memory_cache[content_id])
-            
-        size = len(data)
+
         while self._memory_cache_bytes + size > self._memory_cache_max_bytes and self._memory_cache:
             oldest_id, oldest_data = self._memory_cache.popitem(last=False)
             self._memory_cache_bytes -= len(oldest_data)
             self._page_indexes.pop(oldest_id, None)
             self._encodings.pop(oldest_id, None)
+            self._memory_hashes.pop(oldest_id, None)
+            self._memory_timestamps.pop(oldest_id, None)
             logger.debug(f"Evicted content_id={oldest_id} from memory cache ({len(oldest_data)} bytes)")
         self._memory_cache[content_id] = data
         self._memory_cache.move_to_end(content_id)
+        self._memory_timestamps[content_id] = time.monotonic()
         self._memory_cache_bytes += size
+        if file_hash:
+            self._memory_hashes[content_id] = file_hash
+
+    def invalidate(self, content_id: int):
+        """Remove a single file from the in-memory text cache and pagination indexes."""
+        removed = self._memory_cache.pop(content_id, None)
+        if removed is not None:
+            self._memory_cache_bytes = max(0, self._memory_cache_bytes - len(removed))
+        self._memory_hashes.pop(content_id, None)
+        self._memory_timestamps.pop(content_id, None)
+        self._page_indexes.pop(content_id, None)
+        self._encodings.pop(content_id, None)
+
+    def evict_idle(self, max_idle_seconds: float = 300.0) -> int:
+        """Evict cached text files not accessed within max_idle_seconds from memory."""
+        now = time.monotonic()
+        stale_ids = [
+            cid for cid, ts in self._memory_timestamps.items()
+            if (now - ts) >= max_idle_seconds
+        ]
+        for cid in stale_ids:
+            self.invalidate(cid)
+        return len(stale_ids)
+
+    def clear_cache(self):
+        """Release all cached text payloads and pagination metadata from memory."""
+        self._memory_cache.clear()
+        self._memory_hashes.clear()
+        self._memory_timestamps.clear()
+        self._page_indexes.clear()
+        self._encodings.clear()
+        self._memory_cache_bytes = 0
+
+    def _read_sqlite_cache(self, content_id: int, file_hash: str) -> bytes | None:
+        """Read and decode cached text payload from disk cache after validating type and hash."""
+        if not self._preview_cache:
+            return None
+        try:
+            row = self._preview_cache.get(
+                content_id, expected_hash=file_hash, expected_types=('text',)
+            )
+        except TypeError:
+            row = self._preview_cache.get(content_id)
+        if not row:
+            return None
+        if row.get('decoded'):
+            return row['data']
+        row_type = row.get('content_type')
+        row_hash = row.get('source_hash')
+        if row_type is not None and row_type != 'text':
+            return None
+        if row_hash and file_hash and row_hash != file_hash:
+            self._preview_cache.delete(content_id)
+            return None
+        return gzip.decompress(row['data'])
 
     async def _get_file_bytes(self, content_id: int, file_size: int, file_hash: str) -> bytes:
         # Tier 1: Memory cache
         if content_id in self._memory_cache:
-            self._memory_cache.move_to_end(content_id)
-            return self._memory_cache[content_id]
+            stored_hash = self._memory_hashes.get(content_id)
+            if stored_hash and file_hash and stored_hash != file_hash:
+                self.invalidate(content_id)
+            else:
+                self._memory_cache.move_to_end(content_id)
+                self._memory_timestamps[content_id] = time.monotonic()
+                return self._memory_cache[content_id]
 
-        # Tier 2: SQLite cache (gzip compressed)
-        row = self._preview_cache.get(content_id)
-        if row:
-            data = gzip.decompress(row['data'])
+        # Tier 2: SQLite cache (offloaded to thread to avoid blocking event loop)
+        data = await asyncio.to_thread(self._read_sqlite_cache, content_id, file_hash)
+        if data is not None:
             logger.debug(f"SQLite cache hit for content_id={content_id} ({len(data)} bytes)")
-            self._add_to_memory_cache(content_id, data)
+            self._add_to_memory_cache(content_id, data, file_hash)
             return data
 
-        # Download full file from Telegram
-        logger.info(f"Downloading full file content_id={content_id} from Telegram")
-        data = await self._download_full_file(content_id, file_size, file_hash)
-        self._preview_cache.put(content_id, data, 'text', file_hash, file_size)
-        self._add_to_memory_cache(content_id, data)
-        return data
+        # Tier 3: Download full file from Telegram with in-flight deduplication
+        if content_id in self._active_downloads:
+            try:
+                existing_data = await self._active_downloads[content_id]
+                if existing_data is not None:
+                    return existing_data
+            except Exception:
+                pass
+
+        loop = asyncio.get_running_loop()
+        download_future = loop.create_future()
+        self._active_downloads[content_id] = download_future
+        try:
+            logger.info(f"Downloading full file content_id={content_id} from Telegram")
+            data = await self._download_full_file(content_id, file_size, file_hash)
+            if self._preview_cache:
+                await asyncio.to_thread(
+                    self._preview_cache.put, content_id, data, 'text', file_hash, file_size
+                )
+            self._add_to_memory_cache(content_id, data, file_hash)
+            if not download_future.done():
+                download_future.set_result(data)
+            return data
+        except Exception as exc:
+            if not download_future.done():
+                download_future.set_exception(exc)
+            raise
+        finally:
+            self._active_downloads.pop(content_id, None)
 
     async def _build_page_index(self, content_id: int, data: bytes):
         if content_id in self._page_indexes and content_id in self._encodings:

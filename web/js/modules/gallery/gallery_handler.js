@@ -13,6 +13,7 @@ const GalleryHandler = {
 
     currentImages: [], // Array of file objects {id, name, ...}
     currentIndex: -1,
+    _showReqSeq: 0,
     
     // Drag to scroll variables
     isDown: false,
@@ -122,8 +123,17 @@ const GalleryHandler = {
     },
 
     close() {
+        this._showReqSeq += 1;
         this.modal.classList.add('hidden');
         this.imageEl.src = '';
+    },
+
+    _getImageMimeType(fileName) {
+        const ext = (fileName && fileName.includes('.')) ? fileName.split('.').pop().toLowerCase() : '';
+        if (ext === 'png') return 'image/png';
+        if (ext === 'gif') return 'image/gif';
+        if (ext === 'webp') return 'image/webp';
+        return 'image/jpeg';
     },
 
     nav(direction) {
@@ -134,6 +144,7 @@ const GalleryHandler = {
     },
 
     async showImage(index) {
+        const reqSeq = ++this._showReqSeq;
         this.currentIndex = index;
         const file = this.currentImages[index];
         
@@ -151,18 +162,28 @@ const GalleryHandler = {
 
         try {
             const result = await ApiService.getPreview(file.id);
+            if (reqSeq !== this._showReqSeq || this.modal.classList.contains('hidden')) {
+                return;
+            }
             if (result.success && result.preview) {
-                this.imageEl.src = `data:image/jpeg;base64,${result.preview}`;
+                const mimeType = this._getImageMimeType(file.name);
+                this.imageEl.src = `data:${mimeType};base64,${result.preview}`;
             } else {
                 // Fallback or error placeholder
                 console.warn("Preview load failed for", file.name);
             }
         } catch (e) {
-            console.error("Error loading preview:", e);
+            if (reqSeq === this._showReqSeq) {
+                console.error("Error loading preview:", e);
+            }
         } finally {
-            this.spinner.classList.add('hidden');
-            this.imageEl.classList.remove('loading');
-            this.preloadImages(index);
+            if (reqSeq === this._showReqSeq) {
+                this.spinner.classList.add('hidden');
+                this.imageEl.classList.remove('loading');
+                if (!this.modal.classList.contains('hidden')) {
+                    this.preloadImages(index);
+                }
+            }
         }
     },
 
@@ -201,11 +222,14 @@ const GalleryHandler = {
     },
 
     preloadImages(currentIndex) {
-        // Preload next 3 images
-        for (let i = 1; i <= 3; i++) {
-            let nextIndex = currentIndex + i;
-            if (nextIndex >= this.currentImages.length) nextIndex -= this.currentImages.length; // Wrap around
-            
+        const total = this.currentImages.length;
+        const preloadCount = Math.min(3, Math.max(0, total - 1));
+        const seen = new Set([currentIndex]);
+        for (let i = 1; i <= preloadCount; i++) {
+            const nextIndex = (currentIndex + i) % total;
+            if (seen.has(nextIndex)) continue;
+            seen.add(nextIndex);
+
             const file = this.currentImages[nextIndex];
             // Fire and forget - this populates the backend LRU cache
             if (file && file.id) {
