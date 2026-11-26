@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import time
-from typing import Dict, Any, List, Callable
+from typing import Dict, Any, List, Callable, Optional
 
 from core_app.core.errors import ErrorCode
 from core_app.core.shared_state import SharedState
@@ -60,6 +60,7 @@ class TDriveService:
         self.video_player = VideoStreamer(self.buffer, self.db_handler)
         self.audio_player = AudioPlayerManager()
         self._audio_play_seq: int = 0
+        self._memory_cache_cleanup_task: Optional[asyncio.Task] = None
         self.playlist_manager = PlaylistManager(
             db_handler=self.db_handler,
             account_scope_getter=lambda: getattr(self._shared_state, "api_id", None),
@@ -149,8 +150,8 @@ class TDriveService:
         
         return adapter
 
-    def _schedule_background_task(self, coro):
-        def _task_wrapper():
+    def _schedule_background_task(self, coro) -> Optional[asyncio.Task]:
+        def _task_wrapper() -> asyncio.Task:
             task = self._shared_state.loop.create_task(coro)
             task_id = f"bg_task_{id(task)}"
             self._shared_state.active_tasks[task_id] = task
@@ -159,6 +160,8 @@ class TDriveService:
             def _on_done(t):
                 self._shared_state.active_tasks.pop(task_id, None)
                 self._shared_state.background_tasks.discard(t)
+                if getattr(self, "_memory_cache_cleanup_task", None) is t:
+                    self._memory_cache_cleanup_task = None
                 if not t.cancelled():
                     try:
                         exc = t.exception()
@@ -168,13 +171,23 @@ class TDriveService:
                         logger.debug(f"Background task {task_id} completion check skipped: {e}")
                 
             task.add_done_callback(_on_done)
+            return task
 
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is self._shared_state.loop:
+            return _task_wrapper()
         if self._shared_state.loop.is_running():
             self._shared_state.loop.call_soon_threadsafe(_task_wrapper)
-        else:
-            task = self._shared_state.create_background_task(coro)
+            return None
+        task = self._shared_state.create_background_task(coro)
+        if task is not None:
             task_id = f"bg_task_{id(task)}"
             self._shared_state.active_tasks[task_id] = task
+        return task
 
     # --- Application Lifecycle ---
 
@@ -196,6 +209,7 @@ class TDriveService:
 
     async def _memory_cache_cleanup_loop(self):
         """Periodically evict idle preview memory caches while the app stays open."""
+        self._memory_cache_cleanup_task = asyncio.current_task()
         try:
             while True:
                 await asyncio.sleep(self.MEMORY_CACHE_SWEEP_INTERVAL_SECONDS)
@@ -204,12 +218,19 @@ class TDriveService:
                     logger.debug("Evicted %d idle preview entries from memory caches", evicted)
         except asyncio.CancelledError:
             return
+        finally:
+            if getattr(self, "_memory_cache_cleanup_task", None) is asyncio.current_task():
+                self._memory_cache_cleanup_task = None
 
     async def start_background_services(self):
         """Starts background tasks safely decoupled from synchronous initialization phases."""
-        # Schedule maintenance tasks
+        # Schedule maintenance tasks (prevent duplicate cleanup loops across re-login)
         self._schedule_background_task(self._file_service.cleanup_expired_trash())
-        self._schedule_background_task(self._memory_cache_cleanup_loop())
+        existing_cleanup = getattr(self, "_memory_cache_cleanup_task", None)
+        if not (isinstance(existing_cleanup, asyncio.Future) and not existing_cleanup.done()):
+            cleanup_task = self._schedule_background_task(self._memory_cache_cleanup_loop())
+            if isinstance(cleanup_task, asyncio.Future):
+                self._memory_cache_cleanup_task = cleanup_task
         
         # --- Start Bot Token Pool provisioning in background ---
         try:
@@ -239,8 +260,8 @@ class TDriveService:
         if isinstance(pool, list):
             pool.clear()
 
-    async def close(self):
-        """Gracefully stop background workers, timers, clients, and local storage."""
+    async def _cancel_and_drain_tasks(self) -> None:
+        """Stop maintenance workers, cancel scheduled tasks/timers, and drain them before teardown."""
         try:
             running_loop = asyncio.get_running_loop()
             current_task = asyncio.current_task()
@@ -291,9 +312,10 @@ class TDriveService:
                         task.cancel()
 
         self._transfer_service.shutdown()
+        self._memory_cache_cleanup_task = None
 
-        # Drain cancelled background tasks before disconnecting Telegram clients
-        # so in-flight setup tasks cannot spawn new connections during teardown.
+        # Drain cancelled background tasks before disconnecting clients or wiping user_data
+        # so in-flight setup/IO tasks cannot spawn connections or re-open closed SQLite files.
         if tasks_to_wait:
             try:
                 await asyncio.wait_for(
@@ -301,7 +323,25 @@ class TDriveService:
                     timeout=5.0,
                 )
             except asyncio.TimeoutError:
-                logger.warning("Timed out waiting for background tasks to cancel during shutdown.")
+                logger.warning("Timed out waiting for background tasks to cancel during teardown.")
+
+    def _has_unsynced_db_changes(self) -> bool:
+        """Return True if SyncManager or WAL still holds un-synced DB mutations."""
+        db_handler = getattr(self, "db_handler", None)
+        if db_handler is None:
+            return True
+        sync_mgr = getattr(db_handler, "sync_manager", None)
+        txn_logger = getattr(db_handler, "transaction_logger", None)
+        if sync_mgr is not None and hasattr(sync_mgr, "has_pending_changes"):
+            has_sync_dirty = bool(sync_mgr.has_pending_changes())
+            has_wal_ops = bool(txn_logger.has_pending_ops()) if (txn_logger is not None and hasattr(txn_logger, "has_pending_ops")) else False
+            return has_sync_dirty or has_wal_ops
+        return True
+
+    async def close(self):
+        """Gracefully stop background workers, timers, clients, and local storage."""
+        needs_db_sync = self._has_unsynced_db_changes()
+        await self._cancel_and_drain_tasks()
 
         if getattr(self, "audio_player", None):
             await asyncio.to_thread(self.audio_player.cleanup)
@@ -328,12 +368,15 @@ class TDriveService:
         if self._shared_state and self._shared_state.client and self._shared_state.client.is_connected() and self._shared_state.is_logged_in:
             try:
                 SessionManager.save_session(self._shared_state.client.session, self._shared_state.api_id)
-                logger.info("Syncing database to cloud before shutdown...")
-                await self.metadata_manager.sync_db_to_cloud(
-                    self._shared_state.client,
-                    self._shared_state.group_id,
-                    self._shared_state.api_id
-                )
+                if needs_db_sync:
+                    logger.info("Syncing database to cloud before shutdown...")
+                    await self.metadata_manager.sync_db_to_cloud(
+                        self._shared_state.client,
+                        self._shared_state.group_id,
+                        self._shared_state.api_id
+                    )
+                else:
+                    logger.info("No pending DB changes; skipping shutdown cloud sync.")
             except Exception as e:
                 logger.error(f"Failed to sync DB on exit: {e}")
 
@@ -527,6 +570,18 @@ class TDriveService:
         return await self._auth_service.submit_password(password)
         
     async def perform_post_login_initialization(self) -> Dict[str, Any]:
+        # Reopen local caches and re-bind SyncManager callback if coming from a same-process logout
+        preview_cache = getattr(self, "_preview_cache", None)
+        if preview_cache and hasattr(preview_cache, "reopen"):
+            preview_cache.reopen()
+        thumb_mgr = getattr(self, "thumb_manager", None)
+        if thumb_mgr and hasattr(thumb_mgr, "reopen"):
+            thumb_mgr.reopen()
+        sync_mgr = getattr(getattr(self, "db_handler", None), "sync_manager", None)
+        metadata_mgr = getattr(self, "metadata_manager", None)
+        if sync_mgr is not None and metadata_mgr is not None and getattr(sync_mgr, "_sync_callback", None) is None:
+            sync_mgr.set_callback(metadata_mgr._trigger_background_sync, self._shared_state.loop)
+
         # initialize_drive() already calls initialize_db() internally
         result = await self._auth_service.initialize_drive()
         
@@ -543,25 +598,10 @@ class TDriveService:
 
     async def logout(self) -> Dict[str, Any]:
         logger.info("Logging out, shutting down services...")
-        if hasattr(self, '_file_service') and getattr(self._file_service, 'defrag_worker', None):
-            self._file_service.defrag_worker.stop()
-        if hasattr(self, 'db_handler') and getattr(self.db_handler, 'sync_manager', None):
-            self.db_handler.sync_manager.stop()
-
-        # Cancel timers and background tasks before disconnecting clients/removing cache
-        if getattr(self, '_shared_state', None):
-            if self._shared_state.db_upload_timer:
-                self._shared_state.db_upload_timer.cancel()
-                self._shared_state.db_upload_timer = None
-            current_task = asyncio.current_task()
-            for task in list(self._shared_state.background_tasks):
-                if task is not current_task and not task.done():
-                    task.cancel()
-
-        self._transfer_service.shutdown()
+        await self._cancel_and_drain_tasks()
 
         if getattr(self, 'audio_player', None):
-            self.audio_player.cleanup()
+            await asyncio.to_thread(self.audio_player.cleanup)
 
         if getattr(self, 'video_player', None):
             await self.video_player.stop()
@@ -577,7 +617,13 @@ class TDriveService:
 
         if hasattr(self, 'thumb_manager') and hasattr(self.thumb_manager, 'close'):
             self.thumb_manager.close()
-            
+
+        if getattr(self, "metadata_manager", None) and hasattr(self.metadata_manager, "reset_state"):
+            self.metadata_manager.reset_state()
+
+        if getattr(self, "db_handler", None) and hasattr(self.db_handler, "reset_in_memory_db"):
+            self.db_handler.reset_in_memory_db()
+
         return await self._auth_service.perform_logout()
 
     async def reset_client_for_new_login_method(self) -> Dict[str, bool]:

@@ -315,3 +315,18 @@ class DatabaseConnection:
             logger.error(f"Error during database integrity check: {e}")
             return False
 
+    def reset_in_memory_db(self) -> None:
+        """Reset the in-memory database and clear WAL logs for account isolation on logout."""
+        with self._db_lock:
+            if hasattr(self, 'transaction_logger') and self.transaction_logger and hasattr(self.transaction_logger, 'reset_logs'):
+                self.transaction_logger.reset_logs()
+            if self._connection is not None:
+                try:
+                    self._connection.close()
+                except Exception as e:
+                    logger.warning(f"Error closing in-memory connection during reset: {e}")
+                self._connection = None
+            self._batch_depth = 0
+            self._pending_batch_score = 0
+            self._init_db()
+

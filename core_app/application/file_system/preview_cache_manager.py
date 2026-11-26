@@ -620,3 +620,13 @@ class PreviewCacheManager:
         """Mark cache manager closed under lock so logout cleanup does not race active writes."""
         with self._lock:
             self._closed = True
+
+    def reopen(self) -> None:
+        """Re-initialize cache directory and SQLite schema if previously closed (e.g. re-login)."""
+        with self._lock:
+            if not self._closed:
+                return
+            os.makedirs(os.path.dirname(os.path.abspath(self._db_path)), exist_ok=True)
+            os.makedirs(self._blob_dir, exist_ok=True)
+            self._closed = False
+        self._init_db()

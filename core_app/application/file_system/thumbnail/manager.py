@@ -311,3 +311,9 @@ class ThumbnailManager:
                     self.conn = None
             except Exception as e:
                 logger.error(f"Error closing thumbnail DB: {e}")
+
+    def reopen(self) -> None:
+        """Reopen the local thumbnail database if closed (e.g. same-process re-login)."""
+        with self._lock:
+            if getattr(self, 'conn', None) is None:
+                self._init_local_db()
