@@ -181,30 +181,50 @@ const FileListHandler = {
             });
 
             const boxRect = FileListView.selectionBox.getBoundingClientRect();
+            const itemLookup = new Map();
+            (AppState.currentFolderContents.folders || []).forEach(f => itemLookup.set(`folder:${f.id}`, f));
+            (AppState.currentFolderContents.files || []).forEach(f => itemLookup.set(`file:${f.id}`, f));
+            const selectedKeySet = new Set(AppState.selectedItems.map(i => `${i.type}:${i.id}`));
+            const ctrlHeld = Boolean(window.event?.ctrlKey);
+
+            // Batch geometry reads before mutating classes to prevent layout thrashing
+            const measurements = [];
             document.querySelectorAll('.file-item:not(.is-uploading)').forEach(itemEl => {
                 const itemRect = itemEl.getBoundingClientRect();
                 const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                
-                const itemId = parseFloat(itemEl.dataset.id);
-                const itemType = itemEl.dataset.type;
-                const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
+                measurements.push({
+                    itemEl,
+                    intersects,
+                    itemId: parseFloat(itemEl.dataset.id),
+                    itemType: itemEl.dataset.type,
+                });
+            });
+
+            let removedAny = false;
+            measurements.forEach(({ itemEl, intersects, itemId, itemType }) => {
+                const key = `${itemType}:${itemId}`;
+                const isSelected = selectedKeySet.has(key);
 
                 if (intersects) {
                     if (!isSelected) {
                         itemEl.classList.add('selected');
-                        const itemData = (itemType === 'folder')
-                            ? AppState.currentFolderContents.folders.find(i => i.id === itemId)
-                            : AppState.currentFolderContents.files.find(i => i.id === itemId);
-                        if (itemData) AppState.selectedItems.push({ ...itemData, type: itemType });
+                        const itemData = itemLookup.get(key);
+                        if (itemData) {
+                            AppState.selectedItems.push({ ...itemData, type: itemType });
+                            selectedKeySet.add(key);
+                        }
                     }
-                } else {
-                    if (!window.event?.ctrlKey && isSelected) {
-                        itemEl.classList.remove('selected');
-                        const indexToRemove = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
-                        if (indexToRemove > -1) AppState.selectedItems.splice(indexToRemove, 1);
-                    }
+                } else if (!ctrlHeld && isSelected) {
+                    itemEl.classList.remove('selected');
+                    selectedKeySet.delete(key);
+                    removedAny = true;
                 }
             });
+
+            if (removedAny) {
+                const retained = AppState.selectedItems.filter(i => selectedKeySet.has(`${i.type}:${i.id}`));
+                AppState.selectedItems.splice(0, AppState.selectedItems.length, ...retained);
+            }
             if (onUpdate) onUpdate(AppState);
         };
 

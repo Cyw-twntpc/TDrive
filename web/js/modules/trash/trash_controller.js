@@ -81,6 +81,11 @@ const TrashHandler = {
                 });
 
                 AppState.trashItems = allItems;
+                if (TrashView._thumbnails instanceof Map) {
+                    TrashView._thumbnails.clear();
+                } else {
+                    TrashView._thumbnails = new Map();
+                }
                 TrashHandler.sortAndRender();
 
                 if (response.files && response.files.length > 0 && response.recycle_bin_id) {
@@ -104,6 +109,18 @@ const TrashHandler = {
             const result = await ApiService.getThumbnails(recycleBinId);
             if (result && result.success && result.thumbnails) {
                 const entries = Object.entries(result.thumbnails);
+                if (!(TrashView._thumbnails instanceof Map)) {
+                    TrashView._thumbnails = new Map();
+                }
+                entries.forEach(([fileId, b64]) => {
+                    TrashView._thumbnails.set(String(fileId), b64);
+                });
+
+                // Index currently rendered file DOM nodes once to avoid O(T * R) selector scans
+                const elementMap = new Map();
+                TrashView.listBody.querySelectorAll('.trash-item[data-type="file"]').forEach(el => {
+                    elementMap.set(String(el.dataset.id), el);
+                });
                 
                 // Batch process DOM updates using requestAnimationFrame
                 const BATCH_SIZE = 20;
@@ -115,7 +132,7 @@ const TrashHandler = {
                         const [fileId, b64] = entries[i];
                         const src = `data:image/jpeg;base64,${b64}`;
                         
-                        const listItem = TrashView.listBody.querySelector(`.trash-item[data-id="${fileId}"][data-type="file"]`);
+                        const listItem = elementMap.get(String(fileId));
                         const listImg = listItem ? listItem.querySelector('.list-thumb-img') : null;
 
                         if (listImg) {
@@ -285,28 +302,49 @@ const TrashHandler = {
             });
 
             const boxRect = TrashView.selectionBox.getBoundingClientRect();
+            const trashLookup = new Map();
+            (AppState.trashItems || []).forEach(i => trashLookup.set(`${i.type}:${i.id}`, i));
+            const selectedKeySet = new Set(AppState.selectedItems.map(i => `${i.type}:${i.id}`));
+            const ctrlHeld = Boolean(window.event?.ctrlKey);
+
+            // Batch geometry reads before mutating classes to prevent layout thrashing
+            const measurements = [];
             TrashView.listBody.querySelectorAll('.trash-item').forEach(itemEl => {
                 const itemRect = itemEl.getBoundingClientRect();
                 const intersects = !(boxRect.right < itemRect.left || boxRect.left > itemRect.right || boxRect.bottom < itemRect.top || boxRect.top > itemRect.bottom);
-                
-                const itemId = parseFloat(itemEl.dataset.id);
-                const itemType = itemEl.dataset.type;
-                const isSelected = AppState.selectedItems.some(i => i.id === itemId && i.type === itemType);
+                measurements.push({
+                    itemEl,
+                    intersects,
+                    itemId: parseFloat(itemEl.dataset.id),
+                    itemType: itemEl.dataset.type,
+                });
+            });
+
+            let removedAny = false;
+            measurements.forEach(({ itemEl, intersects, itemId, itemType }) => {
+                const key = `${itemType}:${itemId}`;
+                const isSelected = selectedKeySet.has(key);
 
                 if (intersects) {
                     if (!isSelected) {
                         itemEl.classList.add('selected');
-                        const itemData = AppState.trashItems.find(i => i.id === itemId && i.type === itemType);
-                        if (itemData) AppState.selectedItems.push(itemData);
+                        const itemData = trashLookup.get(key);
+                        if (itemData) {
+                            AppState.selectedItems.push(itemData);
+                            selectedKeySet.add(key);
+                        }
                     }
-                } else {
-                    if (!window.event?.ctrlKey && isSelected) {
-                        itemEl.classList.remove('selected');
-                        const idx = AppState.selectedItems.findIndex(i => i.id === itemId && i.type === itemType);
-                        if (idx > -1) AppState.selectedItems.splice(idx, 1);
-                    }
+                } else if (!ctrlHeld && isSelected) {
+                    itemEl.classList.remove('selected');
+                    selectedKeySet.delete(key);
+                    removedAny = true;
                 }
             });
+
+            if (removedAny) {
+                const retained = AppState.selectedItems.filter(i => selectedKeySet.has(`${i.type}:${i.id}`));
+                AppState.selectedItems.splice(0, AppState.selectedItems.length, ...retained);
+            }
             TrashView.updateBulkActionState();
         };
 
