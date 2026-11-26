@@ -13,7 +13,6 @@ from core_app.infrastructure.telegram.metadata_manager import MetadataManager
 
 from core_app.application.auth.auth_service import AuthService
 from core_app.application.file_system.file_service import FileService
-from core_app.application.file_system.folder_service import FolderService
 from core_app.application.transfer.transfer_service import TransferService
 from core_app.application.file_system.thumbnail.manager import ThumbnailManager
 from core_app.application.preview.buffer import StreamBuffer
@@ -69,7 +68,6 @@ class TDriveService:
         # Initialize sub-services
         self._auth_service = AuthService(self._shared_state)
         self._file_service = FileService(self._shared_state, self.thumb_manager, buffer=self.buffer, preview_cache=self._preview_cache)
-        self._folder_service = FolderService(self._shared_state)
         
         # Inject MetadataManager into TransferService
         self._transfer_service = TransferService(self._shared_state, self.thumb_manager, self.metadata_manager)
@@ -166,8 +164,8 @@ class TDriveService:
                         exc = t.exception()
                         if exc:
                             logger.error(f"Background task failed: {exc}", exc_info=exc)
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
+                    except (asyncio.CancelledError, RuntimeError) as e:
+                        logger.debug(f"Background task {task_id} completion check skipped: {e}")
                 
             task.add_done_callback(_on_done)
 
@@ -587,7 +585,7 @@ class TDriveService:
 
     # --- Folder Service ---
     def get_folder_tree_data(self) -> List[Dict[str, Any]]:
-        return self._folder_service.get_folder_tree_data()
+        return self._file_service.get_folder_tree_data()
 
     # --- File Service ---
     async def get_folder_contents(self, folder_id: int) -> Dict[str, Any]:
