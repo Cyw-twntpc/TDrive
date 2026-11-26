@@ -342,6 +342,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
                 }
+
+                if (typeof AudioPlayerHandler !== 'undefined' && typeof AudioPlayerHandler.handleCloudFilesChanged === 'function') {
+                    AudioPlayerHandler.handleCloudFilesChanged();
+                }
             });
         }
         ActionController.init({

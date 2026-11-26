@@ -340,6 +340,15 @@ body[data-audio-mode="window"] #file-floating-toolbar {
     text-overflow: ellipsis;
 }
 
+.audio-studio.is-error .audio-bar-subtitle {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+.audio-studio.is-error .audio-mini-pill {
+    border-color: #ef4444;
+}
+
 .audio-bar-center {
     display: flex;
     flex-direction: column;
@@ -410,6 +419,30 @@ body[data-audio-mode="window"] #file-floating-toolbar {
 .audio-icon-btn.danger:hover {
     color: var(--danger-color);
     background: rgba(var(--danger-color-rgb), 0.12);
+}
+
+#audio-loop-btn {
+    position: relative;
+}
+
+#audio-loop-btn[data-loop-state="one"]::after {
+    content: "1";
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 12px;
+    height: 12px;
+    padding: 0 2px;
+    border-radius: 999px;
+    background: var(--primary-color);
+    color: #ffffff;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 12px;
+    text-align: center;
+    box-sizing: border-box;
+    pointer-events: none;
+    box-shadow: 0 0 0 1.5px var(--main-content-bg);
 }
 
 .audio-progress-row {

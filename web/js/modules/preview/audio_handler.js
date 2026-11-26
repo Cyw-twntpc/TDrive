@@ -4,6 +4,7 @@
  */
 const AudioPlayerHandler = {
     _initialized: false,
+    _domBound: false,
     _signalBound: false,
     _mode: 'mini',
     _queue: [],
@@ -13,12 +14,22 @@ const AudioPlayerHandler = {
     _currentMs: 0,
     _durationMs: 0,
     _isSeeking: false,
-    _loopMode: 'loop-all', // 'loop-all' | 'loop-one' | 'shuffle'
+    _seekGuardTargetMs: null,
+    _seekGuardUntil: 0,
+    SEEK_GUARD_MS: 1500,
+    _loopMode: 'off', // 'off' | 'loop-all' | 'loop-one' | 'shuffle'
     _volume: 80,
     _muted: false,
+    _isAdjustingVolume: false,
+    _volumeGuardUntil: 0,
+    VOLUME_GUARD_MS: 300,
     _lastEndedTriggerKey: null,
+    _lastErrorTriggerKey: null,
     _lastRenderedQueueKey: null,
     _playRequestSeq: 0,
+    _shuffleOrder: [],
+    _shufflePos: -1,
+    _playHistory: [],
 
     _studioView: 'all', // 'all' | 'folders' | '<playlist_id>'
     _studioSort: { key: 'name', order: 'asc' },
@@ -74,6 +85,16 @@ const AudioPlayerHandler = {
             if (savedVol !== null && !Number.isNaN(Number(savedVol))) {
                 AudioPlayerHandler._volume = Math.max(0, Math.min(100, parseInt(savedVol, 10)));
             }
+            const savedMuted = localStorage.getItem('tdrive_audio_muted');
+            if (savedMuted === '1' || savedMuted === 'true') {
+                AudioPlayerHandler._muted = true;
+            } else if (savedMuted === '0' || savedMuted === 'false') {
+                AudioPlayerHandler._muted = false;
+            }
+            const savedLoop = localStorage.getItem('tdrive_audio_loop_mode');
+            if (savedLoop === 'off' || savedLoop === 'loop-all' || savedLoop === 'loop-one' || savedLoop === 'shuffle') {
+                AudioPlayerHandler._loopMode = savedLoop;
+            }
         } catch (_err) {
             /* Ignore storage errors in restricted environments */
         }
@@ -107,11 +128,14 @@ const AudioPlayerHandler = {
                 }
             });
             ApiService.controlAudio('volume', AudioPlayerHandler._volume).catch(() => {});
+            ApiService.controlAudio('mute', AudioPlayerHandler._muted ? 1 : 0).catch(() => {});
         }
     },
 
     /** Bind click, slider, search, and modal listeners for the 3-stage Audio Studio. */
     _bindDomEvents() {
+        if (AudioPlayerHandler._domBound) return;
+        AudioPlayerHandler._domBound = true;
         // Stage transitions
         document.getElementById('audio-mini-expand-bar-btn')?.addEventListener('click', () => {
             AudioPlayerHandler.setMode('bar');
@@ -248,13 +272,64 @@ const AudioPlayerHandler = {
         // Volume slider interaction
         const volSlider = document.getElementById('audio-volume-slider');
         if (volSlider) {
+            const endVolumeAdjust = () => {
+                AudioPlayerHandler._isAdjustingVolume = false;
+            };
+            volSlider.addEventListener('mousedown', () => { AudioPlayerHandler._isAdjustingVolume = true; });
+            volSlider.addEventListener('touchstart', () => { AudioPlayerHandler._isAdjustingVolume = true; }, { passive: true });
+            window.addEventListener('mouseup', endVolumeAdjust);
+            window.addEventListener('touchend', endVolumeAdjust);
+            window.addEventListener('touchcancel', endVolumeAdjust);
+            volSlider.addEventListener('blur', endVolumeAdjust);
             volSlider.addEventListener('input', () => {
                 AudioPlayerHandler.setVolume(Number(volSlider.value));
             });
             volSlider.addEventListener('change', () => {
+                AudioPlayerHandler._isAdjustingVolume = false;
                 AudioPlayerHandler.setVolume(Number(volSlider.value), { immediate: true });
             });
         }
+
+        // Global keyboard shortcuts when Audio Bar/Window is active without text input or modal focus
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const target = e.target;
+            const tagName = (target && target.tagName) ? target.tagName.toUpperCase() : '';
+            if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || (target && target.isContentEditable)) {
+                return;
+            }
+            if (document.querySelector('.modal-overlay:not(.hidden)')) {
+                return;
+            }
+
+            const mode = AudioPlayerHandler._mode;
+            if (e.key === 'Escape') {
+                if (mode === 'window') {
+                    e.preventDefault();
+                    AudioPlayerHandler.setMode(AudioPlayerHandler._currentTrack ? 'bar' : 'mini');
+                } else if (mode === 'bar') {
+                    e.preventDefault();
+                    AudioPlayerHandler.setMode('mini', { skipLoad: true });
+                }
+                return;
+            }
+
+            if ((mode !== 'bar' && mode !== 'window') || !AudioPlayerHandler._currentTrack) {
+                return;
+            }
+            if (e.code === 'Space' || e.key === ' ') {
+                e.preventDefault();
+                AudioPlayerHandler.togglePlay();
+            } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && AudioPlayerHandler._durationMs > 0) {
+                e.preventDefault();
+                const delta = e.key === 'ArrowRight' ? 5000 : -5000;
+                const targetMs = Math.max(
+                    0,
+                    Math.min(AudioPlayerHandler._durationMs, AudioPlayerHandler._currentMs + delta)
+                );
+                AudioPlayerHandler.seekTo(targetMs);
+            }
+        });
 
         // Studio navigation & search
         document.getElementById('audio-nav-all')?.addEventListener('click', () => AudioPlayerHandler.selectStudioView('all'));
@@ -442,44 +517,142 @@ const AudioPlayerHandler = {
         await AudioPlayerHandler.playTrackList(queue, startIndex, false);
     },
 
+    /** Build a Fisher-Yates shuffle order across _queue, optionally placing anchorIndex first. */
+    _rebuildShuffleDeck(anchorIndex = -1) {
+        const len = AudioPlayerHandler._queue.length;
+        const deck = Array.from({ length: len }, (_, i) => i);
+        for (let i = deck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = deck[i];
+            deck[i] = deck[j];
+            deck[j] = tmp;
+        }
+        if (anchorIndex >= 0 && anchorIndex < len) {
+            const pos = deck.indexOf(anchorIndex);
+            if (pos > 0) {
+                const tmp = deck[0];
+                deck[0] = deck[pos];
+                deck[pos] = tmp;
+            }
+            AudioPlayerHandler._shufflePos = 0;
+        } else {
+            AudioPlayerHandler._shufflePos = -1;
+        }
+        AudioPlayerHandler._shuffleOrder = deck;
+    },
+
+    /** Resolve the upcoming track to preload based on current loop/shuffle mode. */
+    _getUpcomingPreloadTrack(index) {
+        const queue = AudioPlayerHandler._queue;
+        const len = queue.length;
+        if (len <= 1 || AudioPlayerHandler._loopMode === 'loop-one') return null;
+
+        let nextIdx = null;
+        if (AudioPlayerHandler._loopMode === 'shuffle') {
+            if (AudioPlayerHandler._shuffleOrder.length !== len) {
+                AudioPlayerHandler._rebuildShuffleDeck(index);
+            }
+            const curPos = AudioPlayerHandler._shufflePos >= 0
+                ? AudioPlayerHandler._shufflePos
+                : AudioPlayerHandler._shuffleOrder.indexOf(index);
+            const nextPos = curPos + 1;
+            if (nextPos >= 0 && nextPos < AudioPlayerHandler._shuffleOrder.length) {
+                nextIdx = AudioPlayerHandler._shuffleOrder[nextPos];
+            }
+        } else if (AudioPlayerHandler._loopMode === 'off') {
+            nextIdx = index + 1;
+            if (nextIdx >= len) return null;
+        } else {
+            nextIdx = (index + 1) % len;
+        }
+
+        if (nextIdx === null || nextIdx < 0 || nextIdx >= len || nextIdx === index) return null;
+        const candidate = queue[nextIdx];
+        return (candidate && !candidate.missing) ? candidate : null;
+    },
+
     /** Replace active queue with tracks and start playing at startIndex (or shuffled). */
     async playTrackList(tracks, startIndex = 0, shuffle = false) {
         const playable = (tracks || []).filter(t => !t.missing);
         if (playable.length === 0) return;
 
         AudioPlayerHandler._queue = playable.slice();
+        AudioPlayerHandler._playHistory = [];
+        AudioPlayerHandler._shuffleOrder = [];
+        AudioPlayerHandler._shufflePos = -1;
+
         let targetIndex = Math.max(0, Math.min(playable.length - 1, startIndex));
         if (shuffle) {
             AudioPlayerHandler._loopMode = 'shuffle';
-            targetIndex = Math.floor(Math.random() * playable.length);
+            try {
+                localStorage.setItem('tdrive_audio_loop_mode', 'shuffle');
+            } catch (_err) {
+                /* Ignore storage errors */
+            }
+            AudioPlayerHandler._rebuildShuffleDeck(-1);
+            targetIndex = AudioPlayerHandler._shuffleOrder.length > 0 ? AudioPlayerHandler._shuffleOrder[0] : 0;
+            AudioPlayerHandler._shufflePos = 0;
+        } else if (AudioPlayerHandler._loopMode === 'shuffle') {
+            AudioPlayerHandler._rebuildShuffleDeck(targetIndex);
         }
 
         AudioPlayerHandler.updateVisibilityForPage();
         if (AudioPlayerHandler._mode === 'mini') {
             AudioPlayerHandler.setMode('bar');
         }
-        await AudioPlayerHandler._playTrackAtIndex(targetIndex);
+        await AudioPlayerHandler._playTrackAtIndex(targetIndex, { pushHistory: false, shufflePos: AudioPlayerHandler._shufflePos });
     },
 
-    async _playTrackAtIndex(index) {
+    async _playTrackAtIndex(index, options = {}) {
         if (index < 0 || index >= AudioPlayerHandler._queue.length) return;
         const reqSeq = ++AudioPlayerHandler._playRequestSeq;
+
+        if (
+            options.pushHistory !== false
+            && AudioPlayerHandler._currentTrack
+            && AudioPlayerHandler._currentIndex >= 0
+            && AudioPlayerHandler._currentIndex !== index
+        ) {
+            AudioPlayerHandler._playHistory.push({
+                index: AudioPlayerHandler._currentIndex,
+                id: AudioPlayerHandler._currentTrack.id,
+            });
+            if (AudioPlayerHandler._playHistory.length > 100) {
+                AudioPlayerHandler._playHistory.shift();
+            }
+        }
+
+        if (AudioPlayerHandler._loopMode === 'shuffle') {
+            if (typeof options.shufflePos === 'number' && options.shufflePos >= 0) {
+                AudioPlayerHandler._shufflePos = options.shufflePos;
+            } else {
+                const pos = AudioPlayerHandler._shuffleOrder.indexOf(index);
+                if (pos >= 0 && AudioPlayerHandler._shuffleOrder.length === AudioPlayerHandler._queue.length) {
+                    AudioPlayerHandler._shufflePos = pos;
+                } else {
+                    AudioPlayerHandler._rebuildShuffleDeck(index);
+                }
+            }
+        }
+
         const track = AudioPlayerHandler._queue[index];
         AudioPlayerHandler._currentIndex = index;
         AudioPlayerHandler._currentTrack = track;
         AudioPlayerHandler._playbackState = 'buffering';
         AudioPlayerHandler._currentMs = 0;
         AudioPlayerHandler._durationMs = 0;
+        AudioPlayerHandler._seekGuardTargetMs = null;
+        AudioPlayerHandler._seekGuardUntil = 0;
         AudioPlayerHandler._lastEndedTriggerKey = null;
+        AudioPlayerHandler._lastErrorTriggerKey = null;
 
         AudioPlayerHandler._renderTransportUI();
         AudioPlayerHandler._renderStudioTrackList();
 
         // Warm the initial chunk of the upcoming track in background
-        if (AudioPlayerHandler._queue.length > 1 && typeof ApiService.preloadAudio === 'function') {
-            const nextIndex = (index + 1) % AudioPlayerHandler._queue.length;
-            const nextTrack = AudioPlayerHandler._queue[nextIndex];
-            if (nextTrack && !nextTrack.missing && Number(nextTrack.id) !== Number(track.id)) {
+        if (typeof ApiService.preloadAudio === 'function') {
+            const nextTrack = AudioPlayerHandler._getUpcomingPreloadTrack(index);
+            if (nextTrack && Number(nextTrack.id) !== Number(track.id)) {
                 ApiService.preloadAudio(nextTrack.id);
             }
         }
@@ -513,6 +686,10 @@ const AudioPlayerHandler = {
             }
             return;
         }
+        if (AudioPlayerHandler._playbackState === 'error' && AudioPlayerHandler._currentIndex >= 0) {
+            await AudioPlayerHandler._playTrackAtIndex(AudioPlayerHandler._currentIndex, { pushHistory: false });
+            return;
+        }
         try {
             const res = await ApiService.controlAudio('toggle', 0);
             if (res && res.state) AudioPlayerHandler.handleBackendState(res.state);
@@ -525,19 +702,36 @@ const AudioPlayerHandler = {
         const len = AudioPlayerHandler._queue.length;
         if (len === 0) return;
 
-        let nextIdx;
-        if (AudioPlayerHandler._loopMode === 'shuffle' && len > 1) {
-            do {
-                nextIdx = Math.floor(Math.random() * len);
-            } while (nextIdx === AudioPlayerHandler._currentIndex);
-        } else {
-            nextIdx = AudioPlayerHandler._currentIndex + 1;
-            if (nextIdx >= len) {
-                if (autoTriggered && AudioPlayerHandler._loopMode !== 'loop-all' && len === 1) {
-                    return;
-                }
-                nextIdx = 0;
+        if (AudioPlayerHandler._loopMode === 'shuffle') {
+            if (len === 1) {
+                if (autoTriggered) return;
+                await AudioPlayerHandler._playTrackAtIndex(0, { pushHistory: false, shufflePos: 0 });
+                return;
             }
+            if (AudioPlayerHandler._shuffleOrder.length !== len) {
+                AudioPlayerHandler._rebuildShuffleDeck(AudioPlayerHandler._currentIndex);
+            }
+            let nextPos = AudioPlayerHandler._shufflePos + 1;
+            if (nextPos >= AudioPlayerHandler._shuffleOrder.length) {
+                AudioPlayerHandler._rebuildShuffleDeck(-1);
+                if (AudioPlayerHandler._shuffleOrder[0] === AudioPlayerHandler._currentIndex && len > 1) {
+                    const tmp = AudioPlayerHandler._shuffleOrder[0];
+                    AudioPlayerHandler._shuffleOrder[0] = AudioPlayerHandler._shuffleOrder[1];
+                    AudioPlayerHandler._shuffleOrder[1] = tmp;
+                }
+                nextPos = 0;
+            }
+            const nextIdx = AudioPlayerHandler._shuffleOrder[nextPos];
+            await AudioPlayerHandler._playTrackAtIndex(nextIdx, { shufflePos: nextPos });
+            return;
+        }
+
+        let nextIdx = AudioPlayerHandler._currentIndex + 1;
+        if (nextIdx >= len) {
+            if (autoTriggered && AudioPlayerHandler._loopMode === 'off') {
+                return;
+            }
+            nextIdx = 0;
         }
         await AudioPlayerHandler._playTrackAtIndex(nextIdx);
     },
@@ -550,14 +744,34 @@ const AudioPlayerHandler = {
             await AudioPlayerHandler.seekTo(0);
             return;
         }
+
+        if (AudioPlayerHandler._loopMode === 'shuffle' && AudioPlayerHandler._playHistory.length > 0) {
+            while (AudioPlayerHandler._playHistory.length > 0) {
+                const entry = AudioPlayerHandler._playHistory.pop();
+                if (!entry) continue;
+                let resolvedIdx = -1;
+                if (entry.index >= 0 && entry.index < len && Number(AudioPlayerHandler._queue[entry.index].id) === Number(entry.id)) {
+                    resolvedIdx = entry.index;
+                } else {
+                    resolvedIdx = AudioPlayerHandler._queue.findIndex(t => Number(t.id) === Number(entry.id));
+                }
+                if (resolvedIdx >= 0 && resolvedIdx !== AudioPlayerHandler._currentIndex) {
+                    await AudioPlayerHandler._playTrackAtIndex(resolvedIdx, { pushHistory: false });
+                    return;
+                }
+            }
+        }
+
         let prevIdx = AudioPlayerHandler._currentIndex - 1;
         if (prevIdx < 0) prevIdx = len - 1;
-        await AudioPlayerHandler._playTrackAtIndex(prevIdx);
+        await AudioPlayerHandler._playTrackAtIndex(prevIdx, { pushHistory: false });
     },
 
     async seekTo(ms) {
         const target = Math.max(0, Math.round(ms));
         AudioPlayerHandler._currentMs = target;
+        AudioPlayerHandler._seekGuardTargetMs = target;
+        AudioPlayerHandler._seekGuardUntil = Date.now() + AudioPlayerHandler.SEEK_GUARD_MS;
         AudioPlayerHandler._renderProgressOnly();
         try {
             const res = await ApiService.controlAudio('seek', target);
@@ -570,6 +784,7 @@ const AudioPlayerHandler = {
     async setVolume(vol, options = {}) {
         const clamped = Math.max(0, Math.min(100, Math.round(Number(vol) || 0)));
         AudioPlayerHandler._volume = clamped;
+        AudioPlayerHandler._volumeGuardUntil = Date.now() + AudioPlayerHandler.VOLUME_GUARD_MS;
         AudioPlayerHandler._renderVolumeUI();
 
         const syncVolume = async () => {
@@ -602,6 +817,12 @@ const AudioPlayerHandler = {
 
     async toggleMute() {
         AudioPlayerHandler._muted = !AudioPlayerHandler._muted;
+        AudioPlayerHandler._volumeGuardUntil = Date.now() + AudioPlayerHandler.VOLUME_GUARD_MS;
+        try {
+            localStorage.setItem('tdrive_audio_muted', AudioPlayerHandler._muted ? '1' : '0');
+        } catch (_err) {
+            /* Ignore storage errors */
+        }
         AudioPlayerHandler._renderVolumeUI();
         try {
             await ApiService.controlAudio('mute', AudioPlayerHandler._muted ? 1 : 0);
@@ -611,9 +832,17 @@ const AudioPlayerHandler = {
     },
 
     cycleLoopMode() {
-        const order = ['loop-all', 'loop-one', 'shuffle'];
+        const order = ['off', 'loop-all', 'loop-one', 'shuffle'];
         const idx = order.indexOf(AudioPlayerHandler._loopMode);
         AudioPlayerHandler._loopMode = order[(idx + 1) % order.length];
+        try {
+            localStorage.setItem('tdrive_audio_loop_mode', AudioPlayerHandler._loopMode);
+        } catch (_err) {
+            /* Ignore storage errors */
+        }
+        if (AudioPlayerHandler._loopMode === 'shuffle' && AudioPlayerHandler._queue.length > 0) {
+            AudioPlayerHandler._rebuildShuffleDeck(AudioPlayerHandler._currentIndex);
+        }
         AudioPlayerHandler._renderTransportUI();
     },
 
@@ -630,8 +859,14 @@ const AudioPlayerHandler = {
         AudioPlayerHandler._playbackState = 'stopped';
         AudioPlayerHandler._currentMs = 0;
         AudioPlayerHandler._durationMs = 0;
+        AudioPlayerHandler._seekGuardTargetMs = null;
+        AudioPlayerHandler._seekGuardUntil = 0;
         AudioPlayerHandler._lastEndedTriggerKey = null;
+        AudioPlayerHandler._lastErrorTriggerKey = null;
         AudioPlayerHandler._lastRenderedQueueKey = null;
+        AudioPlayerHandler._shuffleOrder = [];
+        AudioPlayerHandler._shufflePos = -1;
+        AudioPlayerHandler._playHistory = [];
         AudioPlayerHandler.setMode('mini', { skipLoad: true });
         AudioPlayerHandler._renderTransportUI();
         AudioPlayerHandler._renderStudioTrackList();
@@ -644,6 +879,14 @@ const AudioPlayerHandler = {
             clearTimeout(AudioPlayerHandler._volumeSyncTimer);
             AudioPlayerHandler._volumeSyncTimer = null;
         }
+        AudioPlayerHandler._seekGuardTargetMs = null;
+        AudioPlayerHandler._seekGuardUntil = 0;
+        AudioPlayerHandler._isAdjustingVolume = false;
+        AudioPlayerHandler._volumeGuardUntil = 0;
+        AudioPlayerHandler._lastErrorTriggerKey = null;
+        AudioPlayerHandler._shuffleOrder = [];
+        AudioPlayerHandler._shufflePos = -1;
+        AudioPlayerHandler._playHistory = [];
         AudioPlayerHandler._queue = [];
         AudioPlayerHandler._allAudioFiles = [];
         AudioPlayerHandler._playlists = [];
@@ -673,28 +916,61 @@ const AudioPlayerHandler = {
             return;
         }
 
+        const now = Date.now();
         AudioPlayerHandler._playbackState = state.state || 'stopped';
         if (!AudioPlayerHandler._isSeeking && typeof state.current_ms === 'number') {
-            AudioPlayerHandler._currentMs = Math.max(0, state.current_ms);
+            const seekGuardActive = AudioPlayerHandler._seekGuardTargetMs !== null
+                && now < AudioPlayerHandler._seekGuardUntil;
+            if (seekGuardActive && Math.abs(state.current_ms - AudioPlayerHandler._seekGuardTargetMs) > 2000) {
+                // Keep optimistic seek target while libVLC fetches and jumps to the target byte range.
+            } else {
+                AudioPlayerHandler._seekGuardTargetMs = null;
+                AudioPlayerHandler._currentMs = Math.max(0, state.current_ms);
+            }
         }
         if (typeof state.duration_ms === 'number' && state.duration_ms >= 0) {
             AudioPlayerHandler._durationMs = state.duration_ms;
         }
-        if (typeof state.volume === 'number') {
-            AudioPlayerHandler._volume = state.volume;
-        }
-        if (typeof state.muted === 'boolean') {
-            AudioPlayerHandler._muted = state.muted;
+
+        const volumeGuardActive = AudioPlayerHandler._isAdjustingVolume
+            || AudioPlayerHandler._volumeSyncTimer !== null
+            || now < AudioPlayerHandler._volumeGuardUntil;
+        if (!volumeGuardActive) {
+            if (typeof state.volume === 'number') {
+                AudioPlayerHandler._volume = state.volume;
+            }
+            if (typeof state.muted === 'boolean') {
+                AudioPlayerHandler._muted = state.muted;
+            }
         }
 
         AudioPlayerHandler._renderTransportUI();
+
+        if (AudioPlayerHandler._playbackState === 'error' && AudioPlayerHandler._currentTrack) {
+            const errKey = `${AudioPlayerHandler._playRequestSeq}:${AudioPlayerHandler._currentIndex}:${AudioPlayerHandler._currentTrack.id}`;
+            if (AudioPlayerHandler._lastErrorTriggerKey !== errKey) {
+                AudioPlayerHandler._lastErrorTriggerKey = errKey;
+                if (typeof UIModals !== 'undefined' && typeof UIModals.showAlert === 'function') {
+                    const msg = AudioPlayerHandler._t(
+                        'music.err_playback_failed',
+                        'Unable to play "{name}". Please check your connection or verify the file still exists.'
+                    ).replace('{name}', AudioPlayerHandler._currentTrack.name || '');
+                    UIModals.showAlert(
+                        AudioPlayerHandler._t('dialog.err_title', 'Error'),
+                        msg,
+                        'btn-primary'
+                    );
+                }
+            }
+            return;
+        }
 
         if (AudioPlayerHandler._playbackState === 'ended' && AudioPlayerHandler._currentTrack) {
             const endKey = `${AudioPlayerHandler._currentIndex}:${AudioPlayerHandler._currentTrack.id}`;
             if (AudioPlayerHandler._lastEndedTriggerKey !== endKey) {
                 AudioPlayerHandler._lastEndedTriggerKey = endKey;
                 if (AudioPlayerHandler._loopMode === 'loop-one') {
-                    AudioPlayerHandler._playTrackAtIndex(AudioPlayerHandler._currentIndex);
+                    AudioPlayerHandler._playTrackAtIndex(AudioPlayerHandler._currentIndex, { pushHistory: false });
                 } else {
                     AudioPlayerHandler.playNext(true);
                 }
@@ -738,9 +1014,11 @@ const AudioPlayerHandler = {
         const studioEl = document.getElementById('audio-studio');
         const isPlaying = AudioPlayerHandler._playbackState === 'playing';
         const isBuffering = AudioPlayerHandler._playbackState === 'buffering';
+        const isError = AudioPlayerHandler._playbackState === 'error';
         if (studioEl) {
             studioEl.classList.toggle('is-playing', isPlaying);
             studioEl.classList.toggle('is-buffering', isBuffering);
+            studioEl.classList.toggle('is-error', isError);
             studioEl.classList.toggle('has-track', Boolean(AudioPlayerHandler._currentTrack));
         }
 
@@ -758,7 +1036,11 @@ const AudioPlayerHandler = {
                 const ext = track.name.includes('.') ? track.name.split('.').pop().toUpperCase() : 'AUDIO';
                 const parts = [ext];
                 if (track.size && track.size !== '-') parts.push(track.size);
-                if (isBuffering) parts.push(AudioPlayerHandler._t('music.status_buffering', 'Buffering...'));
+                if (isError) {
+                    parts.push(AudioPlayerHandler._t('music.status_error', 'Playback failed'));
+                } else if (isBuffering) {
+                    parts.push(AudioPlayerHandler._t('music.status_buffering', 'Buffering...'));
+                }
                 barSub.textContent = parts.join(' • ');
             }
         } else {
@@ -781,20 +1063,29 @@ const AudioPlayerHandler = {
         const loopBtn = document.getElementById('audio-loop-btn');
         if (loopBtn) {
             const loopIcon = loopBtn.querySelector('i');
-            if (AudioPlayerHandler._loopMode === 'loop-one') {
+            if (AudioPlayerHandler._loopMode === 'loop-all') {
+                if (loopIcon) loopIcon.className = 'fas fa-redo-alt';
+                loopBtn.dataset.loopState = 'all';
+                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_all');
+                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_all', 'Repeat All');
+                loopBtn.classList.add('active');
+            } else if (AudioPlayerHandler._loopMode === 'loop-one') {
                 if (loopIcon) loopIcon.className = 'fas fa-redo-alt';
                 loopBtn.dataset.loopState = 'one';
+                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_one');
                 loopBtn.title = AudioPlayerHandler._t('music.mode_loop_one', 'Repeat One');
                 loopBtn.classList.add('active');
             } else if (AudioPlayerHandler._loopMode === 'shuffle') {
                 if (loopIcon) loopIcon.className = 'fas fa-random';
                 loopBtn.dataset.loopState = 'shuffle';
+                loopBtn.setAttribute('data-i18n-title', 'music.mode_shuffle');
                 loopBtn.title = AudioPlayerHandler._t('music.mode_shuffle', 'Shuffle');
                 loopBtn.classList.add('active');
             } else {
                 if (loopIcon) loopIcon.className = 'fas fa-redo';
-                loopBtn.dataset.loopState = 'all';
-                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_all', 'Repeat All');
+                loopBtn.dataset.loopState = 'off';
+                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_off');
+                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_off', 'No Repeat');
                 loopBtn.classList.remove('active');
             }
         }
@@ -855,8 +1146,14 @@ const AudioPlayerHandler = {
 
     async _removeQueueIndex(idx) {
         if (idx < 0 || idx >= AudioPlayerHandler._queue.length) return;
+        const removed = AudioPlayerHandler._queue[idx];
         const wasCurrent = idx === AudioPlayerHandler._currentIndex;
         AudioPlayerHandler._queue.splice(idx, 1);
+        if (removed) {
+            AudioPlayerHandler._playHistory = AudioPlayerHandler._playHistory
+                .filter(h => Number(h.id) !== Number(removed.id))
+                .map(h => (h.index > idx ? { ...h, index: h.index - 1 } : h));
+        }
 
         if (AudioPlayerHandler._queue.length === 0) {
             await AudioPlayerHandler.stopPlayback();
@@ -864,14 +1161,75 @@ const AudioPlayerHandler = {
         }
         if (idx < AudioPlayerHandler._currentIndex) {
             AudioPlayerHandler._currentIndex -= 1;
+            if (AudioPlayerHandler._loopMode === 'shuffle') {
+                AudioPlayerHandler._rebuildShuffleDeck(AudioPlayerHandler._currentIndex);
+            }
             AudioPlayerHandler._renderBarQueuePanel();
         } else if (wasCurrent) {
             const nextIndex = Math.min(idx, AudioPlayerHandler._queue.length - 1);
-            await AudioPlayerHandler._playTrackAtIndex(nextIndex);
+            if (AudioPlayerHandler._loopMode === 'shuffle') {
+                AudioPlayerHandler._rebuildShuffleDeck(nextIndex);
+            }
+            await AudioPlayerHandler._playTrackAtIndex(nextIndex, { pushHistory: false });
         } else {
+            if (AudioPlayerHandler._loopMode === 'shuffle') {
+                AudioPlayerHandler._rebuildShuffleDeck(AudioPlayerHandler._currentIndex);
+            }
             AudioPlayerHandler._renderBarQueuePanel();
         }
         AudioPlayerHandler.updateVisibilityForPage();
+    },
+
+    /** Synchronize _allAudioFiles and active _queue after cloud file deletions, moves, or renames. */
+    async handleCloudFilesChanged() {
+        try {
+            const audioRes = await ApiService.getAllAudioFiles();
+            if (!audioRes || !audioRes.success || !Array.isArray(audioRes.items)) {
+                return;
+            }
+            AudioPlayerHandler._allAudioFiles = audioRes.items;
+            const byId = new Map(audioRes.items.map(item => [Number(item.id), item]));
+
+            if (AudioPlayerHandler._queue.length > 0) {
+                const prevActiveId = AudioPlayerHandler._currentTrack ? Number(AudioPlayerHandler._currentTrack.id) : null;
+                const prunedQueue = [];
+                AudioPlayerHandler._queue.forEach((track) => {
+                    const fresh = byId.get(Number(track.id));
+                    if (fresh) {
+                        prunedQueue.push({ ...track, ...fresh });
+                    }
+                });
+
+                AudioPlayerHandler._queue = prunedQueue;
+                if (prevActiveId !== null) {
+                    const newIdx = prunedQueue.findIndex(t => Number(t.id) === prevActiveId);
+                    if (newIdx >= 0) {
+                        AudioPlayerHandler._currentIndex = newIdx;
+                        AudioPlayerHandler._currentTrack = prunedQueue[newIdx];
+                    } else if (AudioPlayerHandler._playbackState !== 'playing' && AudioPlayerHandler._playbackState !== 'buffering') {
+                        await AudioPlayerHandler.stopPlayback();
+                    } else {
+                        AudioPlayerHandler._currentIndex = -1;
+                    }
+                }
+                if (AudioPlayerHandler._loopMode === 'shuffle' && AudioPlayerHandler._queue.length > 0) {
+                    AudioPlayerHandler._rebuildShuffleDeck(AudioPlayerHandler._currentIndex);
+                }
+                AudioPlayerHandler._lastRenderedQueueKey = null;
+                AudioPlayerHandler._renderTransportUI();
+                AudioPlayerHandler.updateVisibilityForPage();
+            }
+
+            if (AudioPlayerHandler._mode === 'window') {
+                if (AudioPlayerHandler._studioView !== 'all' && AudioPlayerHandler._studioView !== 'folders') {
+                    await AudioPlayerHandler._loadActivePlaylistDetail(AudioPlayerHandler._studioView);
+                }
+                AudioPlayerHandler._renderStudioSidebar();
+                AudioPlayerHandler._renderStudioTrackList();
+            }
+        } catch (err) {
+            console.error('Failed to sync audio state after cloud file change:', err);
+        }
     },
 
     _extractDraggedTrackIds(e) {
