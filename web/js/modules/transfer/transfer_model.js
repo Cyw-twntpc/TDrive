@@ -284,7 +284,7 @@ const TransferModel = {
                         else btnTitle = isValid ? window.t('transfer.show_in_explorer') : window.t('transfer.file_removed');
 
                         const btn = isUp ? el.querySelector('.btn-go-cloud') : el.querySelector('.btn-reveal-local');
-                        if (btn) btn.title = btnTitle;
+                        if (btn) btn.setAttribute('data-tooltip', btnTitle);
 
                         if (isUp) {
                             const pathEl = el.querySelector('.sm-name div');

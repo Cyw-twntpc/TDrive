@@ -195,7 +195,7 @@ function startQrLogin() {
     const qrContainer = document.getElementById('qrCodeContainer');
     qrContainer.classList.remove('expired');
     qrContainer.innerHTML = `<div class="qr-loading"><i class="fas fa-spinner fa-spin"></i><span>${window.t('login.qr_generating')}</span></div>
-                             <div class="qr-overlay" id="qrOverlay"><button id="centerRefreshQrBtn" class="center-refresh-btn" title="${window.t('login.qr_refresh_title')}"><i class="fas fa-sync-alt"></i></button></div>`;
+                             <div class="qr-overlay" id="qrOverlay"><button id="centerRefreshQrBtn" class="center-refresh-btn"><i class="fas fa-sync-alt"></i></button></div>`;
     document.getElementById('centerRefreshQrBtn').addEventListener('click', startQrLogin);
     
     if(window.tdrive_bridge) {
@@ -209,7 +209,7 @@ function startQrLogin() {
                 
                 const overlay = document.createElement('div');
                 overlay.className = 'qr-overlay';
-                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn" title="${window.t('login.qr_refresh_title')}"><i class="fas fa-sync-alt"></i></button>`;
+                overlay.innerHTML = `<button id="centerRefreshQrBtn" class="center-refresh-btn"><i class="fas fa-sync-alt"></i></button>`;
                 qrContainer.appendChild(overlay);
                 document.getElementById('centerRefreshQrBtn').addEventListener('click', startQrLogin);
 

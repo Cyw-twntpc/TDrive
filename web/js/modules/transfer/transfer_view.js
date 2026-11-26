@@ -239,7 +239,6 @@ const TransferView = {
                 speedEl.style.color = '#f59e0b';
                 if (btn && btn.dataset.lastStatus !== 'paused') {
                     btn.innerHTML = '<i class="fas fa-play"></i>';
-                    btn.title = window.t('transfer.lbl_resume');
                     btn.dataset.lastStatus = 'paused';
                 }
             } else if (task.status === 'failed') {
@@ -247,7 +246,6 @@ const TransferView = {
                 speedEl.style.color = 'var(--danger-color)';
                 if (btn && btn.dataset.lastStatus !== 'failed') {
                     btn.innerHTML = '<i class="fas fa-redo"></i>';
-                    btn.title = window.t('transfer.lbl_retry');
                     btn.dataset.lastStatus = 'failed';
                 }
             } else if (['queued', 'pending'].includes(task.status)) {
@@ -255,7 +253,6 @@ const TransferView = {
                 speedEl.style.color = '';
                 if (btn && btn.dataset.lastStatus !== 'queued') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>'; 
-                    btn.title = window.t('transfer.lbl_pause');
                     btn.dataset.lastStatus = 'queued';
                 }
             } else {
@@ -270,7 +267,6 @@ const TransferView = {
                 
                 if (btn && btn.dataset.lastStatus !== 'transferring') {
                     btn.innerHTML = '<i class="fas fa-pause"></i>';
-                    btn.title = window.t('transfer.lbl_pause');
                     btn.dataset.lastStatus = 'transferring';
                 }
             }
@@ -309,7 +305,7 @@ const TransferView = {
                 </div>
                 <div class="card-actions">
                     <button class="icon-btn btn-toggle"><i class="fas fa-pause"></i></button>
-                    <button class="icon-btn btn-cancel" title="${window.t('transfer.btn_cancel')}"><i class="fas fa-times"></i></button>
+                    <button class="icon-btn btn-cancel"><i class="fas fa-times"></i></button>
                 </div>
             </div>`;
         TransferView._bindCardActions(el, task);
@@ -328,8 +324,8 @@ const TransferView = {
                 <div class="failed-info"><span style="font-weight:600; font-size:14px;">${TransferManager.UIManager.escapeHtml(task.name)}</span><span class="failed-msg">${TransferManager.UIManager.escapeHtml(task.message || window.t('transfer.reason_unknown'))}</span></div>
             </div>
             <div class="card-actions">
-                <button class="icon-btn btn-retry" style="color:var(--primary-color);" title="${window.t('transfer.btn_retry')}"><i class="fas fa-redo"></i></button>
-                <button class="icon-btn btn-cancel" title="${window.t('transfer.btn_cancel')}"><i class="fas fa-times"></i></button>
+                <button class="icon-btn btn-retry" style="color:var(--primary-color);"><i class="fas fa-redo"></i></button>
+                <button class="icon-btn btn-cancel"><i class="fas fa-times"></i></button>
             </div>`;
         TransferView._bindCardActions(el, task);
         TransferView.renderTaskCard(task, el);
@@ -411,7 +407,7 @@ const TransferView = {
         el.innerHTML = `
             <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
             <div class="queued-content"><div class="queued-name">${TransferManager.UIManager.escapeHtml(task.name)}</div><div class="queued-size">${TransferManager.UIManager.formatBytes(task.size)}</div></div>
-            <button class="icon-btn btn-cancel" title="${window.t('transfer.btn_cancel')}"><i class="fas fa-times"></i></button>`;
+            <button class="icon-btn btn-cancel"><i class="fas fa-times"></i></button>`;
         TransferView._bindCardActions(el, task);
         TransferView._bindQueuedDragEvents(el);
         TransferView.renderTaskCard(task, el);
@@ -512,11 +508,11 @@ const TransferView = {
                 <div class="sm-badge">${isUp ? window.t('transfer.upload_success') : window.t('transfer.download_success')}</div>
                 <div class="history-actions">
                     ${isUp 
-                        ? `<button class="icon-btn btn-go-cloud" title="${btnTitle}"><i class="fas fa-external-link-alt"></i></button>`
-                        : `<button class="icon-btn btn-reveal-local" title="${btnTitle}"><i class="fas fa-folder-open"></i></button>`
+                        ? `<button class="icon-btn btn-go-cloud" data-tooltip="${btnTitle}"><i class="fas fa-external-link-alt"></i></button>`
+                        : `<button class="icon-btn btn-reveal-local" data-tooltip="${btnTitle}"><i class="fas fa-folder-open"></i></button>`
                     }
                 </div>
-                <button class="btn-remove-history" title="${window.t('transfer.remove_record')}"><i class="fas fa-trash-alt"></i></button>`;
+                <button class="btn-remove-history" data-tooltip="${window.t('transfer.remove_record')}"><i class="fas fa-trash-alt"></i></button>`;
             
             listEl.appendChild(row);
 

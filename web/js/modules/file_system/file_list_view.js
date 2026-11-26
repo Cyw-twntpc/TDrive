@@ -281,7 +281,7 @@ const FileListView = {
                 <i class="${iconClass} grid-thumb-icon"></i>
                 <img class="grid-thumb-img hidden" draggable="false" />
             </div>
-            <div class="grid-name" title="${UIManager.escapeHtml(item.name)}">${UIManager.escapeHtml(item.name)}</div>
+            <div class="grid-name" data-tooltip="${UIManager.escapeHtml(item.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(item.name)}</div>
         `;
 
         FileListHandler._addSelectionListener(itemEl, item, isFolder ? 'folder' : 'file', AppState);
@@ -349,7 +349,7 @@ const FileListView = {
         }
 
         const addPlaylistBtnHtml = (!isFolder && FileListView.isAudioFile(item.name))
-            ? `<button class="item-action-btn add-playlist-btn" title="${window.t('music.add_to_playlist')}"><i class="fas fa-plus-circle"></i></button>`
+            ? `<button class="item-action-btn add-playlist-btn" data-tooltip="${window.t('music.add_to_playlist')}"><i class="fas fa-plus-circle"></i></button>`
             : '';
 
         itemEl.innerHTML = `
@@ -364,9 +364,9 @@ const FileListView = {
                 </div>
                 <div class="name-col-actions">
                     ${addPlaylistBtnHtml}
-                    <button class="item-action-btn rename-btn" title="${window.t('menu.rename')}"><i class="fas fa-pencil-alt"></i></button>
-                    <button class="item-action-btn download-btn" title="${window.t('menu.download')}"><i class="fas fa-download"></i></button>
-                    <button class="item-action-btn delete-btn" title="${window.t('menu.move_to_trash')}"><i class="fas fa-trash"></i></button>
+                    <button class="item-action-btn rename-btn" data-tooltip="${window.t('menu.rename')}"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="item-action-btn download-btn" data-tooltip="${window.t('menu.download')}"><i class="fas fa-download"></i></button>
+                    <button class="item-action-btn delete-btn" data-tooltip="${window.t('menu.move_to_trash')}"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
             <div class="col file-item-col date">${item.modif_date}</div>

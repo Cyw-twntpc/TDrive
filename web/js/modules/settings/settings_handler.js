@@ -61,11 +61,14 @@ const SettingsHandler = {
             const savedPath = settings.defaultDownloadPath;
             if (savedPath) {
                 pathDisplay.textContent = savedPath;
-                pathDisplay.title = savedPath;
+                pathDisplay.setAttribute('data-tooltip', savedPath);
+                pathDisplay.setAttribute('data-tooltip-truncated', 'true');
             } else {
                 pathDisplay.textContent = window.t('dialog.path_not_set_val');
-                pathDisplay.title = window.t('dialog.path_not_set_msg');
+                pathDisplay.removeAttribute('data-tooltip');
+                pathDisplay.removeAttribute('data-tooltip-truncated');
             }
+            pathDisplay.removeAttribute('title');
             
             // Enable or disable the "Set Path" button based on the toggle.
             setPathBtn.disabled = !useDefault;

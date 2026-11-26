@@ -51,7 +51,7 @@ const ActionView = {
 
                 if (folder.id === appState.currentFolderId) {
                     contentEl.classList.add('current-location');
-                    contentEl.title = window.t('dialog.current_location');
+                    contentEl.setAttribute('data-tooltip', window.t('dialog.current_location'));
                 }
 
                 contentEl.addEventListener('click', (e) => {

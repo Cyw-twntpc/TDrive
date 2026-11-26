@@ -53,16 +53,16 @@ const TrashView = {
                 <div class="trash-col-main">
                     <i class="${iconClass} list-thumb-icon"></i>
                     <img class="list-thumb-img hidden" draggable="false" />
-                    <span title="${UIManager.escapeHtml(item.name)}">${UIManager.escapeHtml(item.name)}</span>
+                    <span data-tooltip="${UIManager.escapeHtml(item.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(item.name)}</span>
                 </div>
                 <div class="trash-col-actions">
-                    <button class="trash-action-btn restore-btn" title="${window.t('trash.btn_restore')}"><i class="fas fa-undo-alt"></i></button>
-                    <button class="trash-action-btn delete-btn" title="${window.t('trash.btn_delete')}"><i class="fas fa-trash-alt"></i></button>
+                    <button class="trash-action-btn restore-btn" data-tooltip="${window.t('trash.btn_restore')}"><i class="fas fa-undo-alt"></i></button>
+                    <button class="trash-action-btn delete-btn" data-tooltip="${window.t('trash.btn_delete')}"><i class="fas fa-trash-alt"></i></button>
                 </div>
             </div>
             <div>${item.trashed_date}</div>
             <div>${item.type === 'folder' ? window.t('file_list.type_folder') : window.t('file_list.type_file')}</div>
-            <div class="trash-col-path" title="${pathName}">${pathName}</div> 
+            <div class="trash-col-path" data-tooltip="${pathName}" data-tooltip-truncated="true">${pathName}</div> 
             <div>${item.size}</div>
         `;
 

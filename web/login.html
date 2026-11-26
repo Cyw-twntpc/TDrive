@@ -13,6 +13,7 @@
     <script type="text/javascript" src="js/qwebchannel.js"></script>
     <!-- Custom JS -->
     <script type="text/javascript" src="js/i18n.js"></script>
+    <script type="text/javascript" src="js/components/tooltip_manager.js?v=1"></script>
     <script type="text/javascript" src="js/login.js?v=5" defer></script>
 </head>
 <body oncontextmenu="return false;">
@@ -29,12 +30,12 @@
         <div class="window-drag-area"></div>
 
         <div class="window-controls">
-            <div class="control-btn minimize" id="btn-minimize" data-i18n-title="window.minimize">
+            <div class="control-btn minimize" id="btn-minimize">
                 <svg width="10" height="1" viewBox="0 0 10 1" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="10" height="1" fill="currentColor"/>
                 </svg>
             </div>
-            <div class="control-btn close" id="btn-close" data-i18n-title="window.close">
+            <div class="control-btn close" id="btn-close">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
                 </svg>
@@ -105,7 +106,7 @@
                                 <span data-i18n="login.qr_generating"></span>
                             </div>
                             <div class="qr-overlay" id="qrOverlay">
-                                <button id="centerRefreshQrBtn" class="center-refresh-btn" data-i18n-title="login.qr_refresh_title">
+                                <button id="centerRefreshQrBtn" class="center-refresh-btn">
                                     <i class="fas fa-sync-alt"></i>
                                 </button>
                             </div>

@@ -219,11 +219,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (AppState.viewMode === 'list') {
                 AppState.viewMode = 'grid';
                 icon.className = 'fas fa-list';
-                btn.title = window.t('main.view_list');
+                btn.setAttribute('data-i18n-tooltip', 'main.view_list');
+                btn.setAttribute('data-tooltip', window.t('main.view_list'));
+                btn.removeAttribute('title');
             } else {
                 AppState.viewMode = 'list';
                 icon.className = 'fas fa-th-large';
-                btn.title = window.t('main.view_grid');
+                btn.setAttribute('data-i18n-tooltip', 'main.view_grid');
+                btn.setAttribute('data-tooltip', window.t('main.view_grid'));
+                btn.removeAttribute('title');
             }
             FileListHandler.sortAndRender(AppState);
         });

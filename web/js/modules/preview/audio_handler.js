@@ -1027,10 +1027,17 @@ const AudioPlayerHandler = {
         const barTitle = document.getElementById('audio-bar-title');
         const barSub = document.getElementById('audio-bar-subtitle');
         if (track) {
-            if (miniTitle) miniTitle.textContent = track.name;
+            if (miniTitle) {
+                miniTitle.textContent = track.name;
+                miniTitle.setAttribute('data-tooltip', track.name);
+                miniTitle.setAttribute('data-tooltip-truncated', 'true');
+                miniTitle.removeAttribute('title');
+            }
             if (barTitle) {
                 barTitle.textContent = track.name;
-                barTitle.title = track.name;
+                barTitle.setAttribute('data-tooltip', track.name);
+                barTitle.setAttribute('data-tooltip-truncated', 'true');
+                barTitle.removeAttribute('title');
             }
             if (barSub) {
                 const ext = track.name.includes('.') ? track.name.split('.').pop().toUpperCase() : 'AUDIO';
@@ -1044,10 +1051,15 @@ const AudioPlayerHandler = {
                 barSub.textContent = parts.join(' • ');
             }
         } else {
-            if (miniTitle) miniTitle.textContent = AudioPlayerHandler._t('music.library_title', 'Music Library');
+            if (miniTitle) {
+                miniTitle.textContent = AudioPlayerHandler._t('music.library_title', 'Music Library');
+                miniTitle.removeAttribute('data-tooltip');
+                miniTitle.removeAttribute('title');
+            }
             if (barTitle) {
                 barTitle.textContent = AudioPlayerHandler._t('music.no_track_playing', 'No track selected');
-                barTitle.title = '';
+                barTitle.removeAttribute('data-tooltip');
+                barTitle.removeAttribute('title');
             }
             if (barSub) barSub.textContent = '';
         }
@@ -1063,29 +1075,31 @@ const AudioPlayerHandler = {
         const loopBtn = document.getElementById('audio-loop-btn');
         if (loopBtn) {
             const loopIcon = loopBtn.querySelector('i');
+            loopBtn.removeAttribute('data-i18n-title');
+            loopBtn.removeAttribute('title');
             if (AudioPlayerHandler._loopMode === 'loop-all') {
                 if (loopIcon) loopIcon.className = 'fas fa-redo-alt';
                 loopBtn.dataset.loopState = 'all';
-                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_all');
-                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_all', 'Repeat All');
+                loopBtn.setAttribute('data-i18n-tooltip', 'music.mode_loop_all');
+                loopBtn.setAttribute('data-tooltip', AudioPlayerHandler._t('music.mode_loop_all', 'Repeat All'));
                 loopBtn.classList.add('active');
             } else if (AudioPlayerHandler._loopMode === 'loop-one') {
                 if (loopIcon) loopIcon.className = 'fas fa-redo-alt';
                 loopBtn.dataset.loopState = 'one';
-                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_one');
-                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_one', 'Repeat One');
+                loopBtn.setAttribute('data-i18n-tooltip', 'music.mode_loop_one');
+                loopBtn.setAttribute('data-tooltip', AudioPlayerHandler._t('music.mode_loop_one', 'Repeat One'));
                 loopBtn.classList.add('active');
             } else if (AudioPlayerHandler._loopMode === 'shuffle') {
                 if (loopIcon) loopIcon.className = 'fas fa-random';
                 loopBtn.dataset.loopState = 'shuffle';
-                loopBtn.setAttribute('data-i18n-title', 'music.mode_shuffle');
-                loopBtn.title = AudioPlayerHandler._t('music.mode_shuffle', 'Shuffle');
+                loopBtn.setAttribute('data-i18n-tooltip', 'music.mode_shuffle');
+                loopBtn.setAttribute('data-tooltip', AudioPlayerHandler._t('music.mode_shuffle', 'Shuffle'));
                 loopBtn.classList.add('active');
             } else {
                 if (loopIcon) loopIcon.className = 'fas fa-redo';
                 loopBtn.dataset.loopState = 'off';
-                loopBtn.setAttribute('data-i18n-title', 'music.mode_loop_off');
-                loopBtn.title = AudioPlayerHandler._t('music.mode_loop_off', 'No Repeat');
+                loopBtn.setAttribute('data-i18n-tooltip', 'music.mode_loop_off');
+                loopBtn.setAttribute('data-tooltip', AudioPlayerHandler._t('music.mode_loop_off', 'No Repeat'));
                 loopBtn.classList.remove('active');
             }
         }
@@ -1130,10 +1144,10 @@ const AudioPlayerHandler = {
             row.innerHTML = `
                 <div class="audio-bar-queue-row-main">
                     <span class="audio-bar-queue-idx">${idxHtml}</span>
-                    <span class="audio-bar-queue-name" title="${UIManager.escapeHtml(track.name)}">${UIManager.escapeHtml(track.name)}</span>
+                    <span class="audio-bar-queue-name" data-tooltip="${UIManager.escapeHtml(track.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(track.name)}</span>
                 </div>
                 <span class="audio-bar-queue-meta">${UIManager.escapeHtml(ext)}</span>
-                <button class="item-action-btn audio-queue-remove-btn" title="${UIManager.escapeHtml(AudioPlayerHandler._t('music.remove_from_queue', 'Remove from Queue'))}"><i class="fas fa-times"></i></button>
+                <button class="item-action-btn audio-queue-remove-btn" data-tooltip="${UIManager.escapeHtml(AudioPlayerHandler._t('music.remove_from_queue', 'Remove from Queue'))}"><i class="fas fa-times"></i></button>
             `;
             row.addEventListener('click', () => AudioPlayerHandler._playTrackAtIndex(idx));
             row.querySelector('.audio-queue-remove-btn')?.addEventListener('click', (e) => {
@@ -1487,7 +1501,7 @@ const AudioPlayerHandler = {
                     <span>${UIManager.escapeHtml(folderPath)}</span>
                     <span class="audio-count-badge">${groupTracks.length}</span>
                 </div>
-                <button class="audio-btn-ghost sm audio-folder-play-btn" title="${UIManager.escapeHtml(AudioPlayerHandler._t('music.play_all', 'Play All'))}">
+                <button class="audio-btn-ghost sm audio-folder-play-btn" data-tooltip="${UIManager.escapeHtml(AudioPlayerHandler._t('music.play_all', 'Play All'))}">
                     <i class="fas fa-play"></i>
                 </button>
             `;
@@ -1630,22 +1644,22 @@ const AudioPlayerHandler = {
 
         const playBtnHtml = track.missing
             ? ''
-            : `<button class="item-action-btn audio-row-play-btn" title="${UIManager.escapeHtml(AudioPlayerHandler._t('music.play_track', 'Play Track'))}"><i class="fas fa-play"></i></button>`;
+            : `<button class="item-action-btn audio-row-play-btn"><i class="fas fa-play"></i></button>`;
         const addBtnHtml = track.missing
             ? ''
-            : `<button class="item-action-btn audio-row-add-btn" title="${UIManager.escapeHtml(AudioPlayerHandler._t('music.add_to_playlist', 'Add to Playlist'))}"><i class="fas fa-plus-circle"></i></button>`;
+            : `<button class="item-action-btn audio-row-add-btn" data-tooltip="${UIManager.escapeHtml(AudioPlayerHandler._t('music.add_to_playlist', 'Add to Playlist'))}"><i class="fas fa-plus-circle"></i></button>`;
         const removeBtnHtml = isCustomPlaylist
-            ? `<button class="item-action-btn audio-remove-track-btn" title="${UIManager.escapeHtml(AudioPlayerHandler._t('music.remove_from_playlist', 'Remove from playlist'))}"><i class="fas fa-times"></i></button>`
+            ? `<button class="item-action-btn audio-remove-track-btn" data-tooltip="${UIManager.escapeHtml(AudioPlayerHandler._t('music.remove_from_playlist', 'Remove from playlist'))}"><i class="fas fa-times"></i></button>`
             : '';
 
         row.innerHTML = `
             <span class="col-idx">
                 ${isCurrent ? '<i class="fas fa-volume-up playing-indicator"></i>' : displayIdx}
             </span>
-            <span class="col-name" title="${UIManager.escapeHtml(track.name)}">${UIManager.escapeHtml(track.name)}</span>
+            <span class="col-name" data-tooltip="${UIManager.escapeHtml(track.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(track.name)}</span>
             <span class="col-folder">
                 ${track.folder_id
-                    ? `<button class="audio-folder-badge" title="${UIManager.escapeHtml(folderLabel)}"><i class="fas fa-folder"></i> ${UIManager.escapeHtml(folderLabel)}</button>`
+                    ? `<button class="audio-folder-badge" data-tooltip="${UIManager.escapeHtml(folderLabel)}" data-tooltip-truncated="true"><i class="fas fa-folder"></i> ${UIManager.escapeHtml(folderLabel)}</button>`
                     : `<span class="audio-missing-badge">${UIManager.escapeHtml(folderLabel)}</span>`
                 }
             </span>
