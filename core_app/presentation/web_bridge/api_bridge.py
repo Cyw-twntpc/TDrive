@@ -447,6 +447,43 @@ class Bridge(QObject):
     def move_items(self, items, target_folder_id):
         return self._async_call(self._service.move_items(items, target_folder_id))
 
+    # --- Non-Blocking File / Folder / Trash Slots (queryResultReady) ---
+    @Slot(int, str, str)
+    def create_folder_async(self, parent_id: int, folder_name: str, request_id: str):
+        self._run_background_task(self._service.create_folder(parent_id, folder_name), self.queryResultReady, request_id)
+
+    @Slot(int, str, str, str)
+    def rename_item_async(self, item_id: int, new_name: str, item_type: str, request_id: str):
+        self._run_background_task(self._service.rename_item(item_id, new_name, item_type), self.queryResultReady, request_id)
+
+    @Slot(list, str)
+    def delete_items_async(self, items: list, request_id: str):
+        self._run_background_task(self._service.delete_items(items), self.queryResultReady, request_id)
+
+    @Slot(list, str)
+    def restore_items_async(self, items: list, request_id: str):
+        self._run_background_task(self._service.restore_items(items), self.queryResultReady, request_id)
+
+    @Slot(list, str)
+    def delete_items_permanently_async(self, items: list, request_id: str):
+        self._run_background_task(self._service.delete_items_permanently(items), self.queryResultReady, request_id)
+
+    @Slot(str)
+    def empty_trash_async(self, request_id: str):
+        self._run_background_task(self._service.empty_trash(), self.queryResultReady, request_id)
+
+    @Slot(str)
+    def get_trash_items_async(self, request_id: str):
+        self._run_background_task(self._service.get_trash_items(), self.queryResultReady, request_id)
+
+    @Slot(list, int, str)
+    def move_items_async(self, items: list, target_folder_id: int, request_id: str):
+        self._run_background_task(self._service.move_items(items, target_folder_id), self.queryResultReady, request_id)
+
+    @Slot(int, str)
+    def get_file_extended_details_async(self, map_id: int, request_id: str):
+        self._run_background_task(self._service.get_file_extended_details(map_id), self.queryResultReady, request_id)
+
     # --- Transfer Service Slots ---
     @Slot(int, list, result=dict)
     def upload_files(self, parent_id, local_paths):

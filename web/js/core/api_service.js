@@ -1,6 +1,6 @@
 const ApiService = {
     _callBridge(functionName, ...args) {
-        return new Promise((resolve, reject) => {
+        const invokeOnce = () => new Promise((resolve, reject) => {
             if (window.tdrive_bridge && typeof window.tdrive_bridge[functionName] === 'function') {
                 window.tdrive_bridge[functionName](...args, function(result) {
                     if (result && result.success === false) {
@@ -13,6 +13,28 @@ const ApiService = {
                 reject(new Error("Bridge is not available or function does not exist."));
             }
         });
+
+        const MAX_BUSY_RETRIES = 2;
+        const attempt = async (retryCount) => {
+            const result = await invokeOnce();
+            if (result && result.success === false && result.error_code === 'BUSY' && retryCount < MAX_BUSY_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, 80));
+                return attempt(retryCount + 1);
+            }
+            return result;
+        };
+        return attempt(0);
+    },
+
+    _callBridgePreferSignal(asyncSlotName, syncSlotName, ...args) {
+        if (
+            window.tdrive_bridge &&
+            typeof window.tdrive_bridge[asyncSlotName] === 'function' &&
+            window.tdrive_bridge.queryResultReady
+        ) {
+            return ApiService._callBridgeSignal(asyncSlotName, 'queryResultReady', ...args);
+        }
+        return ApiService._callBridge(syncSlotName, ...args);
     },
 
     _fireAndForget(functionName, ...args) {
@@ -70,23 +92,50 @@ const ApiService = {
 
     getFolderTreeData: () => ApiService._callBridge('get_folder_tree_data'),
     getFolderContents: (folderId) => ApiService._callBridgeSignal('get_folder_contents', 'queryResultReady', folderId),
-    searchDbItems: (baseFolderId, term, onBatch) => {
+    searchDbItems: (baseFolderId, term, onBatch, timeoutMs = 30000) => {
         return new Promise((resolve, reject) => {
             if (window.tdrive_bridge && window.tdrive_bridge.search_db_items && window.tdrive_bridge.queryResultReady) {
                 const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                let settled = false;
+                let timeoutTimer = null;
+
+                const cleanup = () => {
+                    if (timeoutTimer) {
+                        clearTimeout(timeoutTimer);
+                        timeoutTimer = null;
+                    }
+                    try { window.tdrive_bridge.queryResultReady.disconnect(handler); } catch (e) { /* ignore */ }
+                };
+
+                const resetTimeout = () => {
+                    if (timeoutTimer) clearTimeout(timeoutTimer);
+                    timeoutTimer = setTimeout(() => {
+                        if (settled) return;
+                        settled = true;
+                        cleanup();
+                        console.warn(`Bridge search_db_items timed out after ${timeoutMs}ms`);
+                        resolve({ success: false, error_code: 'TIMEOUT' });
+                    }, timeoutMs);
+                };
+
                 const handler = (result) => {
-                    if (result && result.request_id === requestId) {
+                    if (result && result.request_id === requestId && !settled) {
                         if (result.type === 'batch') {
+                            resetTimeout();
                             if (onBatch) onBatch(result.data);
                         } else if (result.type === 'done') {
-                            window.tdrive_bridge.queryResultReady.disconnect(handler);
+                            settled = true;
+                            cleanup();
                             resolve({ success: true, request_id: requestId });
                         } else if (result.type === 'error') {
-                            window.tdrive_bridge.queryResultReady.disconnect(handler);
+                            settled = true;
+                            cleanup();
                             resolve({ success: false, error_code: result.data?.error_code || 'SEARCH_FAILED' });
                         }
                     }
                 };
+
+                resetTimeout();
                 window.tdrive_bridge.queryResultReady.connect(handler);
                 window.tdrive_bridge.search_db_items(baseFolderId, term, requestId);
             } else {
@@ -95,14 +144,32 @@ const ApiService = {
         });
     },
 
-    renameItem: (id, newName, type) => ApiService._callBridge('rename_item', id, newName, type),
-    deleteItems: (items) => ApiService._callBridge('delete_items', items),
-    restoreItems: (items) => ApiService._callBridge('restore_items', items),
-    deleteItemsPermanently: (items) => ApiService._callBridge('delete_items_permanently', items),
-    emptyTrash: () => ApiService._callBridge('empty_trash'),
-    getTrashItems: () => ApiService._callBridge('get_trash_items'),
-    moveItems: (items, targetFolderId) => ApiService._callBridge('move_items', items, targetFolderId),
-    createFolder: (parentId, folderName) => ApiService._callBridge('create_folder', parentId, folderName),
+    renameItem: (id, newName, type) =>
+        ApiService._callBridgePreferSignal('rename_item_async', 'rename_item', id, newName, type),
+    deleteItems: (items) =>
+        ApiService._callBridgePreferSignal('delete_items_async', 'delete_items', items),
+    restoreItems: (items) =>
+        ApiService._callBridgePreferSignal('restore_items_async', 'restore_items', items),
+    deleteItemsPermanently: (items) =>
+        ApiService._callBridgePreferSignal('delete_items_permanently_async', 'delete_items_permanently', items),
+    emptyTrash: () =>
+        ApiService._callBridgePreferSignal('empty_trash_async', 'empty_trash'),
+    getTrashItems: () =>
+        ApiService._callBridgePreferSignal('get_trash_items_async', 'get_trash_items'),
+    moveItems: (items, targetFolderId) =>
+        ApiService._callBridgePreferSignal('move_items_async', 'move_items', items, targetFolderId),
+    createFolder: (parentId, folderName) =>
+        ApiService._callBridgePreferSignal('create_folder_async', 'create_folder', parentId, folderName),
+    getFileExtendedDetails: async (mapId) => {
+        if (window.tdrive_bridge && typeof window.tdrive_bridge.get_file_extended_details_async === 'function' && window.tdrive_bridge.queryResultReady) {
+            return ApiService._callBridgeSignal('get_file_extended_details_async', 'queryResultReady', mapId);
+        }
+        const raw = await ApiService._callBridge('get_file_extended_details', mapId);
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return { success: false }; }
+        }
+        return raw || { success: false };
+    },
 
     selectDirectory: (title) => ApiService._callBridge('select_directory', title),
     selectFiles: (allowMultiple, title) => ApiService._callBridge('select_files', allowMultiple, title),

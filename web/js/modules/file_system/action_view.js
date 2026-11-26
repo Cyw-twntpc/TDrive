@@ -195,22 +195,30 @@ const ActionView = {
             if (item.type === 'folder') {
                 spinner.style.display = 'none';
             } else {
-                if (window.tdrive_bridge && window.tdrive_bridge.get_file_extended_details) {
-                    window.tdrive_bridge.get_file_extended_details(item.id, (responseStr) => {
+                const renderDetails = (response) => {
+                    spinner.style.display = 'none';
+                    if (response && response.success && response.metadata && Object.keys(response.metadata).length > 0) {
+                        const table = document.getElementById('adv-details-table');
+                        let rows = '';
+                        for (const [key, value] of Object.entries(response.metadata)) {
+                            const translatedKey = window.t(`meta.${key}`) || key;
+                            rows += `<tr><td style="color: #666; width: 90px;">${UIManager.escapeHtml(translatedKey)}:</td><td style="word-break: break-all;">${UIManager.escapeHtml(value)}</td></tr>`;
+                        }
+                        table.innerHTML = rows;
+                        table.style.display = 'table';
+                    }
+                };
+                if (typeof ApiService !== 'undefined' && typeof ApiService.getFileExtendedDetails === 'function') {
+                    ApiService.getFileExtendedDetails(item.id).then(renderDetails).catch((e) => {
                         spinner.style.display = 'none';
+                        console.error('Failed to fetch extended details', e);
+                    });
+                } else if (window.tdrive_bridge && window.tdrive_bridge.get_file_extended_details) {
+                    window.tdrive_bridge.get_file_extended_details(item.id, (responseStr) => {
                         try {
-                            const response = JSON.parse(responseStr);
-                            if (response && response.success && response.metadata && Object.keys(response.metadata).length > 0) {
-                                const table = document.getElementById('adv-details-table');
-                                let rows = '';
-                                for (const [key, value] of Object.entries(response.metadata)) {
-                                    const translatedKey = window.t(`meta.${key}`) || key;
-                                    rows += `<tr><td style="color: #666; width: 90px;">${UIManager.escapeHtml(translatedKey)}:</td><td style="word-break: break-all;">${UIManager.escapeHtml(value)}</td></tr>`;
-                                }
-                                table.innerHTML = rows;
-                                table.style.display = 'table';
-                            }
+                            renderDetails(JSON.parse(responseStr));
                         } catch (e) {
+                            spinner.style.display = 'none';
                             console.error('Failed to parse extended details', e);
                         }
                     });
