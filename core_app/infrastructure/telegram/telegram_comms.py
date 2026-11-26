@@ -2,7 +2,7 @@ from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.messages import SetHistoryTTLRequest
 from telethon.tl.functions.account import UpdateNotifySettingsRequest
 from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, ServerError, RpcCallFailError, TimedOutError
 import asyncio
 import logging
 import random
@@ -17,6 +17,15 @@ from core_app.infrastructure.local_fs import file_processor as fp
 logger = logging.getLogger(__name__)
 
 CALLBACK_ELAPSED = 0.5 # seconds - Throttle UI updates
+MAX_FLOOD_WAIT_SLEEP_SECONDS = 60
+RETRIABLE_EXCEPTIONS = (
+    OSError,
+    ValueError,
+    asyncio.TimeoutError,
+    ServerError,
+    RpcCallFailError,
+    TimedOutError,
+)
 
 _rotation_lock = asyncio.Lock()
 
@@ -26,17 +35,30 @@ async def _retry_with_backoff(
     func: Callable[[], Awaitable[T]], 
     max_retries: int = 5, 
     base_delay: float = 1.0, 
-    max_delay: float = 32.0
+    max_delay: float = 32.0,
+    max_flood_wait: float = MAX_FLOOD_WAIT_SLEEP_SECONDS,
 ) -> T:
-    """Executes async function with exponential backoff and FloodWait handling."""
+    """Executes async function with exponential backoff, transient RPC retries, and capped FloodWait handling."""
     attempt = 0
+    flood_attempts = 0
     while True:
         try:
             return await func()
+        except asyncio.CancelledError:
+            raise
         except FloodWaitError as e:
+            if e.seconds > max_flood_wait:
+                logger.warning(
+                    f"FloodWaitError ({e.seconds}s) exceeds cap ({max_flood_wait}s); aborting retry to allow failover."
+                )
+                raise
+            flood_attempts += 1
+            if flood_attempts > max_retries:
+                logger.error(f"FloodWaitError retries exceeded ({max_retries}): {e}")
+                raise
             logger.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
-        except (OSError, ValueError, asyncio.TimeoutError) as e: 
+        except RETRIABLE_EXCEPTIONS as e: 
             attempt += 1
             if attempt > max_retries:
                 logger.error(f"Operation failed after {max_retries} attempts: {e}")
@@ -127,11 +149,14 @@ async def rotate_storage_group(shared_state, db_connection=None) -> tuple[int, i
     """
     client = shared_state.client
     try:
-        # Determine existing max index
-        existing_groups = await get_all_tdrive_groups(shared_state)
-        known_indices = [g[0] for g in existing_groups]
-        if hasattr(shared_state, 'group_id_map') and shared_state.group_id_map:
-            known_indices.extend(shared_state.group_id_map.keys())
+        # Determine existing max index using cached group_id_map before scanning all Telegram dialogs
+        known_indices = []
+        existing_map = getattr(shared_state, 'group_id_map', None)
+        if existing_map:
+            known_indices.extend(existing_map.keys())
+        else:
+            existing_groups = await get_all_tdrive_groups(shared_state)
+            known_indices.extend(g[0] for g in existing_groups)
         if hasattr(shared_state, 'active_group_index') and shared_state.active_group_index is not None:
             known_indices.append(shared_state.active_group_index)
 
@@ -300,8 +325,10 @@ async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original
         
         for idx, chunk in enumerate(chunks):
             part_num = idx + 1
-            encrypted_chunk = cr.encrypt(chunk, key)
+            encrypted_chunk = await loop.run_in_executor(None, cr.encrypt, chunk, key)
             part_hash = await loop.run_in_executor(None, cr.hash_bytes, encrypted_chunk)
+            base_offset = uploaded_accumulated
+            plain_chunk_len = len(chunk)
             
             async def _upload_chunk():
                 f = io.BytesIO(encrypted_chunk)
@@ -310,13 +337,15 @@ async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original
                     group_id,
                     file=f,
                     force_document=True,
-                    progress_callback=lambda c, t: progress_callback(c, total_size) if progress_callback else None
+                    progress_callback=(
+                        lambda c, _t: progress_callback(min(total_size, base_offset + c), total_size)
+                    ) if progress_callback else None
                 )
 
             message = await _retry_with_backoff(_upload_chunk)
             split_files_info.append([part_num, message.id, part_hash])
             
-            uploaded_accumulated += len(encrypted_chunk)
+            uploaded_accumulated = min(total_size, uploaded_accumulated + plain_chunk_len)
             if progress_callback:
                 progress_callback(uploaded_accumulated, total_size)
 
@@ -328,11 +357,12 @@ async def upload_data_as_file(client, group_id: int, data_bytes: bytes, original
 
 async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], original_hash: str) -> Optional[bytes]:
     """
-    Downloads messages and reassembles them into bytes in memory.
+    Downloads messages with backoff retry and reassembles them into bytes in memory.
+    Aborts and returns None if any chunk yields empty media to prevent corrupt payloads.
     """
     try:
-        messages = await client.get_messages(group_id, ids=msg_ids)
-        messages = [m for m in messages if m]
+        messages = await _retry_with_backoff(lambda: client.get_messages(group_id, ids=msg_ids))
+        messages = [m for m in (messages or []) if m]
 
         if not messages:
             logger.warning(f"download_data_as_bytes: no messages returned for {msg_ids}")
@@ -347,10 +377,10 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
 
         loop = asyncio.get_running_loop()
         for idx, message in enumerate(messages):
-            encrypted_bytes = await message.download_media(file=bytes)
+            encrypted_bytes = await _retry_with_backoff(lambda m=message: m.download_media(file=bytes))
             if not encrypted_bytes:
-                logger.warning(f"download_data_as_bytes: message {idx} returned empty media")
-                continue
+                logger.error(f"download_data_as_bytes: message {idx} returned empty media; aborting to avoid corrupt data")
+                return None
 
             decrypted_chunk = await loop.run_in_executor(None, cr.decrypt, encrypted_bytes, key)
             final_buffer.write(decrypted_chunk)
@@ -358,6 +388,8 @@ async def download_data_as_bytes(client, group_id: int, msg_ids: List[int], orig
         result = final_buffer.getvalue()
         return result
 
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error(f"download_data_as_bytes failed: {e}", exc_info=True)
         return None
@@ -370,19 +402,22 @@ async def download_single_chunk(client, message, progress_callback: Callable | N
 
 
 async def download_encrypted_chunk(client, group_id: int, raw_msg_id: int) -> Optional[bytes]:
-    """Download the raw AES-256-GCM ciphertext bytes of a single Telegram chunk without decrypting."""
+    """Download the raw AES-256-GCM ciphertext bytes of a single Telegram chunk with retry."""
     try:
-        messages = await client.get_messages(group_id, ids=[raw_msg_id])
+        messages = await _retry_with_backoff(lambda: client.get_messages(group_id, ids=[raw_msg_id]))
         messages = [m for m in (messages or []) if m]
         if not messages:
             logger.warning(f"download_encrypted_chunk: no message returned for raw_msg_id={raw_msg_id}")
             return None
 
-        encrypted_bytes = await messages[0].download_media(file=bytes)
+        msg = messages[0]
+        encrypted_bytes = await _retry_with_backoff(lambda: msg.download_media(file=bytes))
         if not encrypted_bytes:
             logger.warning(f"download_encrypted_chunk: empty media for raw_msg_id={raw_msg_id}")
             return None
         return encrypted_bytes
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error(f"download_encrypted_chunk failed for msg_id={raw_msg_id}: {e}", exc_info=True)
         return None

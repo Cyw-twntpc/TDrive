@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import logging
 import io
 import time
@@ -31,6 +32,9 @@ class StreamBuffer:
         # Cache: (file_id, chunk_index) -> decrypted_bytes
         self._cache = OrderedDict()
         self._cache_timestamps: Dict[Tuple[int, int], float] = {}
+        self._chunk_map_cache: OrderedDict[int, Dict[int, int]] = OrderedDict()
+        self._chunk_map_cache_limit = 64
+        self._client_rr_counter = itertools.count()
         self._db = DatabaseConnection()
         FileRepository(self._db)
         FolderRepository(self._db)
@@ -111,9 +115,11 @@ class StreamBuffer:
                 buffer.write(chunk_data[slice_start:slice_end])
                 current_read_pos += (slice_end - slice_start)
 
-            # Trigger dynamic readahead (depth = 2)
+            # Trigger dynamic readahead (depth = 2) only for chunks that exist in chunk_map
             for ra_offset in range(1, 3):
                 target_chunk = chunk_idx + ra_offset
+                if (target_chunk + 1) not in chunk_map:
+                    continue
                 cache_key = (file_id, target_chunk)
                 lock_key = f"{file_id}_{target_chunk}"
 
@@ -176,45 +182,67 @@ class StreamBuffer:
                     download_future.set_result(disk_data)
                     return disk_data
 
-            # 3. Download and Decrypt from Telegram
+            # 3. Download and Decrypt from Telegram (prefer rotated Worker Bots, fallback to main client)
             msg_id = chunk_map.get(chunk_idx + 1) # Part nums are 1-based in DB
             if not msg_id:
                 raise KeyError(f"Chunk {chunk_idx+1} not found in map for file {file_id}")
 
-            client = self.shared_state.client
-            if not client:
+            candidates = self._select_stream_clients()
+            if not candidates:
                 raise ConnectionError("Telegram client not connected")
 
             g_idx, raw_id = utils.decode_global_msg_id(msg_id)
             target_gid = self.shared_state.get_telegram_group_id(g_idx)
             logger.debug(f"Buffer: chunk {chunk_idx+1} decoded -> group_index={g_idx}, target={target_gid}")
 
-            if self._preview_cache is not None:
-                encrypted_data = await telegram_comms.download_encrypted_chunk(
-                    client, target_gid, raw_id
-                )
-                if not encrypted_data:
-                    logger.error(f"Buffer: failed to download chunk {chunk_idx+1} for file {file_id}")
-                    raise IOError(f"Failed to download chunk {chunk_idx+1} for file {file_id}")
-                key = cr.generate_key(file_hash[:32], file_hash[-32:])
-                decrypted_data = await asyncio.to_thread(cr.decrypt, encrypted_data, key)
-                # Store raw Telegram ciphertext directly on disk (zero re-encryption)
-                await asyncio.to_thread(
-                    self._preview_cache.put_chunk,
-                    file_id,
-                    chunk_idx,
-                    encrypted_data,
-                    category,
-                    file_hash,
-                    len(decrypted_data),
-                )
-            else:
-                decrypted_data = await telegram_comms.download_data_as_bytes(
-                    client, target_gid, [raw_id], file_hash
-                )
-                if not decrypted_data:
-                    logger.error(f"Buffer: failed to download chunk {chunk_idx+1} for file {file_id}")
-                    raise IOError(f"Failed to download chunk {chunk_idx+1} for file {file_id}")
+            decrypted_data = None
+            last_exc: Exception | None = None
+            for attempt_idx, client in enumerate(candidates):
+                client_name = getattr(client, 'tdrive_worker_name', 'Main_Account')
+                try:
+                    if self._preview_cache is not None:
+                        encrypted_data = await telegram_comms.download_encrypted_chunk(
+                            client, target_gid, raw_id
+                        )
+                        if not encrypted_data:
+                            last_exc = None
+                            raise IOError(f"Empty encrypted chunk from {client_name}")
+                        key = cr.generate_key(file_hash[:32], file_hash[-32:])
+                        decrypted_data = await asyncio.to_thread(cr.decrypt, encrypted_data, key)
+                        # Store raw Telegram ciphertext directly on disk (zero re-encryption)
+                        await asyncio.to_thread(
+                            self._preview_cache.put_chunk,
+                            file_id,
+                            chunk_idx,
+                            encrypted_data,
+                            category,
+                            file_hash,
+                            len(decrypted_data),
+                        )
+                    else:
+                        decrypted_data = await telegram_comms.download_data_as_bytes(
+                            client, target_gid, [raw_id], file_hash
+                        )
+                        if not decrypted_data:
+                            last_exc = None
+                            raise IOError(f"Empty decrypted chunk from {client_name}")
+                    last_exc = None
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as dl_err:
+                    decrypted_data = None
+                    last_exc = dl_err
+                    logger.warning(
+                        f"Buffer: chunk {chunk_idx+1} download failed on {client_name} "
+                        f"(attempt {attempt_idx + 1}/{len(candidates)}): {dl_err}"
+                    )
+
+            if not decrypted_data:
+                logger.error(f"Buffer: failed to download chunk {chunk_idx+1} for file {file_id}")
+                if last_exc is not None:
+                    raise last_exc
+                raise IOError(f"Failed to download chunk {chunk_idx+1} for file {file_id}")
 
             # 4. Update Memory Cache
             await self._add_to_cache(cache_key, decrypted_data)
@@ -258,6 +286,36 @@ class StreamBuffer:
             if val is not None:
                 self.current_cache_size = max(0, self.current_cache_size - len(val))
         self._last_chunk_requested.pop(file_id, None)
+        self._chunk_map_cache.pop(file_id, None)
+
+    @staticmethod
+    def _is_client_usable(client) -> bool:
+        """Return True if client is usable, closing unawaited AsyncMock coroutines safely in tests."""
+        if not client:
+            return False
+        checker = getattr(client, 'is_connected', None)
+        if checker is None:
+            return True
+        res = checker()
+        if asyncio.iscoroutine(res):
+            res.close()
+            return True
+        return bool(res)
+
+    def _select_stream_clients(self) -> list:
+        """Select up to 3 candidate clients for streaming: rotated Worker Bots first, main client fallback."""
+        ordered = []
+        raw_pool = getattr(self.shared_state, 'clients_pool', None)
+        if isinstance(raw_pool, (list, tuple)):
+            worker_bots = [bot for bot in raw_pool if self._is_client_usable(bot)]
+            if worker_bots:
+                offset = next(self._client_rr_counter) % len(worker_bots)
+                ordered.extend(worker_bots[offset:] + worker_bots[:offset])
+
+        main_client = getattr(self.shared_state, 'client', None)
+        if self._is_client_usable(main_client) and main_client not in ordered:
+            ordered.append(main_client)
+        return ordered[:3]
 
     def evict_idle(self, max_idle_seconds: float = 300.0) -> int:
         """Evict buffered chunks not accessed within max_idle_seconds from memory."""
@@ -282,6 +340,7 @@ class StreamBuffer:
         self._cache.clear()
         self._cache_timestamps.clear()
         self._last_chunk_requested.clear()
+        self._chunk_map_cache.clear()
         self.current_cache_size = 0
 
     async def _readahead(
@@ -317,8 +376,12 @@ class StreamBuffer:
 
     async def _get_chunk_map(self, file_id: int) -> Dict[int, int]:
         """
-        Returns { part_num: message_id } for the given file_id via MetadataManager.
+        Returns { part_num: message_id } for the given file_id via MetadataManager (cached per file_id).
         """
+        if file_id in self._chunk_map_cache:
+            self._chunk_map_cache.move_to_end(file_id)
+            return self._chunk_map_cache[file_id]
+
         if not self.shared_state.metadata_manager:
             logger.error("MetadataManager not initialized in SharedState.")
             return {}
@@ -337,6 +400,10 @@ class StreamBuffer:
 
             # chunks is list of [part_num, message_id, part_hash]
             result = {c[0]: c[1] for c in chunks}
+            if result:
+                if len(self._chunk_map_cache) >= self._chunk_map_cache_limit:
+                    self._chunk_map_cache.popitem(last=False)
+                self._chunk_map_cache[file_id] = result
             return result
         except Exception as e:
             logger.error(f"Failed to get chunk map for file {file_id}: {e}")
