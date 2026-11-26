@@ -188,15 +188,17 @@ class DocumentPreviewer:
 
                 # Upload generated preview to Telegram for future use
                 preview_hash = await asyncio.to_thread(crypto_handler.hash_bytes, pdf_bytes)
-                active_gid = file_service.shared_state.active_telegram_group_id or file_service.shared_state.group_id
-                logger.debug(f"DocumentPreviewer.get_preview: uploading generated preview to active group {file_service.shared_state.active_group_index}")
+                upload_group_index, active_gid = utils.get_upload_target(
+                    file_service.shared_state, file_service.shared_state.group_id
+                )
+                logger.debug(f"DocumentPreviewer.get_preview: uploading generated preview to active group {upload_group_index}")
                 preview_upload_info = await upload_data_as_file(
                     client, active_gid,
                     pdf_bytes, preview_hash
                 )
                 if preview_upload_info:
                     raw_preview_msg_id = preview_upload_info[0][1]
-                    preview_msg_id = utils.encode_global_msg_id(file_service.shared_state.active_group_index, raw_preview_msg_id)
+                    preview_msg_id = utils.encode_global_msg_id(upload_group_index, raw_preview_msg_id)
                     logger.debug(f"DocumentPreviewer.get_preview: encoded preview_msg_id -> global_id={preview_msg_id}")
                     content_id = file_info['content_id']
                     def _update_preview():
@@ -301,10 +303,10 @@ class DocumentPreviewer:
     @staticmethod
     def _get_preview_msg_id(map_id: int):
         db = DatabaseConnection()
-        conn = db._get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            'SELECT f.preview_msg_id, f.preview_hash FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?',
-            (map_id,)
-        )
-        return cur.fetchone()
+        with db.locked_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT f.preview_msg_id, f.preview_hash FROM file_folder_map m JOIN files f ON m.file_id = f.id WHERE m.id = ?',
+                (map_id,)
+            )
+            return cur.fetchone()

@@ -122,7 +122,11 @@ class UploadStrategy(TransferStrategy):
         if os.name == 'nt' and not scan_path_structure.startswith(r'\\?\\'):
             scan_path_structure = r'\\?\\' + scan_path_structure
 
-        for root, dirs, _ in os.walk(scan_path_structure):
+        def _collect_local_subdirs(root_path: str) -> list[tuple[str, list[str]]]:
+            return [(root, dirs) for root, dirs, _ in os.walk(root_path)]
+
+        dir_walk_entries = await loop.run_in_executor(None, _collect_local_subdirs, scan_path_structure)
+        for root, dirs in dir_walk_entries:
             current_remote_id = path_to_remote_id.get(self.context._normalize_path(root).lower())
             if current_remote_id is None:
                 continue
@@ -386,8 +390,10 @@ class UploadStrategy(TransferStrategy):
         """Hash, encrypt-upload, and persist a preview asset message ID for an upload task."""
         loop = asyncio.get_running_loop()
         preview_hash = await loop.run_in_executor(None, crypto_handler.hash_bytes, payload_bytes)
-        target_upload_group_id = self.context.shared_state.active_telegram_group_id or self.context.shared_state.group_id
-        logger.debug(f"Upload {label}: target_group={target_upload_group_id}")
+        upload_group_index, target_upload_group_id = utils.get_upload_target(
+            self.context.shared_state, self.context.shared_state.group_id
+        )
+        logger.debug(f"Upload {label}: target_group={target_upload_group_id} (idx={upload_group_index})")
         preview_upload_info = await telegram_comms.upload_data_as_file(
             client, target_upload_group_id, payload_bytes, preview_hash,
             progress_callback=hidden_progress_fn
@@ -395,7 +401,7 @@ class UploadStrategy(TransferStrategy):
         preview_msg_id = None
         if preview_upload_info:
             raw_preview_msg_id = preview_upload_info[0][1]
-            preview_msg_id = utils.encode_global_msg_id(self.context.shared_state.active_group_index, raw_preview_msg_id)
+            preview_msg_id = utils.encode_global_msg_id(upload_group_index, raw_preview_msg_id)
             logger.debug(f"Upload {label}: encoded preview_msg_id -> global_id={preview_msg_id}")
             self.context.shared_state.current_group_msg_count += len(preview_upload_info)
             await telegram_comms.check_and_rotate_group_if_needed(self.context.shared_state)

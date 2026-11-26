@@ -283,12 +283,85 @@ class TransferService:
 
     # --- Resume Logic (Complex, kept here for now as it orchestrates both) ---
 
-    async def resume_transfer(self, task_id: str, progress_callback: Callable):
-        self.shared_state.active_tasks[task_id] = asyncio.current_task()
+    @staticmethod
+    def _compute_initial_resume_progress(task_info: dict) -> int:
+        """Estimate resumed byte progress from persisted chunk counts and completed children."""
+        initial_progress = 0
+        if not task_info.get("is_folder"):
+            if task_info.get('status') == 'completed':
+                initial_progress = task_info.get('total_size', 0)
+            else:
+                initial_progress = len(task_info.get('transferred_parts', [])) * fp.CHUNK_SIZE
+        else:
+            for sub_data in task_info.get("child_tasks", {}).values():
+                if sub_data.get('status') == 'completed':
+                    initial_progress += sub_data.get('total_size', 0)
+                else:
+                    initial_progress += len(sub_data.get('transferred_parts', [])) * fp.CHUNK_SIZE
+        return min(initial_progress, task_info.get('total_size', 0))
 
+    def _build_resume_coroutines(
+        self, client, task_id: str, task_info: dict, progress_callback: Callable
+    ) -> list:
+        """Build sub-task upload/download coroutines for a single-file or folder resume."""
+        is_upload = task_info['type'] == 'upload'
+        if not task_info.get("is_folder"):
+            if is_upload:
+                return [
+                    self.uploader._upload_single_file(
+                        client, task_id, task_id,
+                        task_info['file_path'], task_info['parent_id'],
+                        progress_callback,
+                        resume_context=task_info.get('split_files_info'),
+                        pre_calculated_hash=task_info.get('file_hash'),
+                        known_total_size=task_info.get('total_size'),
+                        known_file_details=task_info.get('file_details'),
+                    )
+                ]
+            return [
+                self.downloader._download_single_item(
+                    client, task_id, task_id,
+                    task_info['save_path'], task_info['file_details'],
+                    progress_callback,
+                    resume_parts=set(task_info.get('transferred_parts', [])),
+                )
+            ]
+
+        tasks_to_run = []
+        for sub_id, sub_data in task_info.get("child_tasks", {}).items():
+            if sub_data['status'] == 'completed':
+                continue
+            sub_data['status'] = 'queued'
+            if is_upload:
+                tasks_to_run.append(
+                    self.uploader._upload_single_file(
+                        client, task_id, sub_id,
+                        sub_data['file_path'], sub_data['parent_id'],
+                        progress_callback,
+                        resume_context=sub_data.get('split_files_info'),
+                        pre_calculated_hash=sub_data.get('file_hash'),
+                        known_total_size=sub_data.get('total_size'),
+                        known_file_details=sub_data.get('file_details'),
+                    )
+                )
+            else:
+                tasks_to_run.append(
+                    self.downloader._download_single_item(
+                        client, task_id, sub_id,
+                        sub_data['save_path'], sub_data['file_details'],
+                        progress_callback,
+                        resume_parts=set(sub_data.get('transferred_parts', [])),
+                    )
+                )
+        return tasks_to_run
+
+    async def resume_transfer(self, task_id: str, progress_callback: Callable):
+        """Resume a paused or interrupted single-file or folder transfer task."""
+        self.shared_state.active_tasks[task_id] = asyncio.current_task()
         try:
             task_info = await self.controller.get_task_async(task_id)
-            if not task_info: return
+            if not task_info:
+                return
 
             await self.controller.mark_resumed_async(task_id)
             client = await utils.ensure_client_connected(self.shared_state)
@@ -296,90 +369,17 @@ class TransferService:
                 await self.controller.mark_failed_async(task_id, ErrorCode.CONNECTION_FAILED)
                 progress_callback(task_id, task_info.get('name', ''), 0, task_info.get('total_size', 0), 'failed', 0, error_code=ErrorCode.CONNECTION_FAILED)
                 return
-            
-            # Calculate initial progress
-            initial_progress = 0
-            if not task_info.get("is_folder"):
-                if task_info.get('status') == 'completed':
-                    initial_progress = task_info.get('total_size', 0)
-                else:
-                    parts = task_info.get('transferred_parts', [])
-                    initial_progress = len(parts) * fp.CHUNK_SIZE
-            else:
-                for sub_data in task_info.get("child_tasks", {}).values():
-                    if sub_data.get('status') == 'completed':
-                        initial_progress += sub_data.get('total_size', 0)
-                    else:
-                        parts = sub_data.get('transferred_parts', [])
-                        initial_progress += len(parts) * fp.CHUNK_SIZE
-            
-            if initial_progress > task_info.get('total_size', 0):
-                initial_progress = task_info.get('total_size', 0)
 
-            progress_callback(task_id, task_info.get('name', ''), initial_progress, task_info.get('total_size', 0), 'transferring', 0) 
+            initial_progress = self._compute_initial_resume_progress(task_info)
+            progress_callback(task_id, task_info.get('name', ''), initial_progress, task_info.get('total_size', 0), 'transferring', 0)
 
-            tasks_to_run = []
-            is_upload = task_info['type'] == 'upload'
-            
-            if not task_info.get("is_folder"):
-                if is_upload:
-                    tasks_to_run.append(
-                        self.uploader._upload_single_file(
-                            client, task_id, task_id, 
-                            task_info['file_path'], task_info['parent_id'], 
-                            progress_callback,
-                            resume_context=task_info.get('split_files_info'),
-                            pre_calculated_hash=task_info.get('file_hash'),
-                            known_total_size=task_info.get('total_size'),
-                            known_file_details=task_info.get('file_details')
-                        )
-                    )
-                else:
-                    tasks_to_run.append(
-                        self.downloader._download_single_item(
-                            client, task_id, task_id,
-                            task_info['save_path'], task_info['file_details'],
-                            progress_callback,
-                            resume_parts=set(task_info.get('transferred_parts', []))
-                        )
-                    )
-            else:
-                child_tasks = task_info.get("child_tasks", {})
-                for sub_id, sub_data in child_tasks.items():
-                    if sub_data['status'] == 'completed':
-                        continue
-                    
-                    sub_data['status'] = 'queued'
-                    
-                    if is_upload:
-                        tasks_to_run.append(
-                            self.uploader._upload_single_file(
-                                client, task_id, sub_id,
-                                sub_data['file_path'], sub_data['parent_id'],
-                                progress_callback,
-                                resume_context=sub_data.get('split_files_info'),
-                                pre_calculated_hash=sub_data.get('file_hash'),
-                                known_total_size=sub_data.get('total_size'),
-                                known_file_details=sub_data.get('file_details')
-                            )
-                        )
-                    else:
-                        tasks_to_run.append(
-                            self.downloader._download_single_item(
-                                client, task_id, sub_id,
-                                sub_data['save_path'], sub_data['file_details'],
-                                progress_callback,
-                                resume_parts=set(sub_data.get('transferred_parts', []))
-                            )
-                        )
-
+            tasks_to_run = self._build_resume_coroutines(client, task_id, task_info, progress_callback)
             results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
-            
-            # Check for cancellation within results to avoid marking task as completed
+
             for res in results:
                 if isinstance(res, asyncio.CancelledError):
                     logger.debug(f"Resume task {task_id} caught cancellation signal in child tasks.")
-                    raise res # Jump to outer CancelledError handler
+                    raise res
 
             failed_exceptions = [res for res in results if isinstance(res, Exception)]
             if failed_exceptions:
@@ -388,15 +388,14 @@ class TransferService:
                 progress_callback(task_id, task_info.get('name', ''), 0, task_info.get('total_size', 0), 'failed', 0, error_code=ErrorCode.TASK_FAILED)
                 return
 
-            # Check persisted status in case child tasks caught errors and marked the task failed
             latest_info = await self.controller.get_task_async(task_id)
             if latest_info and latest_info.get('status') in ('cancelled', 'failed', 'paused'):
                 logger.debug(f"Resume task {task_id} ended with status '{latest_info.get('status')}', skipping completion.")
                 return
-            
-            if is_upload:
-                 await self.uploader._finalize_thumbnails(client, task_id)
-                 await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
+
+            if task_info['type'] == 'upload':
+                await self.uploader._finalize_thumbnails(client, task_id)
+                await self.metadata_manager.sync_db_to_cloud(client, self.shared_state.group_id, self.shared_state.api_id)
 
             await self.controller.mark_sub_task_completed_async(task_id, task_id)
             progress_callback(task_id, task_info.get('name', ''), task_info.get('total_size', 0), task_info.get('total_size', 0), 'completed', 0)

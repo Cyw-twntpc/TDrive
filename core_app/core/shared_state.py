@@ -98,16 +98,31 @@ class SharedState:
             )
             return self._group_id
 
+    def get_active_upload_target(self, fallback_group_id: Optional[int] = None) -> tuple[int, Optional[int]]:
+        """Atomically snapshot active group index and target Telegram group ID before upload RPCs."""
+        return self.active_group_index, (self.active_telegram_group_id or fallback_group_id)
+
 
     @property
     def _background_tasks(self) -> set[asyncio.Task]:
         return self.background_tasks
 
-    def create_background_task(self, coro) -> asyncio.Task:
-        """
-        Creates an asyncio task and stores a strong reference to it to prevent
-        it from being garbage collected mid-execution.
-        """
+    def create_background_task(self, coro) -> Optional[asyncio.Task]:
+        """Create a background task on self.loop safely from same or cross-thread callers."""
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is not self.loop and self.loop.is_running():
+            def _schedule():
+                task = self.loop.create_task(coro)
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
+
+            self.loop.call_soon_threadsafe(_schedule)
+            return None
+
         task = self.loop.create_task(coro)
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)

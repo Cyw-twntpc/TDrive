@@ -60,15 +60,59 @@ class VideoStreamer:
             return ""
         return f"http://127.0.0.1:{self.port}/stream/{file_id}?token={self.session_token}"
 
+    @staticmethod
+    def _resolve_mime_type(file_name: str | None) -> str:
+        """Resolve explicit audio MIME type or standard OS guess for the streamed filename."""
+        ext = os.path.splitext(file_name or '')[1].lower()
+        mime_type = AUDIO_MIME_TYPES.get(ext)
+        if not mime_type:
+            mime_type, _ = mimetypes.guess_type(file_name)
+        return mime_type or 'application/octet-stream'
+
+    @staticmethod
+    def _parse_range_header(range_header: str | None, file_size: int) -> tuple[int, int, bool]:
+        """Parse an HTTP Range header into (start_byte, end_byte, invalid_range)."""
+        start_byte = 0
+        end_byte = file_size - 1
+        invalid_range = False
+
+        if range_header:
+            try:
+                unit, ranges = range_header.split('=', 1)
+                if unit.strip().lower() == 'bytes':
+                    r_start, r_end = ranges.split('-', 1)
+                    r_start = r_start.strip()
+                    r_end = r_end.strip()
+                    if r_start and r_end:
+                        start_byte = int(r_start)
+                        end_byte = min(int(r_end), file_size - 1)
+                    elif r_start:
+                        start_byte = int(r_start)
+                        end_byte = file_size - 1
+                    elif r_end:
+                        suffix_length = int(r_end)
+                        if suffix_length <= 0:
+                            invalid_range = True
+                        else:
+                            start_byte = max(0, file_size - suffix_length)
+                            end_byte = file_size - 1
+                    else:
+                        invalid_range = True
+                    if not invalid_range and (start_byte < 0 or start_byte >= file_size or end_byte < start_byte):
+                        invalid_range = True
+            except ValueError as e:
+                logger.debug(f"Invalid HTTP Range header '{range_header}': {e}")
+
+        return start_byte, end_byte, invalid_range
+
     async def handle_stream(self, request: web.Request):
+        """Serve HTTP 200/206 byte-range media streams backed by encrypted StreamBuffer chunks."""
         token = request.query.get('token')
         if token != self.session_token:
             return web.Response(status=403, text="Forbidden")
 
         try:
-            file_id_str = request.match_info['file_id']
-            map_id = int(file_id_str)
-
+            map_id = int(request.match_info['file_id'])
             file_info = await self._get_file_info(map_id)
             if not file_info:
                 return web.Response(status=404, text="File not found")
@@ -77,78 +121,24 @@ class VideoStreamer:
             file_size = int(file_info['size'])
             file_hash = file_info['hash']
             file_name = file_info['name']
-
-            ext = os.path.splitext(file_name or '')[1].lower()
-            mime_type = AUDIO_MIME_TYPES.get(ext)
-            if not mime_type:
-                mime_type, _ = mimetypes.guess_type(file_name)
-            if not mime_type:
-                mime_type = 'application/octet-stream'
-
+            mime_type = self._resolve_mime_type(file_name)
             range_header = request.headers.get('Range')
+
             if file_size <= 0:
                 if range_header:
-                    return web.Response(
-                        status=416,
-                        headers={'Content-Range': 'bytes */0'},
-                        text='Range Not Satisfiable',
-                    )
+                    return web.Response(status=416, headers={'Content-Range': 'bytes */0'}, text='Range Not Satisfiable')
                 return web.Response(
                     status=200,
-                    headers={
-                        'Content-Type': mime_type,
-                        'Accept-Ranges': 'bytes',
-                        'Content-Length': '0',
-                    },
+                    headers={'Content-Type': mime_type, 'Accept-Ranges': 'bytes', 'Content-Length': '0'},
                     body=b'',
                 )
 
-            start_byte = 0
-            end_byte = file_size - 1
-            invalid_range = False
-
-            if range_header:
-                try:
-                    unit, ranges = range_header.split('=', 1)
-                    if unit.strip().lower() == 'bytes':
-                        r_start, r_end = ranges.split('-', 1)
-                        r_start = r_start.strip()
-                        r_end = r_end.strip()
-                        if r_start and r_end:
-                            start_byte = int(r_start)
-                            end_byte = min(int(r_end), file_size - 1)
-                        elif r_start:
-                            start_byte = int(r_start)
-                            end_byte = file_size - 1
-                        elif r_end:
-                            suffix_length = int(r_end)
-                            if suffix_length <= 0:
-                                invalid_range = True
-                            else:
-                                start_byte = max(0, file_size - suffix_length)
-                                end_byte = file_size - 1
-                        else:
-                            invalid_range = True
-                        if not invalid_range and (start_byte < 0 or start_byte >= file_size or end_byte < start_byte):
-                            invalid_range = True
-                except ValueError as e:
-                    logger.debug(f"Invalid HTTP Range header '{range_header}': {e}")
-
+            start_byte, end_byte, invalid_range = self._parse_range_header(range_header, file_size)
             if invalid_range:
-                return web.Response(
-                    status=416,
-                    headers={'Content-Range': f'bytes */{file_size}'},
-                    text='Range Not Satisfiable',
-                )
+                return web.Response(status=416, headers={'Content-Range': f'bytes */{file_size}'}, text='Range Not Satisfiable')
 
             chunk_length = end_byte - start_byte + 1
-
-            headers = {
-                'Content-Type': mime_type,
-                'Accept-Ranges': 'bytes',
-                'Content-Length': str(chunk_length)
-            }
-
+            headers = {'Content-Type': mime_type, 'Accept-Ranges': 'bytes', 'Content-Length': str(chunk_length)}
             status_code = 200
             if range_header:
                 status_code = 206
@@ -159,28 +149,15 @@ class VideoStreamer:
 
             offset = start_byte
             remaining = chunk_length
-
-            READ_BLOCK = 64 * 1024
-            category = (
-                "audio_chunk"
-                if (file_name and file_name.lower().endswith(AUDIO_EXTENSIONS))
-                else "video_chunk"
-            )
+            category = "audio_chunk" if (file_name and file_name.lower().endswith(AUDIO_EXTENSIONS)) else "video_chunk"
 
             while remaining > 0:
                 if request.transport and request.transport.is_closing():
                     break
-
-                read_size = min(remaining, READ_BLOCK)
-
-                data = await self.buffer.read(
-                    content_id, offset, read_size, file_size, file_hash, category=category
-                )
+                data = await self.buffer.read(content_id, offset, min(remaining, 64 * 1024), file_size, file_hash, category=category)
                 if not data:
                     break
-
                 await response.write(data)
-
                 offset += len(data)
                 remaining -= len(data)
 

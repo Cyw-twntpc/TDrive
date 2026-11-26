@@ -212,62 +212,67 @@ class MetadataManager:
             return False
 
         key = cr.generate_key_from_api_id(str(api_id))
-        try:
+        def _decrypt_and_restore():
             decrypted_gzip = cr.decrypt(encrypted_bytes, key)
             sql_dump = gzip.decompress(decrypted_gzip).decode('utf-8')
             self._apply_snapshot_sql(conn, sql_dump)
+
+        try:
+            await asyncio.to_thread(_decrypt_and_restore)
         except Exception as e:
             logger.error(f"Failed to decrypt/restore snapshot: {e}")
-            self.db._init_db()
+            with self.db._db_lock:
+                self.db._init_db()
         return True
 
     def _apply_snapshot_sql(self, conn, sql_dump: str) -> None:
         """Reset schema and replay INSERT statements into allowed core tables from decrypted dump."""
         allowed_tables = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots', 'storage_groups'}
-        try:
-            conn.execute("PRAGMA foreign_keys = OFF")
-            cursor = conn.cursor()
-            for obj_type in ("trigger", "view"):
-                cursor.execute(f"SELECT name FROM sqlite_master WHERE type='{obj_type}'")
-                for row in cursor.fetchall():
-                    cursor.execute(f"DROP {obj_type.upper()} IF EXISTS {row[0]}")
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-            for table in cursor.fetchall():
-                cursor.execute(f"DROP TABLE IF EXISTS {table[0]}")
+        with self.db._db_lock:
+            try:
+                conn.execute("PRAGMA foreign_keys = OFF")
+                cursor = conn.cursor()
+                for obj_type in ("trigger", "view"):
+                    cursor.execute(f"SELECT name FROM sqlite_master WHERE type='{obj_type}'")
+                    for row in cursor.fetchall():
+                        cursor.execute(f"DROP {obj_type.upper()} IF EXISTS {row[0]}")
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                for table in cursor.fetchall():
+                    cursor.execute(f"DROP TABLE IF EXISTS {table[0]}")
 
-            self.db._create_tables()
+                self.db._create_tables()
 
-            statements = []
-            current_stmt = []
-            for line in sql_dump.replace('\r\n', '\n').split('\n'):
-                if not line.strip() and not current_stmt:
-                    continue
-                current_stmt.append(line)
-                stmt_str = '\n'.join(current_stmt)
-                if sqlite3.complete_statement(stmt_str):
-                    statements.append(stmt_str)
-                    current_stmt = []
+                statements = []
+                current_stmt = []
+                for line in sql_dump.replace('\r\n', '\n').split('\n'):
+                    if not line.strip() and not current_stmt:
+                        continue
+                    current_stmt.append(line)
+                    stmt_str = '\n'.join(current_stmt)
+                    if sqlite3.complete_statement(stmt_str):
+                        statements.append(stmt_str)
+                        current_stmt = []
 
-            for statement in statements:
-                stmt = statement.strip()
-                if stmt.upper().startswith("INSERT INTO"):
-                    try:
-                        parts = stmt.split()
-                        if len(parts) > 2:
-                            table_name = parts[2].split('(')[0].strip('"').strip("'").lower()
-                            if table_name in allowed_tables:
-                                conn.execute(stmt)
-                    except Exception as e:
-                        logger.warning(f"Skipping problematic INSERT: {e}")
+                for statement in statements:
+                    stmt = statement.strip()
+                    if stmt.upper().startswith("INSERT INTO"):
+                        try:
+                            parts = stmt.split()
+                            if len(parts) > 2:
+                                table_name = parts[2].split('(')[0].strip('"').strip("'").lower()
+                                if table_name in allowed_tables:
+                                    conn.execute(stmt)
+                        except Exception as e:
+                            logger.warning(f"Skipping problematic INSERT: {e}")
 
-            self.db._create_triggers()
-            self.db.rebuild_search_index()
-            conn.execute("PRAGMA foreign_keys = ON")
-            logger.info("Database successfully restored from snapshot.")
-        except Exception as restore_err:
-            logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
-            self.db._init_db()
-            conn.execute("PRAGMA foreign_keys = ON")
+                self.db._create_triggers()
+                self.db.rebuild_search_index()
+                conn.execute("PRAGMA foreign_keys = ON")
+                logger.info("Database successfully restored from snapshot.")
+            except Exception as restore_err:
+                logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
+                self.db._init_db()
+                conn.execute("PRAGMA foreign_keys = ON")
 
     def _replay_pending_transactions(self, conn) -> None:
         """Replay pending WAL operations and discard corrupt transaction logs if malformed."""
@@ -310,13 +315,14 @@ class MetadataManager:
                             dump_io.write('%s\n' % line)
                         return dump_io.getvalue().encode('utf-8')
                 
+                def _dump_and_encrypt():
+                    sql_data = _dump_and_rotate()
+                    compressed_data = gzip.compress(sql_data)
+                    key = cr.generate_key_from_api_id(str(api_id))
+                    return cr.encrypt(compressed_data, key)
+
                 loop = asyncio.get_running_loop()
-                sql_data = await loop.run_in_executor(None, _dump_and_rotate)
-                
-                # 3. Compress & Encrypt
-                compressed_data = gzip.compress(sql_data)
-                key = cr.generate_key_from_api_id(str(api_id))
-                encrypted_data = cr.encrypt(compressed_data, key)
+                encrypted_data = await loop.run_in_executor(None, _dump_and_encrypt)
                 
                 # 4. Upload
                 caption = "#tdrive_db_snapshot"
@@ -353,22 +359,29 @@ class MetadataManager:
 
     # --- Map File Management ---
 
-    async def _decode_map_message(self, msg, key: bytes, map_msg_id: int) -> Dict:
-        """Decode an inline TDM text message or legacy gzipped map media message."""
-        if getattr(msg, 'text', None) and str(msg.text).startswith("TDM:"):
-            encoded_data = msg.text[4:]
-            compressed_data = base64.b64decode(encoded_data)
+    @staticmethod
+    def _decode_map_bytes_sync(raw_payload, is_inline_tdm: bool, key: bytes, map_msg_id: int) -> Dict:
+        """Decrypt, decompress, and parse TDM or legacy map bytes synchronously inside executor thread."""
+        if is_inline_tdm:
+            compressed_data = base64.b64decode(raw_payload)
             decrypted = cr.decrypt(compressed_data, key)
             json_data = json.loads(zlib.decompress(decrypted).decode('utf-8'))
         else:
-            enc_data = await msg.download_media(file=bytes)
-            decrypted = cr.decrypt(enc_data, key)
+            decrypted = cr.decrypt(raw_payload, key)
             decompressed = gzip.decompress(decrypted)
             json_data = json.loads(decompressed.decode('utf-8'))
 
         if not isinstance(json_data, dict):
             raise ValueError(f"Invalid map file format for {map_msg_id}: expected dict, got {type(json_data)}")
         return json_data
+
+    async def _decode_map_message(self, msg, key: bytes, map_msg_id: int) -> Dict:
+        """Decode an inline TDM text message or legacy gzipped map media message off the event loop."""
+        if getattr(msg, 'text', None) and str(msg.text).startswith("TDM:"):
+            encoded_data = msg.text[4:]
+            return await asyncio.to_thread(self._decode_map_bytes_sync, encoded_data, True, key, map_msg_id)
+        enc_data = await msg.download_media(file=bytes)
+        return await asyncio.to_thread(self._decode_map_bytes_sync, enc_data, False, key, map_msg_id)
 
     async def fetch_map_file(self, client, api_id: int, map_msg_id: int) -> Dict:
         if map_msg_id in self._map_cache:
@@ -496,18 +509,30 @@ class MetadataManager:
 
         return results
 
+    @staticmethod
+    def _encode_map_payload_sync(map_data: Dict, api_id: int) -> tuple[str, bytes | None]:
+        """Serialize, compress, and encrypt map JSON inside worker thread."""
+        json_str = json.dumps(map_data, separators=(',', ':'))
+        json_bytes = json_str.encode('utf-8')
+        compressed = zlib.compress(json_bytes)
+        key = cr.generate_key_from_api_id(str(api_id))
+        encrypted = cr.encrypt(compressed, key)
+        b64_encoded = base64.b64encode(encrypted).decode('utf-8')
+        text_payload = f"TDM:{b64_encoded}"
+        if len(text_payload) < 4000:
+            return text_payload, None
+        legacy_compressed = gzip.compress(json_bytes)
+        legacy_encrypted = cr.encrypt(legacy_compressed, key)
+        return text_payload, legacy_encrypted
+
     async def save_map_file(self, client, group_id: int, api_id: int, map_data: Dict) -> int:
         """
         Compresses, Encrypts (API_ID Key), Uploads Map. Returns bit-packed global_msg_id.
         """
         try:
-            json_str = json.dumps(map_data, separators=(',', ':'))
-            compressed = zlib.compress(json_str.encode('utf-8'))
-            key = cr.generate_key_from_api_id(str(api_id))
-            encrypted = cr.encrypt(compressed, key)
-            
-            b64_encoded = base64.b64encode(encrypted).decode('utf-8')
-            text_payload = f"TDM:{b64_encoded}"
+            text_payload, legacy_encrypted = await asyncio.to_thread(
+                self._encode_map_payload_sync, map_data, api_id
+            )
 
             available_bots = [
                 b for b in (getattr(self.shared_state, 'clients_pool', None) or [])
@@ -518,20 +543,20 @@ class MetadataManager:
                 if available_bots else client
             )
             
-            if len(text_payload) < 4000:
+            # Snapshot group index BEFORE sending to prevent rotation races mid-upload
+            active_g_idx = 1
+            if hasattr(self, 'shared_state') and self.shared_state:
+                group_map = getattr(self.shared_state, 'group_id_map', None) or {}
+                matched_idx = next((idx for idx, gid in group_map.items() if gid == group_id), None)
+                active_g_idx = matched_idx if matched_idx is not None else getattr(self.shared_state, 'active_group_index', 1)
+
+            if legacy_encrypted is None:
                 msg = await send_client.send_message(group_id, text_payload)
             else:
-                legacy_compressed = gzip.compress(json_str.encode('utf-8'))
-                legacy_encrypted = cr.encrypt(legacy_compressed, key)
                 f = io.BytesIO(legacy_encrypted)
                 f.name = "map.bin"
                 msg = await send_client.send_file(group_id, file=f, force_document=True)
-            
-            # Determine active group index for bit-packing
-            active_g_idx = 1
-            if hasattr(self, 'shared_state') and self.shared_state:
-                active_g_idx = getattr(self.shared_state, 'active_group_index', 1)
-            
+
             global_msg_id = utils.encode_global_msg_id(active_g_idx, msg.id)
             logger.debug(f"save_map_file: encoded group_index={active_g_idx}, raw_msg_id={msg.id} -> global={global_msg_id}")
 
@@ -549,14 +574,14 @@ class MetadataManager:
         """
         Retrieves chunk list for a specific file from its Map.
         """
-        conn = self.db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT map_msg_id 
-            FROM files 
-            WHERE id = ?
-        """, (file_id,))
-        row = cursor.fetchone()
+        with self.db.locked_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT map_msg_id 
+                FROM files 
+                WHERE id = ?
+            """, (file_id,))
+            row = cursor.fetchone()
 
         if not row or not row['map_msg_id']:
             logger.warning(f"get_file_chunks: map_msg_id is null/empty for file {file_id}; file may have been uploaded incompletely")
@@ -663,14 +688,16 @@ class MetadataManager:
         """
         async with self._folder_locks[folder_id]:
             try:
-                target_gid = self.shared_state.active_telegram_group_id if self.shared_state else group_id
+                upload_group_index, target_gid = utils.get_upload_target(
+                    getattr(self, 'shared_state', None), group_id
+                )
 
                 # 1. Check if DB is loaded; if not, try to download
                 if not thumb_manager.has_db(folder_id):
-                    conn = self.db._get_conn()
-                    cur = conn.cursor()
-                    cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
-                    db_info = cur.fetchone()
+                    with self.db.locked_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id = ?", (folder_id,))
+                        db_info = cur.fetchone()
                     
                     if db_info and db_info['thumbs_db_msg_id']:
                         g_idx, old_raw_id = utils.decode_global_msg_id(db_info['thumbs_db_msg_id'])
@@ -696,27 +723,21 @@ class MetadataManager:
                     
                     if upload_info:
                         raw_new_msg_id = upload_info[0][1]
-                        new_msg_id = utils.encode_global_msg_id(
-                            self.shared_state.active_group_index if self.shared_state else 1,
-                            raw_new_msg_id
-                        )
-                        
-                        # 4. Get Old Msg ID to delete
-                        conn = self.db._get_conn()
-                        cur = conn.cursor()
-                        cur.execute("SELECT thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
-                        row = cur.fetchone()
-                        old_msg_id = row['thumbs_db_msg_id'] if row else None
-                        
-                        # 5. Update Metadata
-                        self.folder_repo.update_folder_thumbs_info(folder_id, new_msg_id, db_hash)
-                        
-                        # 6. Clear thumb_src_folder_id for files in this folder
-                        cur.execute('''
-                            UPDATE files SET thumb_src_folder_id = NULL 
-                            WHERE id IN (SELECT file_id FROM file_folder_map WHERE folder_id = ?)
-                        ''', (folder_id,))
-                        conn.commit()
+                        new_msg_id = utils.encode_global_msg_id(upload_group_index, raw_new_msg_id)
+
+                        # 4-6. Read old msg id & update folder/file records atomically under DB lock
+                        with self.db.locked_connection() as conn:
+                            cur = conn.cursor()
+                            cur.execute("SELECT thumbs_db_msg_id FROM folders WHERE id = ?", (folder_id,))
+                            row = cur.fetchone()
+                            old_msg_id = row['thumbs_db_msg_id'] if row else None
+
+                            self.folder_repo.update_folder_thumbs_info(folder_id, new_msg_id, db_hash)
+                            cur.execute('''
+                                UPDATE files SET thumb_src_folder_id = NULL 
+                                WHERE id IN (SELECT file_id FROM file_folder_map WHERE folder_id = ?)
+                            ''', (folder_id,))
+                            conn.commit()
                         # 7. Delete Old Cloud Message
                         if old_msg_id and old_msg_id != new_msg_id and old_msg_id != 0:
                             try:

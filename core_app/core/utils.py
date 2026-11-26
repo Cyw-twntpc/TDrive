@@ -52,6 +52,13 @@ def encode_global_msg_id(group_index: int, raw_msg_id: int) -> int:
     return result
 
 
+def get_upload_target(shared_state, fallback_group_id: Optional[int] = None) -> tuple[int, Optional[int]]:
+    """Snapshot active upload (group_index, target_group_id) before starting async upload RPCs."""
+    active_idx = getattr(shared_state, "active_group_index", 1) if shared_state else 1
+    active_tg = getattr(shared_state, "active_telegram_group_id", None) if shared_state else None
+    return active_idx, (active_tg or fallback_group_id)
+
+
 def decode_global_msg_id(global_id: int) -> tuple[int, int]:
     """
     Decode a bit-packed global message ID back into (group_index, raw_msg_id).
