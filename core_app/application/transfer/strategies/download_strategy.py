@@ -68,7 +68,8 @@ class DownloadStrategy(TransferStrategy):
                     self._download_single_item(
                         client, task_id, task_id, 
                         save_path, file_details, 
-                        progress_callback
+                        progress_callback,
+                        is_new_task=True
                     )
                 )
         
@@ -115,6 +116,10 @@ class DownloadStrategy(TransferStrategy):
             )
             progress_callback(main_task_id, root_folder_name, 0, total_size, 'queued', 0, is_folder=True)
 
+            base_concurrency = getattr(self.context, "concurrency_limit", 3)
+            effective_base = base_concurrency if isinstance(base_concurrency, int) and base_concurrency > 0 else 3
+            small_file_sem = asyncio.Semaphore(max(effective_base * 4, 12))
+
             child_tasks_map = {}
             tasks_to_run = []
 
@@ -141,7 +146,9 @@ class DownloadStrategy(TransferStrategy):
                     self._download_single_item(
                         client, main_task_id, sub_task_id,
                         f['local_path'], file_details,
-                        progress_callback
+                        progress_callback,
+                        is_new_task=True,
+                        semaphore_override=small_file_sem if f['size'] <= fp.CHUNK_SIZE else None
                     )
                 )
 
@@ -171,7 +178,9 @@ class DownloadStrategy(TransferStrategy):
     async def _download_single_item(self, client, main_task_id: str, sub_task_id: str, 
                                     save_path: str, file_details: Dict,
                                     progress_callback: Callable,
-                                    resume_parts: set = None):
+                                    resume_parts: set = None,
+                                    is_new_task: bool = False,
+                                    semaphore_override: asyncio.Semaphore | None = None):
         pending_chunk_writes: List[asyncio.Future] = []
 
         def chunk_cb(part_num):
@@ -180,24 +189,23 @@ class DownloadStrategy(TransferStrategy):
             pending_chunk_writes.append(fut)
         
         last_downloaded = 0
-        try:
-            task_info = await self.context.controller.get_task_async(main_task_id)
-            sub_status = None
-            if task_info:
-                if task_info.get('is_folder'):
-                    child = task_info.get('child_tasks', {}).get(sub_task_id)
-                    if child: sub_status = child.get('status')
-                elif main_task_id == sub_task_id:
-                    sub_status = task_info.get('status')
+        if resume_parts:
+            last_downloaded = min(len(resume_parts) * fp.CHUNK_SIZE, file_details['size'])
+        elif not is_new_task:
+            try:
+                task_info = await self.context.controller.get_task_async(main_task_id)
+                sub_status = None
+                if task_info:
+                    if task_info.get('is_folder'):
+                        child = task_info.get('child_tasks', {}).get(sub_task_id)
+                        if child: sub_status = child.get('status')
+                    elif main_task_id == sub_task_id:
+                        sub_status = task_info.get('status')
 
-            if sub_status == 'completed':
-                last_downloaded = file_details['size']
-            elif resume_parts:
-                last_downloaded = len(resume_parts) * fp.CHUNK_SIZE
-                if last_downloaded > file_details['size']:
+                if sub_status == 'completed':
                     last_downloaded = file_details['size']
-        except Exception as e:
-            logger.warning(f"Error initializing download progress for {sub_task_id}: {e}")
+            except Exception as e:
+                logger.warning(f"Error initializing download progress for {sub_task_id}: {e}")
 
         last_update_time = time.time()
 
@@ -222,7 +230,8 @@ class DownloadStrategy(TransferStrategy):
         if curr_task is not None:
             curr_task._tdrive_main_task_id = main_task_id
         loop = asyncio.get_running_loop()
-        async with self.context._semaphore:
+        sem = semaphore_override or self.context._semaphore
+        async with sem:
             main_status = await loop.run_in_executor(None, self.context.controller.queue_repo.get_main_task_status, main_task_id)
             if main_status in ['paused', 'cancelled', 'failed']:
                 return
@@ -239,6 +248,22 @@ class DownloadStrategy(TransferStrategy):
                     file_details['chunks'] = [{"part_num": c[0], "message_id": c[1], "part_hash": c[2]} for c in chunks]
 
                 if not file_details.get('chunks'):
+                    if int(file_details.get('size', 0) or 0) == 0:
+                        def _create_empty_file_atomically():
+                            parent_dir = os.path.dirname(os.path.abspath(save_path))
+                            if parent_dir:
+                                os.makedirs(parent_dir, exist_ok=True)
+                            part_path = f"{save_path}.tdrive.part"
+                            with open(part_path, "wb"):
+                                pass
+                            os.replace(part_path, save_path)
+
+                        await loop.run_in_executor(None, _create_empty_file_atomically)
+                        await self.context.controller.mark_sub_task_completed_async(main_task_id, sub_task_id)
+                        if main_task_id == sub_task_id:
+                            progress_callback(main_task_id, file_details['name'], 0, 0, 'completed', 0)
+                            self.context.watcher.add_watch(main_task_id, save_path, 'local')
+                        return
                     raise Exception("Unable to retrieve file chunks from cloud.")
 
                 progress_callback(main_task_id, file_details['name'], -1, -1, 'transferring', 0)
@@ -290,8 +315,9 @@ class DownloadStrategy(TransferStrategy):
                 paths_to_delete.append(task_info['save_path'])
 
         for path in paths_to_delete:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError as e:
-                    logger.warning("Failed to delete %s: %s", path, e)
+            for candidate in (path, f"{path}.tdrive.part"):
+                if os.path.exists(candidate):
+                    try:
+                        os.remove(candidate)
+                    except OSError as e:
+                        logger.warning("Failed to delete %s: %s", candidate, e)

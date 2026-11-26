@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CALLBACK_ELAPSED = 0.5
 MAX_INFLIGHT_UPLOAD_CHUNKS = 12
 MAX_CHUNK_FAILOVER_ATTEMPTS = 3
+PART_SUFFIX = ".tdrive.part"
 
 
 class TransferDispatcher:
@@ -302,9 +303,16 @@ class TransferDispatcher:
         chunks = file_details['chunks']
         total_size = int(file_details['size'])
         key = cr.generate_key(file_details['hash'][:32], file_details['hash'][-32:])
+        part_path = f"{save_path}{PART_SUFFIX}"
 
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, fp.prepare_download_file, save_path, total_size)
+        if len(completed_parts) == len(chunks):
+            logger.info("All parts marked as completed. Skipping download loop.")
+            if await loop.run_in_executor(None, os.path.exists, part_path):
+                await loop.run_in_executor(None, os.replace, part_path, save_path)
+            return
+
+        await loop.run_in_executor(None, fp.prepare_download_file, part_path, total_size)
 
         completed_bytes_ref = [min(total_size, sum(fp.CHUNK_SIZE for c in chunks if c['part_num'] in completed_parts))]
         active_chunk_progress: dict[int, int] = {}
@@ -323,8 +331,10 @@ class TransferDispatcher:
 
         logger.debug(f"Download: decoded {len(chunks)} chunks across {len(by_group_msg_ids)} groups")
         total_pending = sum(len(ids) for ids in by_group_msg_ids.values())
-        if total_pending == 0 and len(completed_parts) == len(chunks):
-            logger.info("All parts marked as completed. Skipping download loop.")
+        if total_pending == 0:
+            logger.info("No pending chunks left to download.")
+            if await loop.run_in_executor(None, os.path.exists, part_path):
+                await loop.run_in_executor(None, os.replace, part_path, save_path)
             return
 
         msg_map = await TransferDispatcher._fetch_download_messages_batched(shared_state.client, by_group_msg_ids)
@@ -358,7 +368,7 @@ class TransferDispatcher:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 0.5))
                     await TransferDispatcher._download_chunk_with_failover(
-                        shared_state, loop, key, save_path, target_group_id, raw_msg_id,
+                        shared_state, loop, key, part_path, target_group_id, raw_msg_id,
                         part_num, part_hash, get_progress_cb(part_num)
                     )
                     active_chunk_progress.pop(part_num, None)
@@ -385,3 +395,7 @@ class TransferDispatcher:
             for w in worker_tasks:
                 w.cancel()
             raise
+
+        # Atomically promote .tdrive.part to final path only after all chunks succeed and verify
+        if await loop.run_in_executor(None, os.path.exists, part_path):
+            await loop.run_in_executor(None, os.replace, part_path, save_path)
