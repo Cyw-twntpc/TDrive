@@ -10,8 +10,50 @@ const TextHandler = {
     _toolbarWasVisible: false,
     _fragments: null, 
     _livePreviewToken: 0,
+    _jumpDebounceTimer: null,
+    _originalJumpPct: undefined,
+    _originalScrollTop: undefined,
+    _originalRenderedPages: null,
+    _hasLiveJumped: false,
+
+    /**
+     * Reset active jump-slider tracking and cancel any pending debounce timer.
+     */
+    _clearJumpState() {
+        if (this._jumpDebounceTimer !== null) {
+            clearTimeout(this._jumpDebounceTimer);
+            this._jumpDebounceTimer = null;
+        }
+        this._originalJumpPct = undefined;
+        this._originalScrollTop = undefined;
+        this._originalRenderedPages = null;
+        this._hasLiveJumped = false;
+    },
+
+    /**
+     * Compute scrollTop within container so pageEl aligns with its target fraction,
+     * avoiding offsetTop inflation from static ancestors such as .modal-header.
+     */
+    _computePageScrollTop(container, pageEl, targetPage, fraction) {
+        const containerRect = container.getBoundingClientRect();
+        const pageRect = pageEl.getBoundingClientRect();
+        if (pageRect.height === 0 && pageEl.offsetHeight > 0) {
+            const baseTop = (targetPage === 0 && fraction <= 0) ? 0 : pageEl.offsetTop;
+            return Math.max(0, baseTop + (fraction * pageEl.offsetHeight));
+        }
+        const scaleY = (container.clientHeight > 0 && containerRect.height > 0)
+            ? (containerRect.height / container.clientHeight)
+            : 1;
+        const pageTopInContainer = ((pageRect.top - containerRect.top) / scaleY) + container.scrollTop;
+        const pageHeight = pageEl.offsetHeight || (pageRect.height / scaleY);
+        if (targetPage === 0 && fraction <= 0) {
+            return 0;
+        }
+        return Math.max(0, pageTopInContainer + (fraction * pageHeight));
+    },
 
     openPreview(fileId, fileName) {
+        this._clearJumpState();
         const toolbar = document.getElementById('file-floating-toolbar');
         if (toolbar && toolbar.classList.contains('visible')) {
             toolbar.classList.remove('visible');
@@ -137,36 +179,85 @@ const TextHandler = {
             document.head.appendChild(style);
 
             statusBar.addEventListener('click', () => {
+                if (jumpModal.classList.contains('hidden')) {
+                    const container = document.getElementById('text-render-state');
+                    const currentPct = this._calculateContinuousProgress();
+                    this._originalJumpPct = currentPct;
+                    this._originalScrollTop = container ? container.scrollTop : 0;
+                    this._originalRenderedPages = this._renderedPages.slice();
+                    this._hasLiveJumped = false;
+
+                    const slider = document.getElementById('text-jump-slider');
+                    slider.value = currentPct.toFixed(2);
+                    document.getElementById('text-jump-value').textContent = slider.value + '%';
+                }
                 jumpModal.classList.remove('hidden');
-                const slider = document.getElementById('text-jump-slider');
-                const currentPct = this._calculateContinuousProgress();
-                slider.value = currentPct.toFixed(2);
-                this._originalJumpPct = currentPct;
-                document.getElementById('text-jump-value').textContent = slider.value + '%';
             });
 
-            let debounceTimer;
             document.getElementById('text-jump-slider')?.addEventListener('input', (e) => {
                 const val = e.target.value;
                 document.getElementById('text-jump-value').textContent = parseFloat(val).toFixed(2) + '%';
-                
-                clearTimeout(debounceTimer);
-                debounceTimer = setTimeout(() => {
+
+                if (this._jumpDebounceTimer !== null) {
+                    clearTimeout(this._jumpDebounceTimer);
+                }
+                this._jumpDebounceTimer = setTimeout(() => {
+                    this._jumpDebounceTimer = null;
+                    this._hasLiveJumped = true;
                     this._handleLiveJump(parseFloat(val));
                 }, 50);
             });
 
             document.getElementById('text-jump-cancel')?.addEventListener('click', () => {
+                if (this._jumpDebounceTimer !== null) {
+                    clearTimeout(this._jumpDebounceTimer);
+                    this._jumpDebounceTimer = null;
+                }
                 jumpModal.classList.add('hidden');
-                if (this._originalJumpPct !== undefined) {
+
+                const origPct = this._originalJumpPct;
+                const origScrollTop = this._originalScrollTop;
+                const origPages = this._originalRenderedPages;
+                const didJump = this._hasLiveJumped;
+
+                this._clearJumpState();
+                // Invalidate any in-flight page fetch triggered while dragging the slider.
+                this._livePreviewToken++;
+                this._loading = false;
+
+                if (origPct !== undefined) {
                     const slider = document.getElementById('text-jump-slider');
-                    slider.value = this._originalJumpPct.toFixed(2);
-                    this._handleLiveJump(this._originalJumpPct);
+                    if (slider) slider.value = origPct.toFixed(2);
+                    const valueEl = document.getElementById('text-jump-value');
+                    if (valueEl) valueEl.textContent = origPct.toFixed(2) + '%';
+
+                    const sameRenderedPages = Array.isArray(origPages)
+                        && origPages.length === this._renderedPages.length
+                        && origPages.every((p, idx) => p === this._renderedPages[idx]);
+
+                    if (!didJump || sameRenderedPages) {
+                        const container = document.getElementById('text-render-state');
+                        if (container && origScrollTop !== undefined) {
+                            container.scrollTop = origScrollTop;
+                        }
+                        this._updateStatusBarPct(origPct);
+                    } else {
+                        this._handleLiveJump(origPct);
+                    }
                 }
             });
 
             document.getElementById('text-jump-ok')?.addEventListener('click', () => {
+                if (this._jumpDebounceTimer !== null) {
+                    clearTimeout(this._jumpDebounceTimer);
+                    this._jumpDebounceTimer = null;
+                    const slider = document.getElementById('text-jump-slider');
+                    if (slider) {
+                        this._handleLiveJump(parseFloat(slider.value));
+                    }
+                }
                 jumpModal.classList.add('hidden');
+                this._clearJumpState();
             });
         }
     },
@@ -185,9 +276,14 @@ const TextHandler = {
 
     _calculateContinuousProgress() {
         if (!this._isPlainText || this._totalPages <= 0) return 0;
-        if (this._totalPages === 1) return 100;
-        
         const container = document.getElementById('text-render-state');
+        if (this._totalPages === 1) {
+            if (!container) return 100;
+            const maxScroll = container.scrollHeight - container.clientHeight;
+            if (maxScroll <= 1) return 100;
+            return Math.max(0, Math.min(100, (container.scrollTop / maxScroll) * 100));
+        }
+
         const containerRect = container.getBoundingClientRect();
         
         let activePage = this._renderedPages[0];
@@ -233,45 +329,59 @@ const TextHandler = {
 
     _handleLiveJump(percentage) {
         if (this._totalPages === 0) return;
-        
+
+        const container = document.getElementById('text-render-state');
+        if (this._totalPages === 1) {
+            this._livePreviewToken++;
+            this._loading = false;
+            if (container) {
+                const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+                const clampedPct = Math.max(0, Math.min(100, percentage));
+                container.scrollTop = (clampedPct / 100) * maxScroll;
+                this._updateStatusBarPct(this._calculateContinuousProgress());
+            }
+            return;
+        }
+
         const exactPage = (percentage / 100) * this._totalPages;
         const targetPage = Math.max(0, Math.min(this._totalPages - 1, Math.floor(exactPage)));
         const fraction = Math.max(0, Math.min(1, exactPage - targetPage));
-        
+
         if (this._renderedPages.includes(targetPage)) {
             const pageEl = this._fragments.get(targetPage);
-            if (pageEl) {
-                const container = document.getElementById('text-render-state');
-                const targetScroll = pageEl.offsetTop + (fraction * pageEl.offsetHeight);
-                container.scrollTop = targetScroll;
+            if (pageEl && container) {
+                this._livePreviewToken++;
+                this._loading = false;
+                container.scrollTop = this._computePageScrollTop(container, pageEl, targetPage, fraction);
+                this._updateStatusBarPct(this._calculateContinuousProgress());
                 return;
             }
         }
-        
+
         this._livePreviewToken++;
         const currentToken = this._livePreviewToken;
-        
+
         this._loading = true;
-        
+
         ApiService.getTextPage(this.fileId, targetPage).then(response => {
             if (currentToken !== this._livePreviewToken) return;
             this._livePreviewToken++;
             this._loading = false;
-            
+
             if (response && response.content !== undefined) {
                 const codeBlock = document.getElementById('text-code-block');
                 codeBlock.innerHTML = '';
                 this._fragments.clear();
                 this._renderedPages = [];
-                
-                const container = document.getElementById('text-render-state');
-                container.scrollTop = 0;
-                
+
+                if (container) container.scrollTop = 0;
+
                 this._renderPageData(targetPage, response.content);
-                
+
                 const pageEl = this._fragments.get(targetPage);
-                if (pageEl) {
-                    container.scrollTop = pageEl.offsetTop + (fraction * pageEl.offsetHeight);
+                if (pageEl && container) {
+                    container.scrollTop = this._computePageScrollTop(container, pageEl, targetPage, fraction);
+                    this._updateStatusBarPct(this._calculateContinuousProgress());
                 }
             }
         }).catch(() => {
@@ -282,6 +392,9 @@ const TextHandler = {
     },
 
     closePreview() {
+        this._clearJumpState();
+        this._livePreviewToken++;
+        this._loading = false;
         const modal = document.getElementById('text-modal');
         modal.classList.add('hidden');
         this.fileId = null;
