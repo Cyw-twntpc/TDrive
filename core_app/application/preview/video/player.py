@@ -131,8 +131,8 @@ class VideoStreamer:
                             invalid_range = True
                         if not invalid_range and (start_byte < 0 or start_byte >= file_size or end_byte < start_byte):
                             invalid_range = True
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug(f"Invalid HTTP Range header '{range_header}': {e}")
 
             if invalid_range:
                 return web.Response(

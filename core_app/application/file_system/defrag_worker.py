@@ -64,7 +64,7 @@ class DefragWorker:
                         await self.queue.put(f_id)
                         logger.info(f"Folder {f_id} queued for defragmentation.")
             except asyncio.CancelledError:
-                pass
+                logger.debug("DefragWorker folder evaluation cancelled.")
             except Exception as e:
                 logger.error(f"Error evaluating fragmentation for folders {valid_ids}: {e}")
 
@@ -155,5 +155,5 @@ class DefragWorker:
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as close_err:
+                    logger.debug(f"Failed to close transfer_db connection: {close_err}")

@@ -156,8 +156,8 @@ class StreamBuffer:
                 data = await self._active_downloads[lock_key]
                 if data:
                     return data
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"In-flight chunk download wait failed for {lock_key}: {e}")
             # Download failed — fall through to retry ourselves
 
         # Create a new Future for this download
@@ -308,9 +308,9 @@ class StreamBuffer:
 
             await self._get_chunk(file_id, chunk_idx, file_hash, chunk_map, category=category)
         except asyncio.CancelledError:
-            pass # Task intentionally cancelled by seek detection
-        except Exception:
-            pass
+            logger.debug(f"Readahead task cancelled for chunk {chunk_idx} of file {file_id}")
+        except Exception as e:
+            logger.debug(f"Readahead task skipped for chunk {chunk_idx} of file {file_id}: {e}")
         finally:
             async with self._state_lock:
                 self._active_readaheads.pop(cache_key, None)

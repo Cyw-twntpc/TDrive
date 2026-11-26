@@ -231,8 +231,8 @@ class AudioPlayerManager:
                 if hasattr(media, "release"):
                     try:
                         media.release()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to release VLC media handle: %s", e)
                 with self._lock:
                     vol = self._volume
                     muted = self._muted

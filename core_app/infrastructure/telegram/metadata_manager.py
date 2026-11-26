@@ -84,222 +84,207 @@ class MetadataManager:
     # --- Database Snapshot Management ---
 
     async def initialize_db(self, client, group_id: int | list[int] | None = None, api_id: int | None = None) -> bool:
-        """
-        Downloads and restores the latest DB snapshot from the cloud across all storage groups.
-        """
+        """Download and restore the latest DB snapshot across storage groups, then replay pending ops."""
         try:
             if api_id is None and hasattr(self, 'shared_state') and self.shared_state:
                 api_id = getattr(self.shared_state, 'api_id', None)
 
-            # Collect candidate storage group IDs to search
-            group_ids_to_search = []
-
-            # 1. Process group_id parameter if provided
-            if group_id is not None:
-                if isinstance(group_id, (list, tuple, set)):
-                    for item in group_id:
-                        if isinstance(item, int):
-                            group_ids_to_search.append(item)
-                        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                            idx, tg_id = item[0], item[1]
-                            group_ids_to_search.append(tg_id)
-                            if hasattr(self, 'shared_state') and self.shared_state:
-                                if not hasattr(self.shared_state, 'group_id_map') or self.shared_state.group_id_map is None:
-                                    self.shared_state.group_id_map = {}
-                                self.shared_state.group_id_map[idx] = tg_id
-                elif isinstance(group_id, int):
-                    group_ids_to_search.append(group_id)
-
-            # 2. Discover all TDrive storage groups via telegram_comms.get_all_tdrive_groups
-            try:
-                discovered_groups = await telegram_comms.get_all_tdrive_groups(self.shared_state)
-                for idx, tg_id, name in discovered_groups:
-                    group_ids_to_search.append(tg_id)
-                    if hasattr(self, 'shared_state') and self.shared_state:
-                        if not hasattr(self.shared_state, 'group_id_map') or self.shared_state.group_id_map is None:
-                            self.shared_state.group_id_map = {}
-                        self.shared_state.group_id_map[idx] = tg_id
-            except Exception as ge:
-                logger.warning(f"Could not discover TDrive groups from client: {ge}")
-
-            # 3. Include shared_state.group_id if available
-            if hasattr(self, 'shared_state') and self.shared_state and getattr(self.shared_state, 'group_id', None):
-                group_ids_to_search.append(self.shared_state.group_id)
-
-            # Deduplicate while preserving order
-            unique_group_ids = []
-            for gid in group_ids_to_search:
-                if gid not in unique_group_ids:
-                    unique_group_ids.append(gid)
-
+            unique_group_ids = await self._collect_storage_group_ids(group_id)
             logger.info(f"Searching {len(unique_group_ids)} unique storage groups for DB snapshot")
 
-            def _extract_msg_date(msg):
-                d = getattr(msg, 'date', None)
-                if d is None:
-                    return 0.0
-                if hasattr(d, 'timestamp'):
-                    return d.timestamp()
-                try:
-                    return float(d)
-                except (ValueError, TypeError):
-                    return 0.0
-
-            # Iterate across all discovered storage groups to search for #tdrive_db_snapshot messages
-            candidate_snapshots = []
-            for gid in unique_group_ids:
-                snapshot_msg = None
-                try:
-                    iter_res = client.iter_messages(gid, limit=50)
-                    if hasattr(iter_res, '__aiter__'):
-                        async for message in iter_res:
-                            if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
-                                snapshot_msg = message
-                                break
-                    elif isinstance(iter_res, (list, tuple)):
-                        for message in iter_res:
-                            if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
-                                snapshot_msg = message
-                                break
-                except Exception as iter_err:
-                    logger.debug(f"iter_messages failed for group {gid}: {iter_err}")
-
-                if not snapshot_msg:
-                    try:
-                        get_msg_res = client.get_messages(gid, limit=1, search='#tdrive_db_snapshot')
-                        messages = await get_msg_res if (asyncio.iscoroutine(get_msg_res) or hasattr(get_msg_res, '__await__')) else get_msg_res
-                        if isinstance(messages, (list, tuple)) and len(messages) > 0 and messages[0]:
-                            snapshot_msg = messages[0]
-                    except Exception as search_err:
-                        logger.debug(f"get_messages search failed for group {gid}: {search_err}")
-
-                if snapshot_msg:
-                    candidate_snapshots.append((snapshot_msg, gid))
-
-            snapshot_msg = None
-            selected_group_id = None
-            if candidate_snapshots:
-                # Select the snapshot with the globally latest message date
-                snapshot_msg, selected_group_id = max(candidate_snapshots, key=lambda pair: _extract_msg_date(pair[0]))
-                logger.info(f"Selected snapshot from group {selected_group_id} (latest date)")
-
+            snapshot_msg, selected_group_id = await self._find_latest_snapshot_message(client, unique_group_ids)
             conn = self.db._get_conn()
-            
+
             if snapshot_msg:
-                self._last_snapshot_msg_id = snapshot_msg.id
-                self._last_snapshot_group_id = selected_group_id
-                logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
-                
-                # Download encrypted blob
-                dl_res = snapshot_msg.download_media(file=bytes) if hasattr(snapshot_msg, 'download_media') else None
-                if dl_res is not None:
-                    encrypted_bytes = await dl_res if (asyncio.iscoroutine(dl_res) or hasattr(dl_res, '__await__')) else dl_res
-                else:
-                    encrypted_bytes = None
-
-                if not encrypted_bytes:
-                    logger.error("Snapshot download failed (empty).")
+                restored = await self._restore_db_from_snapshot(snapshot_msg, selected_group_id, api_id, conn)
+                if not restored:
                     return False
-
-                # Decrypt: Use simple key from api_id
-                key = cr.generate_key_from_api_id(str(api_id))
-                try:
-                    decrypted_gzip = cr.decrypt(encrypted_bytes, key)
-                    sql_dump = gzip.decompress(decrypted_gzip).decode('utf-8')
-                    
-                    # Restore to Memory DB
-                    try:
-                        # 1. Disable Foreign Keys for restoration
-                        conn.execute("PRAGMA foreign_keys = OFF")
-                        
-                        # 2. Clear existing schema completely
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
-                        for trigger in cursor.fetchall(): cursor.execute(f"DROP TRIGGER IF EXISTS {trigger[0]}")
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='view'")
-                        for view in cursor.fetchall(): cursor.execute(f"DROP VIEW IF EXISTS {view[0]}")
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-                        for table in cursor.fetchall(): cursor.execute(f"DROP TABLE IF EXISTS {table[0]}")
-                        
-                        # 3. Create Tables ONLY (No Triggers or seed data yet)
-                        self.db._create_tables()
-                        
-                        # 4. Smart Import: Execute INSERTs only for allowed core tables
-                        ALLOWED_TABLES = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots', 'storage_groups'}
-                        sql_dump = sql_dump.replace('\r\n', '\n')
-                        
-                        statements = []
-                        current_stmt = []
-                        for line in sql_dump.split('\n'):
-                            if not line.strip() and not current_stmt:
-                                continue
-                            current_stmt.append(line)
-                            stmt_str = '\n'.join(current_stmt)
-                            if sqlite3.complete_statement(stmt_str):
-                                statements.append(stmt_str)
-                                current_stmt = []
-                        
-                        for statement in statements:
-                            stmt = statement.strip()
-                            if stmt.upper().startswith("INSERT INTO"):
-                                try:
-                                    parts = stmt.split()
-                                    if len(parts) > 2:
-                                        raw_name = parts[2]
-                                        table_name = raw_name.split('(')[0].strip('"').strip("'").lower()
-                                        
-                                        if table_name in ALLOWED_TABLES:
-                                            conn.execute(stmt)
-                                except Exception as e:
-                                    logger.warning(f"Skipping problematic INSERT: {e}")
-
-                        # 5. Create Triggers
-                        self.db._create_triggers()
-                        
-                        # 6. Rebuild Search Index (since we skipped triggers during insert)
-                        self.db.rebuild_search_index()
-
-                        # 7. Re-enable Foreign Keys
-                        conn.execute("PRAGMA foreign_keys = ON")
-                        
-                        logger.info("Database successfully restored from snapshot.")
-                        
-                    except Exception as restore_err:
-                        logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
-                        # Fallback: Initialize fresh DB structure
-                        self.db._init_db()
-                        conn.execute("PRAGMA foreign_keys = ON")
-                except Exception as e:
-                    logger.error(f"Failed to decrypt/restore snapshot: {e}")
-                    # If snapshot decryption fails, start fresh to stay functional
-                    self.db._init_db()
             else:
                 logger.info("No remote DB snapshot found. Starting with fresh in-memory DB.")
 
-            # --- CRITICAL: Replay Transaction Log ---
-            # Replays any pending operations that were not synced before crash/shutdown
-            if hasattr(self.db, 'transaction_logger'):
-                try:
-                    self.db.transaction_logger.replay(conn)
-                except Exception as log_err:
-                    logger.error(f"Transaction log replay failed: {log_err}")
-                    # If log is malformed, clear it to prevent permanent crash loop
-                    if "malformed" in str(log_err) or "corrupt" in str(log_err):
-                        logger.warning("Deleting corrupt transaction log files.")
-                        self.db.transaction_logger.clear() # Clears .bak
-                        # Also clear primary log if needed (TransactionLogger doesn't have delete_primary, but clear handles bak)
-                        # We might need to manually remove the main file if replay failed on it.
-                        try:
-                            if os.path.exists(self.db.transaction_logger.log_path):
-                                os.remove(self.db.transaction_logger.log_path)
-                        except Exception:
-                            logger.warning("Failed to remove corrupt transaction log file.", exc_info=True)
-
+            self._replay_pending_transactions(conn)
             return True
-
         except Exception as e:
             logger.error(f"Error initializing DB: {e}", exc_info=True)
             return False
+
+    def _record_group_mapping(self, idx: Any, tg_id: int) -> None:
+        """Persist storage group index -> Telegram chat ID mapping into shared_state."""
+        if hasattr(self, 'shared_state') and self.shared_state:
+            if not hasattr(self.shared_state, 'group_id_map') or self.shared_state.group_id_map is None:
+                self.shared_state.group_id_map = {}
+            self.shared_state.group_id_map[idx] = tg_id
+
+    async def _collect_storage_group_ids(self, group_id: int | list[int] | None) -> list[int]:
+        """Gather candidate storage group IDs from args, Telegram discovery, and shared_state."""
+        group_ids_to_search: list[int] = []
+        if isinstance(group_id, (list, tuple, set)):
+            for item in group_id:
+                if isinstance(item, int):
+                    group_ids_to_search.append(item)
+                elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                    idx, tg_id = item[0], item[1]
+                    group_ids_to_search.append(tg_id)
+                    self._record_group_mapping(idx, tg_id)
+        elif isinstance(group_id, int):
+            group_ids_to_search.append(group_id)
+
+        try:
+            discovered_groups = await telegram_comms.get_all_tdrive_groups(self.shared_state)
+            for idx, tg_id, _name in discovered_groups:
+                group_ids_to_search.append(tg_id)
+                self._record_group_mapping(idx, tg_id)
+        except Exception as ge:
+            logger.warning(f"Could not discover TDrive groups from client: {ge}")
+
+        if hasattr(self, 'shared_state') and self.shared_state and getattr(self.shared_state, 'group_id', None):
+            group_ids_to_search.append(self.shared_state.group_id)
+
+        unique_group_ids: list[int] = []
+        for gid in group_ids_to_search:
+            if gid not in unique_group_ids:
+                unique_group_ids.append(gid)
+        return unique_group_ids
+
+    async def _find_latest_snapshot_message(self, client, group_ids: list[int]):
+        """Scan candidate storage groups for #tdrive_db_snapshot messages and pick the newest."""
+        def _extract_msg_date(msg) -> float:
+            d = getattr(msg, 'date', None)
+            if d is None:
+                return 0.0
+            if hasattr(d, 'timestamp'):
+                return d.timestamp()
+            try:
+                return float(d)
+            except (ValueError, TypeError):
+                return 0.0
+
+        candidate_snapshots = []
+        for gid in group_ids:
+            snapshot_msg = await self._find_snapshot_in_group(client, gid)
+            if snapshot_msg:
+                candidate_snapshots.append((snapshot_msg, gid))
+
+        if not candidate_snapshots:
+            return None, None
+        snapshot_msg, selected_group_id = max(candidate_snapshots, key=lambda pair: _extract_msg_date(pair[0]))
+        logger.info(f"Selected snapshot from group {selected_group_id} (latest date)")
+        return snapshot_msg, selected_group_id
+
+    async def _find_snapshot_in_group(self, client, gid: int):
+        """Locate the most recent #tdrive_db_snapshot message within a single storage group."""
+        try:
+            iter_res = client.iter_messages(gid, limit=50)
+            if hasattr(iter_res, '__aiter__'):
+                async for message in iter_res:
+                    if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
+                        return message
+            elif isinstance(iter_res, (list, tuple)):
+                for message in iter_res:
+                    if message and getattr(message, 'text', None) and '#tdrive_db_snapshot' in str(message.text):
+                        return message
+        except Exception as iter_err:
+            logger.debug(f"iter_messages failed for group {gid}: {iter_err}")
+
+        try:
+            get_msg_res = client.get_messages(gid, limit=1, search='#tdrive_db_snapshot')
+            messages = await get_msg_res if (asyncio.iscoroutine(get_msg_res) or hasattr(get_msg_res, '__await__')) else get_msg_res
+            if isinstance(messages, (list, tuple)) and len(messages) > 0 and messages[0]:
+                return messages[0]
+        except Exception as search_err:
+            logger.debug(f"get_messages search failed for group {gid}: {search_err}")
+        return None
+
+    async def _restore_db_from_snapshot(self, snapshot_msg, selected_group_id: int, api_id: int | None, conn) -> bool:
+        """Download, decrypt, and import SQL statements from a Telegram DB snapshot message."""
+        self._last_snapshot_msg_id = snapshot_msg.id
+        self._last_snapshot_group_id = selected_group_id
+        logger.info(f"Found DB snapshot (ID: {snapshot_msg.id}). Downloading...")
+
+        dl_res = snapshot_msg.download_media(file=bytes) if hasattr(snapshot_msg, 'download_media') else None
+        if dl_res is not None:
+            encrypted_bytes = await dl_res if (asyncio.iscoroutine(dl_res) or hasattr(dl_res, '__await__')) else dl_res
+        else:
+            encrypted_bytes = None
+
+        if not encrypted_bytes:
+            logger.error("Snapshot download failed (empty).")
+            return False
+
+        key = cr.generate_key_from_api_id(str(api_id))
+        try:
+            decrypted_gzip = cr.decrypt(encrypted_bytes, key)
+            sql_dump = gzip.decompress(decrypted_gzip).decode('utf-8')
+            self._apply_snapshot_sql(conn, sql_dump)
+        except Exception as e:
+            logger.error(f"Failed to decrypt/restore snapshot: {e}")
+            self.db._init_db()
+        return True
+
+    def _apply_snapshot_sql(self, conn, sql_dump: str) -> None:
+        """Reset schema and replay INSERT statements into allowed core tables from decrypted dump."""
+        allowed_tables = {'folders', 'files', 'file_folder_map', 'trash_metadata', 'worker_bots', 'storage_groups'}
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            cursor = conn.cursor()
+            for obj_type in ("trigger", "view"):
+                cursor.execute(f"SELECT name FROM sqlite_master WHERE type='{obj_type}'")
+                for row in cursor.fetchall():
+                    cursor.execute(f"DROP {obj_type.upper()} IF EXISTS {row[0]}")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            for table in cursor.fetchall():
+                cursor.execute(f"DROP TABLE IF EXISTS {table[0]}")
+
+            self.db._create_tables()
+
+            statements = []
+            current_stmt = []
+            for line in sql_dump.replace('\r\n', '\n').split('\n'):
+                if not line.strip() and not current_stmt:
+                    continue
+                current_stmt.append(line)
+                stmt_str = '\n'.join(current_stmt)
+                if sqlite3.complete_statement(stmt_str):
+                    statements.append(stmt_str)
+                    current_stmt = []
+
+            for statement in statements:
+                stmt = statement.strip()
+                if stmt.upper().startswith("INSERT INTO"):
+                    try:
+                        parts = stmt.split()
+                        if len(parts) > 2:
+                            table_name = parts[2].split('(')[0].strip('"').strip("'").lower()
+                            if table_name in allowed_tables:
+                                conn.execute(stmt)
+                    except Exception as e:
+                        logger.warning(f"Skipping problematic INSERT: {e}")
+
+            self.db._create_triggers()
+            self.db.rebuild_search_index()
+            conn.execute("PRAGMA foreign_keys = ON")
+            logger.info("Database successfully restored from snapshot.")
+        except Exception as restore_err:
+            logger.error(f"SQL execution failed during restoration: {restore_err}", exc_info=True)
+            self.db._init_db()
+            conn.execute("PRAGMA foreign_keys = ON")
+
+    def _replay_pending_transactions(self, conn) -> None:
+        """Replay pending WAL operations and discard corrupt transaction logs if malformed."""
+        if not hasattr(self.db, 'transaction_logger'):
+            return
+        try:
+            self.db.transaction_logger.replay(conn)
+        except Exception as log_err:
+            logger.error(f"Transaction log replay failed: {log_err}")
+            if "malformed" in str(log_err) or "corrupt" in str(log_err):
+                logger.warning("Deleting corrupt transaction log files.")
+                self.db.transaction_logger.clear()
+                try:
+                    if os.path.exists(self.db.transaction_logger.log_path):
+                        os.remove(self.db.transaction_logger.log_path)
+                except Exception:
+                    logger.warning("Failed to remove corrupt transaction log file.", exc_info=True)
 
     async def sync_db_to_cloud(self, client, group_id: int, api_id: int):
         """

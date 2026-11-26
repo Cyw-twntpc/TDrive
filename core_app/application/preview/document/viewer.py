@@ -154,8 +154,8 @@ class DocumentPreviewer:
             try:
                 shared_res = await active_map[dedup_key]
                 return {**shared_res, 'file_name': file_info['name']}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"In-flight document download wait failed for {dedup_key}: {e}")
 
         download_future = None
         if isinstance(active_map, dict):
@@ -256,8 +256,8 @@ class DocumentPreviewer:
             try:
                 shared_res = await active_map[dedup_key]
                 return {**shared_res, 'file_name': file_info['name']}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"In-flight document download wait failed for {dedup_key}: {e}")
 
         download_future = None
         if isinstance(active_map, dict):

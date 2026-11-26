@@ -129,8 +129,8 @@ class TransferService:
         if self._refresh_timer_task:
             try:
                 self._refresh_timer_task.cancel()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to cancel refresh timer task: {e}")
             self._refresh_timer_task = None
 
         # Cancel all active tasks tracked in SharedState
@@ -248,8 +248,8 @@ class TransferService:
             else:
                 try:
                     coro.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close unscheduled cleanup coroutine: {e}")
 
         return {"success": True}
 

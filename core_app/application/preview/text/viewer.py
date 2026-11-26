@@ -36,8 +36,8 @@ def _decode_window(data: bytes) -> str:
         enc = chardet.detect(data)['encoding']
         if enc:
             return data.decode(enc, errors='replace')
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Window encoding detection failed, falling back to utf-8: {e}")
     return data.decode('utf-8', errors='replace')
 
 
@@ -161,8 +161,8 @@ class TextPreviewer:
                 existing_data = await self._active_downloads[content_id]
                 if existing_data is not None:
                     return existing_data
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"In-flight text download wait failed for content_id={content_id}: {e}")
 
         loop = asyncio.get_running_loop()
         download_future = loop.create_future()
@@ -217,8 +217,8 @@ class TextPreviewer:
                         enc = 'utf-32be'
                     else:
                         enc = 'utf-32le'
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Page index encoding detection failed, using utf-8: {e}")
             
             enc_lower = enc.lower()
             if 'utf-16le' in enc_lower:

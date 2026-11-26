@@ -331,8 +331,8 @@ class PreviewCacheManager:
                 logger.warning("Preview disk cache write skipped (fail-open) for %s: %s", cache_key, exc)
                 try:
                     conn.rollback()
-                except sqlite3.Error:
-                    pass
+                except sqlite3.Error as rb_exc:
+                    logger.debug("Preview cache rollback skipped for %s: %s", cache_key, rb_exc)
                 self._safe_unlink(abs_path)
                 return False
             finally:
@@ -395,8 +395,8 @@ class PreviewCacheManager:
                 logger.warning("Chunk disk cache write skipped (fail-open) for %s: %s", cache_key, exc)
                 try:
                     conn.rollback()
-                except sqlite3.Error:
-                    pass
+                except sqlite3.Error as rb_exc:
+                    logger.debug("Preview cache rollback skipped for %s: %s", cache_key, rb_exc)
                 self._safe_unlink(abs_path)
                 return False
             finally:

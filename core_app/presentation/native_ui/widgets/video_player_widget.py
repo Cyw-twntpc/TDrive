@@ -6,13 +6,15 @@ import threading
 from core_app.core.settings_manager import get_localized_text
 from core_app.core.utils import ensure_extracted
 
+logger = logging.getLogger(__name__)
+
 vlc_path = ensure_extracted('vlc')
 os.environ['PYTHON_VLC_MODULE_PATH'] = vlc_path
 if hasattr(os, 'add_dll_directory'):
     try:
         os.add_dll_directory(vlc_path)
     except Exception as e:
-        pass
+        logger.debug("Failed to register VLC DLL directory %s: %s", vlc_path, e)
 
 import vlc
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -20,8 +22,6 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                                QStyle, QStyleOptionSlider)
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QRectF, QPropertyAnimation, QVariantAnimation, QParallelAnimationGroup, QPauseAnimation, QSequentialAnimationGroup
 from PySide6.QtGui import QCursor, QPainter, QColor, QPen, QPalette
-
-logger = logging.getLogger(__name__)
 
 class LoadingSpinner(QWidget):
     def __init__(self, parent=None):
@@ -152,7 +152,17 @@ class VideoPlayerWidget(QWidget):
 
     def __init__(self, stream_url: str, file_name: str = "Video"):
         super().__init__()
-        
+        self._apply_base_styles()
+        self._init_video_surface()
+        self._build_top_bar(file_name)
+        self._build_bottom_bar()
+        self.layout.addWidget(self.top_bar, 0, 0, Qt.AlignmentFlag.AlignTop)
+        self.layout.addWidget(self.bottom_bar, 0, 0, Qt.AlignmentFlag.AlignBottom)
+        self._install_interaction_filters()
+        self._init_vlc_player(stream_url)
+
+    def _apply_base_styles(self) -> None:
+        """Apply root dark surface and tooltip stylesheets."""
         self.setStyleSheet("""
             VideoPlayerWidget { background-color: #000000; }
             QToolTip { 
@@ -164,50 +174,50 @@ class VideoPlayerWidget(QWidget):
                 font-family: 'Segoe UI', sans-serif;
             }
         """)
-        
+
+    def _init_video_surface(self) -> None:
+        """Create the native video frame, loading/state overlays, and time preview."""
         self.layout = QGridLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
-        
-        # 1. Video Frame (Bottom Layer)
+
         self.video_frame = QFrame()
-        
         # Force a pure black palette so it doesn't flash white before VLC renders
         palette = self.video_frame.palette()
         palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.black)
         self.video_frame.setAutoFillBackground(True)
         self.video_frame.setPalette(palette)
-        
+
         if sys.platform == "win32":
             self.video_frame.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)
             self.video_frame.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
         else:
             self.video_frame.setStyleSheet("background-color: black;")
-            
+
         self.layout.addWidget(self.video_frame, 0, 0)
-        
-        # --- Loading Overlay ---
+
         self.loading_overlay = LoadingOverlay(self.video_frame)
         self.state_overlay = StateOverlay(self.video_frame)
         self.is_seeking = False
         self.stuck_ticks = 0
         self.last_time = -1
-        
-        self.video_frame.installEventFilter(self)
-        
-        # Install global application event filter for zero-latency focus tracking
-        if QApplication.instance():
-            QApplication.instance().installEventFilter(self)
-            
-        # --- Top Bar ---
+
+        self.time_preview_label = QLabel(self)
+        self.time_preview_label.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 200); color: white; padding: 3px 6px; border-radius: 4px; font-size: 12px;"
+        )
+        self.time_preview_label.hide()
+
+    def _build_top_bar(self, file_name: str) -> None:
+        """Build the overlay header displaying the title and close button."""
         self.top_bar = QWidget()
         self.top_bar.setStyleSheet("background-color: rgba(40, 44, 52, 220);")
         self.top_layout = QHBoxLayout(self.top_bar)
         self.top_layout.setContentsMargins(20, 10, 20, 10)
-        
+
         self.title_label = QLabel(file_name)
         self.title_label.setStyleSheet("color: #E0E0E0; font-weight: bold; font-size: 15px; background: transparent;")
-        
+
         self.close_button = QPushButton("✕")
         self.close_button.setToolTip("返回")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -228,22 +238,18 @@ class VideoPlayerWidget(QWidget):
         self.top_layout.addWidget(self.title_label)
         self.top_layout.addStretch(1)
         self.top_layout.addWidget(self.close_button)
-        
-        # --- Time Preview Label ---
-        self.time_preview_label = QLabel(self)
-        self.time_preview_label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px 6px; border-radius: 4px; font-size: 12px;")
-        self.time_preview_label.hide()
-        
-        # --- Bottom Bar ---
+
+    def _build_bottom_bar(self) -> None:
+        """Build transport controls: play/pause, seek slider, clock, and volume."""
         self.bottom_bar = QWidget()
         self.bottom_bar.setStyleSheet("background-color: rgba(40, 44, 52, 220);")
         self.bottom_layout = QHBoxLayout(self.bottom_bar)
         self.bottom_layout.setContentsMargins(20, 8, 20, 8)
         self.bottom_layout.setSpacing(12)
-        
+
         self.play_icon = "►"
         self.pause_icon = "❚❚"
-        
+
         self.play_button = QPushButton(self.pause_icon)
         self.play_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.play_button.setFixedSize(36, 36)
@@ -261,10 +267,9 @@ class VideoPlayerWidget(QWidget):
         """)
         self.play_button.clicked.connect(self.toggle_play)
         self.bottom_layout.addWidget(self.play_button)
-        
+
         self.position_slider = QSlider(Qt.Orientation.Horizontal)
         self.position_slider.setMouseTracking(True)
-        self.position_slider.installEventFilter(self)
         self.position_slider.setMaximum(1000)
         self.position_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.position_slider.setStyleSheet("""
@@ -284,14 +289,13 @@ class VideoPlayerWidget(QWidget):
         """)
         self.position_slider.sliderMoved.connect(self.handle_time_drag)
         self.bottom_layout.addWidget(self.position_slider)
-        
+
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setFixedWidth(110)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.time_label.setStyleSheet("color: #E0E0E0; font-family: 'Segoe UI', monospace; font-size: 13px; background: transparent;")
         self.bottom_layout.addWidget(self.time_label)
 
-        # Volume Icon
         self.volume_button = QPushButton("🔊")
         self.volume_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.volume_button.setFixedSize(30, 30)
@@ -309,7 +313,6 @@ class VideoPlayerWidget(QWidget):
         self.volume_button.clicked.connect(self.toggle_mute)
         self.bottom_layout.addWidget(self.volume_button)
 
-        # Volume Slider
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setFixedWidth(80)
         self.volume_slider.setRange(0, 100)
@@ -333,32 +336,35 @@ class VideoPlayerWidget(QWidget):
         self.volume_slider.sliderMoved.connect(self.handle_volume_drag)
         self.bottom_layout.addWidget(self.volume_slider)
 
-        self.layout.addWidget(self.top_bar, 0, 0, Qt.AlignmentFlag.AlignTop)
-        self.layout.addWidget(self.bottom_bar, 0, 0, Qt.AlignmentFlag.AlignBottom)
-
+    def _install_interaction_filters(self) -> None:
+        """Enable mouse tracking, Qt event filters, and control auto-hide timer."""
         self.setMouseTracking(True)
         self.video_frame.setMouseTracking(True)
         self.top_bar.setMouseTracking(True)
         self.bottom_bar.setMouseTracking(True)
         self.loading_overlay.setMouseTracking(True)
-        
+
         self.installEventFilter(self)
         self.video_frame.installEventFilter(self)
         self.position_slider.installEventFilter(self)
         self.volume_slider.installEventFilter(self)
-        
+        if QApplication.instance():
+            QApplication.instance().installEventFilter(self)
+
         self.hide_timer = QTimer(self)
         self.hide_timer.setInterval(3000)
         self.hide_timer.timeout.connect(self.hide_controls)
         self.hide_timer.start()
 
+    def _init_vlc_player(self, stream_url: str) -> None:
+        """Bind libVLC instance to the native window surface and start playback."""
         if not hasattr(self, 'instance') or self.instance is None:
             self.instance = vlc.Instance('--no-xlib', '--network-caching=5000', '--quiet')
             self.player = self.instance.media_player_new()
-        
+
         self.player.video_set_mouse_input(False)
         self.player.video_set_key_input(False)
-        
+
         if sys.platform.startswith('linux'):
             self.player.set_xwindow(self.video_frame.winId())
         elif sys.platform == "win32":
@@ -368,15 +374,15 @@ class VideoPlayerWidget(QWidget):
 
         self.media = self.instance.media_new(stream_url)
         self.player.set_media(self.media)
-        
+
         self.player.audio_set_volume(100)
         self.is_muted = False
         self.previous_volume = 100
-        
+
         self.ui_timer = QTimer(self)
         self.ui_timer.setInterval(200)
         self.ui_timer.timeout.connect(self.update_ui)
-        
+
         self.is_playing = False
         self.play()
 
