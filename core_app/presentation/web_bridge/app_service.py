@@ -673,7 +673,7 @@ class TDriveService:
         return {"success": True}
 
     def get_incomplete_transfers(self) -> Dict[str, Dict]:
-        return self._transfer_service.controller.get_incomplete_transfers()
+        return self._transfer_service.get_incomplete_transfers()
 
     def remove_transfer_history(self, task_id: str) -> Dict[str, Any]:
         return self._transfer_service.remove_transfer_history(task_id)

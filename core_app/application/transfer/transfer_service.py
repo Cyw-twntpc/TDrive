@@ -1,6 +1,7 @@
 import collections
 import logging
 import asyncio
+import sqlite3
 from core_app.core.settings_manager import SettingsManager
 import time
 import os
@@ -421,6 +422,108 @@ class TransferService:
             "chunkSize": fp.CHUNK_SIZE,
             "concurrencyLimit": self.concurrency_limit
         }
+
+    @staticmethod
+    def _expected_part_count(total_size: int) -> int:
+        if total_size and total_size > 0:
+            return max(1, (total_size + fp.CHUNK_SIZE - 1) // fp.CHUNK_SIZE)
+        return 0
+
+    def _is_upload_persisted_in_main_db(
+        self,
+        main_task_id: str,
+        file_path: Optional[str],
+        parent_id: Optional[int],
+        total_size: int,
+        file_hash: Optional[str],
+        transferred_parts: List[Any],
+        has_file_artifact: bool,
+    ) -> bool:
+        """Return True when upload DB evidence and main_db confirm the file is already stored."""
+        if parent_id is None or not file_path or not file_hash:
+            return False
+        expected_parts = self._expected_part_count(total_size)
+        has_all_parts = (expected_parts == 0 and bool(file_hash)) or (
+            expected_parts > 0 and len(transferred_parts or []) >= expected_parts
+        )
+        if not (has_all_parts or has_file_artifact):
+            return False
+        file_name = os.path.basename(file_path)
+        try:
+            return bool(self.file_repo.has_file_in_folder(parent_id, file_name, file_hash=file_hash, require_map=True))
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Skipping upload reconciliation for task {main_task_id}; main_db not ready: {e}")
+            return False
+
+    def reconcile_completed_uploads(self) -> int:
+        """Promote stale incomplete upload tasks whose files are already fully persisted in main_db."""
+        all_tasks = self.controller.get_incomplete_transfers()
+        uploads = all_tasks.get("uploads", {}) if isinstance(all_tasks, dict) else {}
+        reconciled = 0
+
+        for task_id, info in uploads.items():
+            status = info.get("status")
+            if status in ("completed", "failed", "cancelled"):
+                continue
+            if self._active_sub_tasks.get(task_id):
+                continue
+            active_tasks = getattr(self.shared_state, "active_tasks", None) or {}
+            active_task = active_tasks.get(task_id)
+            if active_task and not active_task.done():
+                continue
+
+            artifacts = self.controller.get_created_artifacts(task_id)
+            has_file_artifact = isinstance(artifacts, list) and any(
+                isinstance(a, dict) and a.get("artifact_type") == "file" for a in artifacts
+            )
+
+            if not info.get("is_folder"):
+                if self._is_upload_persisted_in_main_db(
+                    task_id,
+                    info.get("file_path"),
+                    info.get("parent_id"),
+                    info.get("total_size") or 0,
+                    info.get("file_hash"),
+                    info.get("transferred_parts") or [],
+                    has_file_artifact,
+                ):
+                    self.controller.mark_sub_task_completed(task_id, task_id)
+                    self.watcher.add_watch(task_id, info.get("parent_id"), "remote")
+                    reconciled += 1
+            else:
+                child_tasks = info.get("child_tasks") or {}
+                if not child_tasks:
+                    continue
+                all_children_completed = True
+                for sub_id, sub_data in child_tasks.items():
+                    if sub_data.get("status") == "completed":
+                        continue
+                    if self._is_upload_persisted_in_main_db(
+                        task_id,
+                        sub_data.get("file_path"),
+                        sub_data.get("parent_id"),
+                        sub_data.get("total_size") or 0,
+                        sub_data.get("file_hash"),
+                        sub_data.get("transferred_parts") or [],
+                        has_file_artifact,
+                    ):
+                        self.controller.mark_sub_task_completed(task_id, sub_id)
+                        reconciled += 1
+                    else:
+                        all_children_completed = False
+                if all_children_completed:
+                    self.controller.mark_sub_task_completed(task_id, task_id)
+                    if info.get("parent_id") is not None:
+                        self.watcher.add_watch(task_id, info.get("parent_id"), "remote")
+
+        if reconciled > 0:
+            logger.info(f"Reconciled {reconciled} stale already-uploaded task(s) to completed.")
+        return reconciled
+
+    def get_incomplete_transfers(self) -> Dict[str, Dict]:
+        """Reconcile any already-persisted stale uploads before returning transfer DB state."""
+        self.reconcile_completed_uploads()
+        return self.controller.get_incomplete_transfers()
 
     def set_concurrency_limit(self, limit: int):
         """Dynamically update concurrency limit without dropping waiting tasks."""

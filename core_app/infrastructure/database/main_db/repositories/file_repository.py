@@ -18,6 +18,26 @@ class FileRepository(BaseRepository):
         row = cursor.fetchone()
         return row['id'] if row else None
 
+    def has_file_in_folder(self, folder_id: int, name: str, file_hash: str | None = None, require_map: bool = True) -> bool:
+        """Return True if a matching active file entry exists in the target folder."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        query = """
+            SELECT 1
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            WHERE m.folder_id = ? AND m.name = ?
+        """
+        params: list = [folder_id, name]
+        if file_hash is not None:
+            query += " AND f.hash = ?"
+            params.append(file_hash)
+        if require_map:
+            query += " AND f.map_msg_id IS NOT NULL"
+        query += " LIMIT 1"
+        cursor.execute(query, params)
+        return cursor.fetchone() is not None
+
     def add_file(self, folder_id: int, name: str, modif_date_ts: float, 
                  file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
                  preview_msg_id: int | None = None, preview_hash: str | None = None,

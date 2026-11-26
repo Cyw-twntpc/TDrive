@@ -185,6 +185,31 @@ class QueueRepository:
         finally:
             conn.close()
 
+    def record_progress_part(self, main_task_id: str, sub_task_id: str, part_num: int, updated_at: float, message_id: int=None, part_hash: str=None):
+        """Atomically record a chunk part while ensuring terminal or paused statuses never regress."""
+        conn = self.db._get_conn()
+        try:
+            with conn:
+                conn.execute(
+                    'INSERT OR REPLACE INTO task_progress (sub_task_id, part_num, message_id, part_hash) VALUES (?, ?, ?, ?)',
+                    (sub_task_id, part_num, message_id, part_hash),
+                )
+                conn.execute(
+                    """
+                    UPDATE main_tasks
+                    SET status = CASE WHEN status = 'queued' THEN 'transferring' ELSE status END,
+                        updated_at = ?
+                    WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'paused')
+                    """,
+                    (updated_at, main_task_id),
+                )
+                conn.execute(
+                    "UPDATE sub_tasks SET status = 'transferring' WHERE sub_task_id = ? AND status IN ('queued', 'pending')",
+                    (sub_task_id,),
+                )
+        finally:
+            conn.close()
+
     def delete_task(self, task_id: str):
         conn = self.db._get_conn()
         try:

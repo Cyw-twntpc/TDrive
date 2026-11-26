@@ -158,15 +158,21 @@ class TransferController:
     def update_progress(self, main_task_id: str, sub_task_id: str, part_num: int, extra_info: Any = None):
         msg_id = extra_info[0] if extra_info and len(extra_info) >= 1 else None
         p_hash = extra_info[1] if extra_info and len(extra_info) >= 2 else None
-        
+
+        if isinstance(self.queue_repo, QueueRepository):
+            self.queue_repo.record_progress_part(main_task_id, sub_task_id, part_num, time.time(), msg_id, p_hash)
+            return
+
         self.queue_repo.add_progress_part(sub_task_id, part_num, msg_id, p_hash)
-        
+
         current_status = self.queue_repo.get_main_task_status(main_task_id)
+        if current_status in ("completed", "failed", "cancelled", "paused"):
+            return
         if current_status == "queued":
             self.queue_repo.update_main_task_status(main_task_id, "transferring", time.time())
         else:
             self.queue_repo.update_main_task_status(main_task_id, current_status or "transferring", time.time())
-        
+
         self.queue_repo.update_sub_task_status(sub_task_id, "transferring")
 
     def mark_sub_task_completed(self, main_task_id: str, sub_task_id: str):

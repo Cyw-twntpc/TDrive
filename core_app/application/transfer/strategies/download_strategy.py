@@ -172,9 +172,12 @@ class DownloadStrategy(TransferStrategy):
                                     save_path: str, file_details: Dict,
                                     progress_callback: Callable,
                                     resume_parts: set = None):
+        pending_chunk_writes: List[asyncio.Future] = []
+
         def chunk_cb(part_num):
             loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num)
+            fut = loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num)
+            pending_chunk_writes.append(fut)
         
         last_downloaded = 0
         try:
@@ -248,6 +251,10 @@ class DownloadStrategy(TransferStrategy):
                     completed_parts=resume_parts,
                     chunk_callback=chunk_cb
                 )
+                # Ensure all queued chunk progress DB writes finish before marking completion
+                if pending_chunk_writes:
+                    await asyncio.gather(*pending_chunk_writes, return_exceptions=True)
+                    pending_chunk_writes.clear()
                 
                 await self.context.controller.mark_sub_task_completed_async(main_task_id, sub_task_id)
 

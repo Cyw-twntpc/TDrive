@@ -259,10 +259,12 @@ class UploadStrategy(TransferStrategy):
                                   is_new_task: bool = False,
                                   semaphore_override: asyncio.Semaphore = None):
         file_name = os.path.basename(file_path)
-        
+        pending_chunk_writes: List[asyncio.Future] = []
+
         def chunk_cb(part_num, msg_id, part_hash):
             loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num, [msg_id, part_hash])
+            fut = loop.run_in_executor(None, self.context.controller.update_progress, main_task_id, sub_task_id, part_num, [msg_id, part_hash])
+            pending_chunk_writes.append(fut)
 
         last_uploaded = len(resume_context) * fp.CHUNK_SIZE if resume_context else 0
 
@@ -362,6 +364,36 @@ class UploadStrategy(TransferStrategy):
                             
                         return None
                     except errors.ItemAlreadyExistsError:
+                        # Handle idempotent resume if this task had already persisted the same file in main_db
+                        is_reconcilable = False
+                        if not is_new_task:
+                            expected_parts = max(1, (total_size + fp.CHUNK_SIZE - 1) // fp.CHUNK_SIZE) if total_size > 0 else 0
+                            has_all_parts = (expected_parts == 0) or (len(split_files_info) >= expected_parts)
+                            artifacts = await loop.run_in_executor(None, self.context.controller.get_created_artifacts, main_task_id)
+                            has_file_artifact = isinstance(artifacts, list) and any(
+                                isinstance(a, dict) and a.get('artifact_type') == 'file' for a in artifacts
+                            )
+                            has_file_fn = getattr(self.context.file_repo, 'has_file_in_folder', None)
+                            if (has_all_parts or has_file_artifact) and callable(has_file_fn):
+                                try:
+                                    is_reconcilable = bool(
+                                        await loop.run_in_executor(
+                                            None, has_file_fn, parent_id, file_name, original_file_hash, True
+                                        )
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to verify existing file during upload resume for {file_name}: {e}")
+
+                        if is_reconcilable:
+                            await self.context.controller.mark_sub_task_completed_async(main_task_id, sub_task_id)
+                            remaining = total_size - last_uploaded
+                            if remaining > 0:
+                                progress_callback(main_task_id, remaining, 0)
+                            if main_task_id == sub_task_id:
+                                progress_callback(main_task_id, file_name, total_size, total_size, 'completed', 0)
+                                self.context.watcher.add_watch(main_task_id, parent_id, 'remote')
+                            return None
+
                         await self.context.controller.mark_sub_task_failed_async(main_task_id, sub_task_id, ErrorCode.ITEM_ALREADY_EXISTS)
                         progress_callback(main_task_id, file_name, 0, total_size, 'failed', 0, error_code=ErrorCode.ITEM_ALREADY_EXISTS)
                         return
@@ -427,6 +459,10 @@ class UploadStrategy(TransferStrategy):
                     resume_context=split_files_info,
                     chunk_callback=None if skip_chunk_db_cb else chunk_cb
                 )
+                # Ensure all queued chunk progress DB writes finish before marking completion
+                if pending_chunk_writes:
+                    await asyncio.gather(*pending_chunk_writes, return_exceptions=True)
+                    pending_chunk_writes.clear()
 
                 if doc_preview_task:
                     preview_result = None
