@@ -7,7 +7,7 @@ from .base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = ('.mp3', '.wav', '.flac', '.ogg', '.m4a', '.wma', '.aac')
+AUDIO_EXTENSIONS = ('.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.wma', '.aac')
 
 
 class FileRepository(BaseRepository):
@@ -260,6 +260,46 @@ class FileRepository(BaseRepository):
             "raw_date": row["modif_date"] or 0,
             "modif_date": self._format_timestamp(row["modif_date"]),
         }
+
+    def get_active_stream_file_info(self, map_id: int) -> dict | None:
+        """Return stream metadata for map_id only if it exists and is outside Trash/Recycle Bin."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        sql = """
+        WITH RECURSIVE ancestors(id, parent_id, name) AS (
+            SELECT fd.id, fd.parent_id, fd.name
+            FROM file_folder_map m
+            JOIN folders fd ON m.folder_id = fd.id
+            WHERE m.id = ?
+            UNION ALL
+            SELECT p.id, p.parent_id, p.name
+            FROM folders p
+            JOIN ancestors a ON a.parent_id = p.id
+        )
+        SELECT
+            m.name AS name,
+            f.id AS content_id,
+            f.size AS size,
+            f.hash AS hash
+        FROM file_folder_map m
+        JOIN files f ON m.file_id = f.id
+        WHERE m.id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM trash_metadata tm
+              WHERE tm.item_id = m.id AND tm.item_type = 'file'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM ancestors a
+              WHERE a.name = 'Recycle Bin'
+                 OR EXISTS (
+                     SELECT 1 FROM trash_metadata tm
+                     WHERE tm.item_id = a.id AND tm.item_type = 'folder'
+                 )
+          )
+        """
+        cursor.execute(sql, (map_id, map_id))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def get_all_audio_files(self) -> list[dict]:
         """Return all non-trashed audio files under TDrive with resolved folder paths."""

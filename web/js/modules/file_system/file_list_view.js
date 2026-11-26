@@ -14,7 +14,7 @@ const FileListView = {
     PREVIEW_EXTENSIONS: {
         image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
         video: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts', 'mts', 'm2ts'],
-        audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'wma', 'aac'],
+        audio: ['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'wma', 'aac'],
         document: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp'],
         text: ['py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'ini',
                'md', 'sh', 'bat', 'ps1', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs',

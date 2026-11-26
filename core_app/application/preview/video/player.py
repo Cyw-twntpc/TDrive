@@ -1,3 +1,4 @@
+import os
 import logging
 import asyncio
 import secrets
@@ -5,13 +6,25 @@ import mimetypes
 from aiohttp import web
 from typing import TYPE_CHECKING
 
-from core_app.infrastructure.database.main_db.repositories.file_repository import AUDIO_EXTENSIONS
+from core_app.infrastructure.database.main_db.repositories.file_repository import AUDIO_EXTENSIONS, FileRepository
 
 if TYPE_CHECKING:
     from core_app.application.preview.buffer import StreamBuffer
     from core_app.infrastructure.database.main_db.database import DatabaseConnection
 
 logger = logging.getLogger(__name__)
+
+# Explicit audio MIME mapping avoids OS registry gaps on Windows for FLAC/OGG/Opus/M4A.
+AUDIO_MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".wma": "audio/x-ms-wma",
+    ".aac": "audio/aac",
+}
 
 
 class VideoStreamer:
@@ -65,19 +78,42 @@ class VideoStreamer:
             file_hash = file_info['hash']
             file_name = file_info['name']
 
-            mime_type, _ = mimetypes.guess_type(file_name)
+            ext = os.path.splitext(file_name or '')[1].lower()
+            mime_type = AUDIO_MIME_TYPES.get(ext)
+            if not mime_type:
+                mime_type, _ = mimetypes.guess_type(file_name)
             if not mime_type:
                 mime_type = 'application/octet-stream'
 
             range_header = request.headers.get('Range')
+            if file_size <= 0:
+                if range_header:
+                    return web.Response(
+                        status=416,
+                        headers={'Content-Range': 'bytes */0'},
+                        text='Range Not Satisfiable',
+                    )
+                return web.Response(
+                    status=200,
+                    headers={
+                        'Content-Type': mime_type,
+                        'Accept-Ranges': 'bytes',
+                        'Content-Length': '0',
+                    },
+                    body=b'',
+                )
+
             start_byte = 0
             end_byte = file_size - 1
+            invalid_range = False
 
             if range_header:
                 try:
-                    unit, ranges = range_header.split('=')
-                    if unit == 'bytes':
-                        r_start, r_end = ranges.split('-')
+                    unit, ranges = range_header.split('=', 1)
+                    if unit.strip().lower() == 'bytes':
+                        r_start, r_end = ranges.split('-', 1)
+                        r_start = r_start.strip()
+                        r_end = r_end.strip()
                         if r_start and r_end:
                             start_byte = int(r_start)
                             end_byte = min(int(r_end), file_size - 1)
@@ -86,10 +122,24 @@ class VideoStreamer:
                             end_byte = file_size - 1
                         elif r_end:
                             suffix_length = int(r_end)
-                            start_byte = max(0, file_size - suffix_length)
-                            end_byte = file_size - 1
+                            if suffix_length <= 0:
+                                invalid_range = True
+                            else:
+                                start_byte = max(0, file_size - suffix_length)
+                                end_byte = file_size - 1
+                        else:
+                            invalid_range = True
+                        if not invalid_range and (start_byte < 0 or start_byte >= file_size or end_byte < start_byte):
+                            invalid_range = True
                 except ValueError:
                     pass
+
+            if invalid_range:
+                return web.Response(
+                    status=416,
+                    headers={'Content-Range': f'bytes */{file_size}'},
+                    text='Range Not Satisfiable',
+                )
 
             chunk_length = end_byte - start_byte + 1
 
@@ -144,20 +194,7 @@ class VideoStreamer:
 
     async def _get_file_info(self, map_id: int):
         loop = asyncio.get_running_loop()
-        def query():
-            conn = self.db._get_conn()
-
-            cur = conn.cursor()
-            query = """
-                SELECT m.name, f.id as content_id, f.size, f.hash
-                FROM file_folder_map m
-                JOIN files f ON m.file_id = f.id
-                WHERE m.id = ?
-            """
-            cur.execute(query, (map_id,))
-            row = cur.fetchone()
-            if row:
-                return dict(row)
-            return None
-
-        return await loop.run_in_executor(None, query)
+        return await loop.run_in_executor(
+            None,
+            lambda: FileRepository(self.db).get_active_stream_file_info(map_id),
+        )
