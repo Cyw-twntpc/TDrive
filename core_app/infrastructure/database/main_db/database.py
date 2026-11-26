@@ -52,11 +52,17 @@ class DatabaseConnection:
             return conn
 
         if self._connection is None:
-            self._connection = sqlite3.connect(':memory:', check_same_thread=False, cached_statements=0)
+            self._connection = sqlite3.connect(':memory:', check_same_thread=False, cached_statements=100)
             self._connection.row_factory = sqlite3.Row
             self._connection.execute('PRAGMA foreign_keys = ON')
         
         return self._connection
+
+    @contextlib.contextmanager
+    def locked_connection(self):
+        """Acquire the shared database RLock and yield the active connection."""
+        with self._db_lock:
+            yield self._get_conn()
 
     @contextlib.contextmanager
     def batch_write(self):

@@ -362,30 +362,30 @@ class AuthService:
                 )
 
                 # 6. Populate/upsert SQLite storage_groups table with live discovered groups
-                conn = db._get_conn()
-                cursor = conn.cursor()
-                for idx, tg_id, name in groups:
-                    is_act = 1 if idx == active_idx else 0
-                    grp_msg_count = self.shared_state.current_group_msg_count if idx == active_idx else 0
-                    cursor.execute("SELECT group_index FROM storage_groups WHERE group_index = ? OR telegram_group_id = ?", (idx, tg_id))
-                    row = cursor.fetchone()
-                    if row:
-                        if idx == active_idx:
-                            cursor.execute(
-                                "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ?, msg_count = ? WHERE group_index = ?",
-                                (tg_id, name, is_act, grp_msg_count, idx)
-                            )
+                with db.locked_connection() as conn:
+                    cursor = conn.cursor()
+                    for idx, tg_id, name in groups:
+                        is_act = 1 if idx == active_idx else 0
+                        grp_msg_count = self.shared_state.current_group_msg_count if idx == active_idx else 0
+                        cursor.execute("SELECT group_index FROM storage_groups WHERE group_index = ? OR telegram_group_id = ?", (idx, tg_id))
+                        row = cursor.fetchone()
+                        if row:
+                            if idx == active_idx:
+                                cursor.execute(
+                                    "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ?, msg_count = ? WHERE group_index = ?",
+                                    (tg_id, name, is_act, grp_msg_count, idx)
+                                )
+                            else:
+                                cursor.execute(
+                                    "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ? WHERE group_index = ?",
+                                    (tg_id, name, is_act, idx)
+                                )
                         else:
                             cursor.execute(
-                                "UPDATE storage_groups SET telegram_group_id = ?, group_name = ?, is_active = ? WHERE group_index = ?",
-                                (tg_id, name, is_act, idx)
+                                "INSERT INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, datetime('now'), ?, ?)",
+                                (idx, tg_id, name, grp_msg_count, is_act)
                             )
-                    else:
-                        cursor.execute(
-                            "INSERT INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, datetime('now'), ?, ?)",
-                            (idx, tg_id, name, grp_msg_count, is_act)
-                        )
-                conn.commit()
+                    conn.commit()
 
             logger.info("TDrive initialization successful.")
             return {"success": True}

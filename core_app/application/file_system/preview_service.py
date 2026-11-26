@@ -44,15 +44,15 @@ class PreviewService:
         try:
             def _get_folder_files_info():
                 db = DatabaseConnection()
-                conn = db._get_conn()
-                cur = conn.cursor()
-                cur.execute('''
-                    SELECT m.id as map_id, m.file_id, f.thumb_src_folder_id, f.has_thumb
-                    FROM file_folder_map m
-                    JOIN files f ON m.file_id = f.id 
-                    WHERE m.folder_id = ?
-                ''', (folder_id,))
-                return cur.fetchall()
+                with db.locked_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute('''
+                        SELECT m.id as map_id, m.file_id, f.thumb_src_folder_id, f.has_thumb
+                        FROM file_folder_map m
+                        JOIN files f ON m.file_id = f.id 
+                        WHERE m.folder_id = ?
+                    ''', (folder_id,))
+                    return cur.fetchall()
 
             files_info = await asyncio.to_thread(_get_folder_files_info)
             if not files_info:
@@ -88,11 +88,11 @@ class PreviewService:
 
         def _get_package_cloud_info(f_ids):
             db = DatabaseConnection()
-            conn = db._get_conn()
-            cur = conn.cursor()
-            placeholders = ",".join("?" for _ in f_ids)
-            cur.execute(f"SELECT id, thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id IN ({placeholders})", list(f_ids))
-            return cur.fetchall()
+            with db.locked_connection() as conn:
+                cur = conn.cursor()
+                placeholders = ",".join("?" for _ in f_ids)
+                cur.execute(f"SELECT id, thumbs_db_msg_id, thumbs_db_hash FROM folders WHERE id IN ({placeholders})", list(f_ids))
+                return cur.fetchall()
 
         cloud_packages = await asyncio.to_thread(_get_package_cloud_info, needed_folders)
         client = await utils.ensure_client_connected(self.shared_state)
@@ -129,15 +129,15 @@ class PreviewService:
         FileRepository(db)
         FolderRepository(db)
         TrashRepository(db)
-        conn = db._get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT f.preview_msg_id, f.preview_hash, f.id as content_id, f.hash as file_hash, f.size
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            WHERE m.id = ?
-        """, (map_id,))
-        return cur.fetchone()
+        with db.locked_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT f.preview_msg_id, f.preview_hash, f.id as content_id, f.hash as file_hash, f.size
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.id = ?
+            """, (map_id,))
+            return cur.fetchone()
 
     async def _download_preview_payload(self, client, map_id: int, info) -> Optional[bytes]:
         """Download image preview blob or fall back to small/single-chunk original download."""
@@ -290,23 +290,23 @@ class PreviewService:
         """Resolve content_id, size, hash, and filename for a file_folder_map row."""
         def _sync_query():
             db = DatabaseConnection()
-            conn = db._get_conn()
-            cur = conn.cursor()
-            cur.execute('''
-                SELECT f.id as content_id, f.size, f.hash, m.name
-                FROM file_folder_map m
-                JOIN files f ON m.file_id = f.id
-                WHERE m.id = ?
-            ''', (map_id,))
-            row = cur.fetchone()
-            if not row:
-                raise FileNotFoundError(f"File map_id={map_id} not found")
-            return {
-                'content_id': row[0],
-                'size': row[1],
-                'file_hash': row[2],
-                'name': row[3],
-            }
+            with db.locked_connection() as conn:
+                cur = conn.cursor()
+                cur.execute('''
+                    SELECT f.id as content_id, f.size, f.hash, m.name
+                    FROM file_folder_map m
+                    JOIN files f ON m.file_id = f.id
+                    WHERE m.id = ?
+                ''', (map_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise FileNotFoundError(f"File map_id={map_id} not found")
+                return {
+                    'content_id': row[0],
+                    'size': row[1],
+                    'file_hash': row[2],
+                    'name': row[3],
+                }
         return await asyncio.to_thread(_sync_query)
 
     async def get_file_extended_details(self, map_id: int) -> Dict[str, Any]:
@@ -314,15 +314,15 @@ class PreviewService:
         try:
             def _get_db_info():
                 db = DatabaseConnection()
-                conn = db._get_conn()
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT f.map_msg_id, f.id as real_file_id 
-                    FROM file_folder_map m 
-                    JOIN files f ON m.file_id = f.id 
-                    WHERE m.id = ?
-                """, (map_id,))
-                return cur.fetchone()
+                with db.locked_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT f.map_msg_id, f.id as real_file_id 
+                        FROM file_folder_map m 
+                        JOIN files f ON m.file_id = f.id 
+                        WHERE m.id = ?
+                    """, (map_id,))
+                    return cur.fetchone()
 
             row = await asyncio.to_thread(_get_db_info)
             if not row or not row['map_msg_id']:

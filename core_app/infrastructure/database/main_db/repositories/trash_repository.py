@@ -254,51 +254,50 @@ class TrashRepository(BaseRepository):
                 return target_name
 
     def get_trashed_items(self) -> dict:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        folders = []
-        files = []
-        recycle_bin_id = self._get_recycle_bin_id(cursor)
-        
-        # Get trashed folders
-        cursor.execute("""
-            SELECT f.id, tm.original_name as name, f.total_size, tm.trashed_date, f.name as physical_name, tm.original_parent_id, tm.trashed_date as trashed_date_ts
-            FROM folders f
-            JOIN trash_metadata tm ON f.id = tm.item_id AND tm.item_type = 'folder'
-            WHERE f.parent_id = ?
-        """, (recycle_bin_id,))
-        for row in cursor.fetchall():
-            folders.append({
-                "id": row['id'], 
-                "name": row['name'], 
-                "raw_size": row['total_size'],
-                "size": self._format_size(row['total_size']),
-                "trashed_date": self._format_timestamp(row['trashed_date']),
-                "trashed_date_ts": row['trashed_date_ts'],
-                "original_parent_id": row['original_parent_id'],
-                "type": "folder"
-            })
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            folders = []
+            files = []
+            recycle_bin_id = self._get_recycle_bin_id(cursor)
 
-        # Get trashed files
-        cursor.execute("""
-            SELECT m.id, tm.original_name as name, f.size, tm.trashed_date, tm.original_parent_id, tm.trashed_date as trashed_date_ts
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            JOIN trash_metadata tm ON m.id = tm.item_id AND tm.item_type = 'file'
-            WHERE m.folder_id = ?
-        """, (recycle_bin_id,))
-        for row in cursor.fetchall():
-            files.append({
-                "id": row['id'], 
-                "name": row['name'], 
-                "raw_size": row['size'],
-                "size": self._format_size(row['size']),
-                "trashed_date": self._format_timestamp(row['trashed_date']),
-                "trashed_date_ts": row['trashed_date_ts'],
-                "original_parent_id": row['original_parent_id'],
-                "type": "file"
-            })
-        return {"folders": folders, "files": files, "recycle_bin_id": recycle_bin_id}
+            cursor.execute("""
+                SELECT f.id, tm.original_name as name, f.total_size, tm.trashed_date, f.name as physical_name, tm.original_parent_id, tm.trashed_date as trashed_date_ts
+                FROM folders f
+                JOIN trash_metadata tm ON f.id = tm.item_id AND tm.item_type = 'folder'
+                WHERE f.parent_id = ?
+            """, (recycle_bin_id,))
+            for row in cursor.fetchall():
+                folders.append({
+                    "id": row['id'],
+                    "name": row['name'],
+                    "raw_size": row['total_size'],
+                    "size": self._format_size(row['total_size']),
+                    "trashed_date": self._format_timestamp(row['trashed_date']),
+                    "trashed_date_ts": row['trashed_date_ts'],
+                    "original_parent_id": row['original_parent_id'],
+                    "type": "folder"
+                })
+
+            cursor.execute("""
+                SELECT m.id, tm.original_name as name, f.size, tm.trashed_date, tm.original_parent_id, tm.trashed_date as trashed_date_ts
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                JOIN trash_metadata tm ON m.id = tm.item_id AND tm.item_type = 'file'
+                WHERE m.folder_id = ?
+            """, (recycle_bin_id,))
+            for row in cursor.fetchall():
+                files.append({
+                    "id": row['id'],
+                    "name": row['name'],
+                    "raw_size": row['size'],
+                    "size": self._format_size(row['size']),
+                    "trashed_date": self._format_timestamp(row['trashed_date']),
+                    "trashed_date_ts": row['trashed_date_ts'],
+                    "original_parent_id": row['original_parent_id'],
+                    "type": "file"
+                })
+            return {"folders": folders, "files": files, "recycle_bin_id": recycle_bin_id}
 
     def empty_trash(self) -> list:
         with self._batch_lock_or_write():
@@ -321,11 +320,11 @@ class TrashRepository(BaseRepository):
             return results
 
     def get_expired_items(self) -> list:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        cutoff_date = time.time() - (self.TRASH_RETENTION_DAYS * 86400)
-        
-        cursor.execute("SELECT item_id, item_type FROM trash_metadata WHERE trashed_date < ?", (cutoff_date,))
-        rows = cursor.fetchall()
-        return [{'id': row['item_id'], 'type': row['item_type']} for row in rows]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cutoff_date = time.time() - (self.TRASH_RETENTION_DAYS * 86400)
+            cursor.execute("SELECT item_id, item_type FROM trash_metadata WHERE trashed_date < ?", (cutoff_date,))
+            rows = cursor.fetchall()
+            return [{'id': row['item_id'], 'type': row['item_type']} for row in rows]
 

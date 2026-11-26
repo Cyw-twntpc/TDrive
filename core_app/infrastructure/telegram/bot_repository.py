@@ -15,10 +15,10 @@ class BotRepository:
     def get_all_bots(self) -> List[Dict]:
         """Retrieve all registered worker bots from main_db."""
         try:
-            conn = self.db._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT bot_id, token, username, group_joined FROM worker_bots")
-            return [dict(row) for row in cursor.fetchall()]
+            with self.db.locked_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT bot_id, token, username, group_joined FROM worker_bots")
+                return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Error retrieving worker bots: {e}")
             return []
@@ -84,12 +84,12 @@ class BotRepository:
         """Return all telegram_group_id entries stored in the storage_groups table."""
         group_ids: List[int] = []
         try:
-            conn = self.db._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT telegram_group_id FROM storage_groups")
-            for row in cursor.fetchall():
-                if row['telegram_group_id']:
-                    group_ids.append(row['telegram_group_id'])
+            with self.db.locked_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT telegram_group_id FROM storage_groups")
+                for row in cursor.fetchall():
+                    if row['telegram_group_id']:
+                        group_ids.append(row['telegram_group_id'])
         except Exception as e:
             logger.debug(f"Could not query storage_groups table for bot promotion: {e}")
         return group_ids

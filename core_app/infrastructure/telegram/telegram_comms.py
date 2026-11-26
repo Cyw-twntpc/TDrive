@@ -166,15 +166,16 @@ async def rotate_storage_group(shared_state, db_connection=None) -> tuple[int, i
 
         if db_connection is not None:
             try:
-                conn = db_connection._get_conn()
-                cursor = conn.cursor()
-                cursor.execute("UPDATE storage_groups SET is_active = 0 WHERE is_active = 1")
-                now_str = time.strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute(
-                    "INSERT OR REPLACE INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, ?, ?, ?)",
-                    (new_index, new_group_id, new_group_name, now_str, 0, 1)
-                )
-                conn.commit()
+                with db_connection._db_lock:
+                    conn = db_connection._get_conn()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE storage_groups SET is_active = 0 WHERE is_active = 1")
+                    now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO storage_groups (group_index, telegram_group_id, group_name, created_at, msg_count, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                        (new_index, new_group_id, new_group_name, now_str, 0, 1)
+                    )
+                    conn.commit()
             except Exception as dbe:
                 logger.error(f"Failed to update storage_groups DB table during rotation: {dbe}")
 

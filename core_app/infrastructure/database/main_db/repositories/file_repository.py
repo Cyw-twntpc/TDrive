@@ -12,31 +12,33 @@ AUDIO_EXTENSIONS = ('.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.wma', '.
 
 class FileRepository(BaseRepository):
     def find_file_by_hash(self, file_hash: str) -> int | None:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM files WHERE hash = ?", (file_hash,))
-        row = cursor.fetchone()
-        return row['id'] if row else None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM files WHERE hash = ?", (file_hash,))
+            row = cursor.fetchone()
+            return row['id'] if row else None
 
     def has_file_in_folder(self, folder_id: int, name: str, file_hash: str | None = None, require_map: bool = True) -> bool:
         """Return True if a matching active file entry exists in the target folder."""
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        query = """
-            SELECT 1
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            WHERE m.folder_id = ? AND m.name = ?
-        """
-        params: list = [folder_id, name]
-        if file_hash is not None:
-            query += " AND f.hash = ?"
-            params.append(file_hash)
-        if require_map:
-            query += " AND f.map_msg_id IS NOT NULL"
-        query += " LIMIT 1"
-        cursor.execute(query, params)
-        return cursor.fetchone() is not None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            query = """
+                SELECT 1
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id = ? AND m.name = ?
+            """
+            params: list = [folder_id, name]
+            if file_hash is not None:
+                query += " AND f.hash = ?"
+                params.append(file_hash)
+            if require_map:
+                query += " AND f.map_msg_id IS NOT NULL"
+            query += " LIMIT 1"
+            cursor.execute(query, params)
+            return cursor.fetchone() is not None
 
     def add_file(self, folder_id: int, name: str, modif_date_ts: float, 
                  file_id: int | None = None, file_hash: str | None = None, size: float | None = None,
@@ -85,28 +87,30 @@ class FileRepository(BaseRepository):
                 return target_file_id, ui_file_id
 
     def get_file_details(self, map_id: int) -> dict | None:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash,
-                   f.map_msg_id as map_msg_id
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            WHERE m.id = ?
-        """, (map_id,))
-        row = cursor.fetchone()
-        if not row: return None
-        
-        return {
-            "id": row['map_id'],
-            "file_id": row['file_id'],
-            "name": row['name'],
-            "size": row['size'],
-            "hash": row['hash'],
-            "preview_msg_id": row['preview_msg_id'],
-            "preview_hash": row['preview_hash'],
-            "map_msg_id": row['map_msg_id']
-        }
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT m.id as map_id, m.name, f.id as file_id, f.size, f.hash, f.preview_msg_id, f.preview_hash,
+                       f.map_msg_id as map_msg_id
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.id = ?
+            """, (map_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                "id": row['map_id'],
+                "file_id": row['file_id'],
+                "name": row['name'],
+                "size": row['size'],
+                "hash": row['hash'],
+                "preview_msg_id": row['preview_msg_id'],
+                "preview_hash": row['preview_hash'],
+                "map_msg_id": row['map_msg_id']
+            }
 
     def update_file_map_msg_id(self, file_id: int, msg_id: int | None):
         with self._db_lock:
@@ -168,18 +172,14 @@ class FileRepository(BaseRepository):
                 self._execute_write(conn, "UPDATE files SET preview_msg_id = ?, preview_hash = ? WHERE id = ?", (msg_id, hash_val, file_id), score=1)
 
     def search_db_items(self, search_term: str, base_folder_id: int, progress_callback: callable):
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        # Sanitize for FTS5: Escape double quotes and enclose in double quotes for phrase search
         clean_term = search_term.replace('"', '""')
-        # Prefix search: "term*"
         fts_query = f'"{clean_term}" *'
-
-        # Check if base_folder_id is Root (TDrive), if so, no need to filter by parent
-        cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (base_folder_id,))
-        root_check = cursor.fetchone()
-        is_global_search = (root_check and root_check['parent_id'] is None)
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT parent_id FROM folders WHERE id = ?", (base_folder_id,))
+            root_check = cursor.fetchone()
+            is_global_search = (root_check and root_check['parent_id'] is None)
 
         # Batching variables
         folders_batch, files_batch = [], []
@@ -236,10 +236,11 @@ class FileRepository(BaseRepository):
         sql_params = list(params)
 
         try:
-            cursor.execute(full_sql, sql_params)
-            
+            with self._db_lock:
+                cursor.execute(full_sql, sql_params)
+                rows = cursor.fetchall()
             count = 0
-            for row in cursor.fetchall():
+            for row in rows:
                 if row['type'] == 'folder':
                     folders_batch.append({
                         "id": row['id'], "parent_id": row['parent_id'], "name": row['name'],
@@ -283,86 +284,88 @@ class FileRepository(BaseRepository):
 
     def get_active_stream_file_info(self, map_id: int) -> dict | None:
         """Return stream metadata for map_id only if it exists and is outside Trash/Recycle Bin."""
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        sql = """
-        WITH RECURSIVE ancestors(id, parent_id, name) AS (
-            SELECT fd.id, fd.parent_id, fd.name
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            sql = """
+            WITH RECURSIVE ancestors(id, parent_id, name) AS (
+                SELECT fd.id, fd.parent_id, fd.name
+                FROM file_folder_map m
+                JOIN folders fd ON m.folder_id = fd.id
+                WHERE m.id = ?
+                UNION ALL
+                SELECT p.id, p.parent_id, p.name
+                FROM folders p
+                JOIN ancestors a ON a.parent_id = p.id
+            )
+            SELECT
+                m.name AS name,
+                f.id AS content_id,
+                f.size AS size,
+                f.hash AS hash
             FROM file_folder_map m
-            JOIN folders fd ON m.folder_id = fd.id
+            JOIN files f ON m.file_id = f.id
             WHERE m.id = ?
-            UNION ALL
-            SELECT p.id, p.parent_id, p.name
-            FROM folders p
-            JOIN ancestors a ON a.parent_id = p.id
-        )
-        SELECT
-            m.name AS name,
-            f.id AS content_id,
-            f.size AS size,
-            f.hash AS hash
-        FROM file_folder_map m
-        JOIN files f ON m.file_id = f.id
-        WHERE m.id = ?
-          AND NOT EXISTS (
-              SELECT 1 FROM trash_metadata tm
-              WHERE tm.item_id = m.id AND tm.item_type = 'file'
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM ancestors a
-              WHERE a.name = 'Recycle Bin'
-                 OR EXISTS (
-                     SELECT 1 FROM trash_metadata tm
-                     WHERE tm.item_id = a.id AND tm.item_type = 'folder'
-                 )
-          )
-        """
-        cursor.execute(sql, (map_id, map_id))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+              AND NOT EXISTS (
+                  SELECT 1 FROM trash_metadata tm
+                  WHERE tm.item_id = m.id AND tm.item_type = 'file'
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM ancestors a
+                  WHERE a.name = 'Recycle Bin'
+                     OR EXISTS (
+                         SELECT 1 FROM trash_metadata tm
+                         WHERE tm.item_id = a.id AND tm.item_type = 'folder'
+                     )
+              )
+            """
+            cursor.execute(sql, (map_id, map_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def get_all_audio_files(self) -> list[dict]:
         """Return all non-trashed audio files under TDrive with resolved folder paths."""
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        sql = """
-        WITH RECURSIVE folder_tree(id, name, path) AS (
-            SELECT id, name, name
-            FROM folders
-            WHERE parent_id IS NULL AND name = 'TDrive'
-            UNION ALL
-            SELECT f.id, f.name, ft.path || ' / ' || f.name
-            FROM folders f
-            JOIN folder_tree ft ON f.parent_id = ft.id
-            WHERE f.name != 'Recycle Bin'
-              AND NOT EXISTS (
-                  SELECT 1 FROM trash_metadata tm
-                  WHERE tm.item_id = f.id AND tm.item_type = 'folder'
-              )
-        )
-        SELECT
-            m.id AS map_id,
-            m.file_id AS file_id,
-            fl.hash AS file_hash,
-            m.name AS name,
-            m.folder_id AS folder_id,
-            ft.name AS folder_name,
-            ft.path AS folder_path,
-            fl.size AS size,
-            m.modif_date AS modif_date
-        FROM file_folder_map m
-        JOIN files fl ON m.file_id = fl.id
-        JOIN folder_tree ft ON m.folder_id = ft.id
-        WHERE NOT EXISTS (
-            SELECT 1 FROM trash_metadata tm
-            WHERE tm.item_id = m.id AND tm.item_type = 'file'
-        )
-        ORDER BY m.name COLLATE NOCASE ASC
-        """
-        cursor.execute(sql)
-        return [
-            self._format_audio_row(row)
-            for row in cursor.fetchall()
-            if row["name"] and row["name"].lower().endswith(AUDIO_EXTENSIONS)
-        ]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            sql = """
+            WITH RECURSIVE folder_tree(id, name, path) AS (
+                SELECT id, name, name
+                FROM folders
+                WHERE parent_id IS NULL AND name = 'TDrive'
+                UNION ALL
+                SELECT f.id, f.name, ft.path || ' / ' || f.name
+                FROM folders f
+                JOIN folder_tree ft ON f.parent_id = ft.id
+                WHERE f.name != 'Recycle Bin'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM trash_metadata tm
+                      WHERE tm.item_id = f.id AND tm.item_type = 'folder'
+                  )
+            )
+            SELECT
+                m.id AS map_id,
+                m.file_id AS file_id,
+                fl.hash AS file_hash,
+                m.name AS name,
+                m.folder_id AS folder_id,
+                ft.name AS folder_name,
+                ft.path AS folder_path,
+                fl.size AS size,
+                m.modif_date AS modif_date
+            FROM file_folder_map m
+            JOIN files fl ON m.file_id = fl.id
+            JOIN folder_tree ft ON m.folder_id = ft.id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM trash_metadata tm
+                WHERE tm.item_id = m.id AND tm.item_type = 'file'
+            )
+            ORDER BY m.name COLLATE NOCASE ASC
+            """
+            cursor.execute(sql)
+            return [
+                self._format_audio_row(row)
+                for row in cursor.fetchall()
+                if row["name"] and row["name"].lower().endswith(AUDIO_EXTENSIONS)
+            ]
 

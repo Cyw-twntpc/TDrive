@@ -355,11 +355,11 @@ class TDriveService:
 
     # --- Streaming Logic ---
     def _get_file_name_by_id(self, file_id: int, default_name: str = "Unknown Video") -> str:
-        conn = self.db_handler._get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM file_folder_map WHERE id = ?", (file_id,))
-        row = cur.fetchone()
-        return row['name'] if row else default_name
+        with self.db_handler.locked_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM file_folder_map WHERE id = ?", (file_id,))
+            row = cur.fetchone()
+            return row['name'] if row else default_name
 
     async def play_video(self, file_id: int) -> Dict[str, Any]:
         """

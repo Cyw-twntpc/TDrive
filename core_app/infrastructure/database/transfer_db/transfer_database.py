@@ -14,8 +14,11 @@ class TransferDatabaseConnection:
         self._init_db()
 
     def _get_conn(self):
-        conn = sqlite3.connect(self.db_path, cached_statements=0)
+        conn = sqlite3.connect(self.db_path, timeout=15.0, cached_statements=0)
         conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA busy_timeout = 15000')
+        conn.execute('PRAGMA synchronous = NORMAL')
+        conn.execute('PRAGMA temp_store = MEMORY')
         conn.execute('PRAGMA foreign_keys = ON')
         return conn
 

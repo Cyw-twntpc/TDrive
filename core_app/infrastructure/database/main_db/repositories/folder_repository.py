@@ -9,72 +9,73 @@ logger = logging.getLogger(__name__)
 
 class FolderRepository(BaseRepository):
     def get_folder_contents(self, folder_id: int) -> dict:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        # Verify folder exists first
-        cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (folder_id,))
-        current_folder_row = cursor.fetchone()
-        if not current_folder_row:
-             raise errors.PathNotFoundError(f"Folder {folder_id} not found.")
-             
-        path_info = []
-        curr_id = folder_id
-        while curr_id:
-            cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (curr_id,))
-            r = cursor.fetchone()
-            if r:
-                path_info.insert(0, {"id": r['id'], "name": r['name']})
-                curr_id = r['parent_id']
-            else:
-                break
-                
-        current_folder = {
-            "id": current_folder_row['id'],
-            "name": current_folder_row['name'],
-            "parent_id": current_folder_row['parent_id'],
-            "path": path_info
-        }
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
 
-        folders = []
-        files = []
+            cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (folder_id,))
+            current_folder_row = cursor.fetchone()
+            if not current_folder_row:
+                raise errors.PathNotFoundError(f"Folder {folder_id} not found.")
 
-        cursor.execute("SELECT id, name, total_size, modif_date, thumbs_db_msg_id FROM folders WHERE parent_id = ?", (folder_id,))
-        for row in cursor.fetchall():
-            folders.append({
-                "id": row['id'], "name": row['name'], "raw_size": row['total_size'],
-                "size": self._format_size(row['total_size']),
-                "modif_date": self._format_timestamp(row['modif_date']),
-                "thumbs_db_msg_id": row['thumbs_db_msg_id']
-            })
+            path_info = []
+            curr_id = folder_id
+            while curr_id:
+                cursor.execute("SELECT id, name, parent_id FROM folders WHERE id = ?", (curr_id,))
+                r = cursor.fetchone()
+                if r:
+                    path_info.insert(0, {"id": r['id'], "name": r['name']})
+                    curr_id = r['parent_id']
+                else:
+                    break
 
-        cursor.execute("""
-            SELECT m.id, m.name, f.size, m.modif_date, f.preview_msg_id 
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            WHERE m.folder_id = ?
-        """, (folder_id,))
-        
-        for row in cursor.fetchall():
-            files.append({
-                "id": row['id'], "name": row['name'], "raw_size": row['size'],
-                "size": self._format_size(row['size']),
-                "modif_date": self._format_timestamp(row['modif_date']),
-                "preview_msg_id": row['preview_msg_id']
-            })
-        
-        return {
-            "success": True,
-            "folders": folders, 
-            "files": files,
-            "current_folder": current_folder
-        }
+            current_folder = {
+                "id": current_folder_row['id'],
+                "name": current_folder_row['name'],
+                "parent_id": current_folder_row['parent_id'],
+                "path": path_info
+            }
+
+            folders = []
+            files = []
+
+            cursor.execute("SELECT id, name, total_size, modif_date, thumbs_db_msg_id FROM folders WHERE parent_id = ?", (folder_id,))
+            for row in cursor.fetchall():
+                folders.append({
+                    "id": row['id'], "name": row['name'], "raw_size": row['total_size'],
+                    "size": self._format_size(row['total_size']),
+                    "modif_date": self._format_timestamp(row['modif_date']),
+                    "thumbs_db_msg_id": row['thumbs_db_msg_id']
+                })
+
+            cursor.execute("""
+                SELECT m.id, m.name, f.size, m.modif_date, f.preview_msg_id 
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id = ?
+            """, (folder_id,))
+
+            for row in cursor.fetchall():
+                files.append({
+                    "id": row['id'], "name": row['name'], "raw_size": row['size'],
+                    "size": self._format_size(row['size']),
+                    "modif_date": self._format_timestamp(row['modif_date']),
+                    "preview_msg_id": row['preview_msg_id']
+                })
+
+            return {
+                "success": True,
+                "folders": folders,
+                "files": files,
+                "current_folder": current_folder
+            }
 
     def get_folder_tree(self) -> list:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, parent_id, name FROM folders WHERE name != 'Recycle Bin' ORDER BY name COLLATE NOCASE")
-        return [dict(row) for row in cursor.fetchall()]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, parent_id, name FROM folders WHERE name != 'Recycle Bin' ORDER BY name COLLATE NOCASE")
+            return [dict(row) for row in cursor.fetchall()]
 
     def add_folder(self, parent_id, name):
         if not self._is_valid_item_name(name):
@@ -141,39 +142,38 @@ class FolderRepository(BaseRepository):
                 self._update_folder_size_recursively(cursor, new_parent_id, info['total_size'])
 
     def get_folder_contents_recursive(self, folder_id: int) -> dict | None:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
-        root = cursor.fetchone()
-        if not root: return None
-        
-        query = """
-        WITH RECURSIVE
-          folder_hierarchy(id, parent_id, name, path) AS (
-            SELECT id, parent_id, name, name FROM folders WHERE id = :folder_id
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT name FROM folders WHERE id = ?", (folder_id,))
+            root = cursor.fetchone()
+            if not root:
+                return None
+
+            query = """
+            WITH RECURSIVE
+              folder_hierarchy(id, parent_id, name, path) AS (
+                SELECT id, parent_id, name, name FROM folders WHERE id = :folder_id
+                UNION ALL
+                SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
+              )
+            SELECT
+              fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
+              NULL as size, NULL as hash, NULL as file_id
+            FROM folder_hierarchy fh WHERE fh.id != :folder_id
             UNION ALL
-            SELECT f.id, f.parent_id, f.name, fh.path || '/' || f.name FROM folders f JOIN folder_hierarchy fh ON f.parent_id = fh.id
-          )
-        SELECT
-          fh.id, 'folder' as type, fh.name, SUBSTR(fh.path, LENGTH(:root_name) + 2) as relative_path,
-          NULL as size, NULL as hash, NULL as file_id
-        FROM folder_hierarchy fh WHERE fh.id != :folder_id
-        UNION ALL
-        SELECT
-          m.id, 'file' as type, m.name,
-          CASE WHEN fh.id = :folder_id THEN m.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || m.name END as relative_path,
-          f.size, f.hash, f.id as file_id
-        FROM file_folder_map m
-        JOIN files f ON m.file_id = f.id
-        JOIN folder_hierarchy fh ON m.folder_id = fh.id;
-        """
-        cursor.execute(query, {"folder_id": folder_id, "root_name": root['name']})
-        items = [dict(row) for row in cursor.fetchall()]
-        
-        # NOTE: Caller needs to use metadata_manager to get chunks.
-        
-        return {"folder_name": root['name'], "items": items}
+            SELECT
+              m.id, 'file' as type, m.name,
+              CASE WHEN fh.id = :folder_id THEN m.name ELSE SUBSTR(fh.path, LENGTH(:root_name) + 2) || '/' || m.name END as relative_path,
+              f.size, f.hash, f.id as file_id
+            FROM file_folder_map m
+            JOIN files f ON m.file_id = f.id
+            JOIN folder_hierarchy fh ON m.folder_id = fh.id;
+            """
+            cursor.execute(query, {"folder_id": folder_id, "root_name": root['name']})
+            items = [dict(row) for row in cursor.fetchall()]
+            return {"folder_name": root['name'], "items": items}
 
     def update_folder_thumbs_info(self, folder_id: int, msg_id: int, hash_val: str):
         with self._db_lock:
@@ -191,26 +191,25 @@ class FolderRepository(BaseRepository):
         if not folder_ids:
             return []
             
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        placeholders = ','.join(['?'] * len(folder_ids))
-        
-        # We use a single query grouping by folder_id
-        query = f"""
-            SELECT m.folder_id, 
-                   COUNT(f.id) as total_files,
-                   COUNT(f.thumb_src_folder_id) as frag_count,
-                   COUNT(DISTINCT f.thumb_src_folder_id) as source_count
-            FROM file_folder_map m
-            JOIN files f ON m.file_id = f.id
-            WHERE m.folder_id IN ({placeholders})
-            GROUP BY m.folder_id
-        """
-        cursor.execute(query, folder_ids)
-        
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            placeholders = ','.join(['?'] * len(folder_ids))
+            query = f"""
+                SELECT m.folder_id, 
+                       COUNT(f.id) as total_files,
+                       COUNT(f.thumb_src_folder_id) as frag_count,
+                       COUNT(DISTINCT f.thumb_src_folder_id) as source_count
+                FROM file_folder_map m
+                JOIN files f ON m.file_id = f.id
+                WHERE m.folder_id IN ({placeholders})
+                GROUP BY m.folder_id
+            """
+            cursor.execute(query, folder_ids)
+            rows = cursor.fetchall()
+
         fragmented = []
-        for row in cursor.fetchall():
+        for row in rows:
             f_id = row['folder_id']
             total = row['total_files']
             frag_count = row['frag_count']
@@ -237,14 +236,20 @@ class FolderRepository(BaseRepository):
 
     def get_thumb_src_folders(self, file_ids: list) -> dict:
         """Returns a mapping of src_folder_id -> list of file_ids"""
-        if not file_ids: return {}
-        conn = self._get_conn()
-        placeholders = ",".join("?" for _ in file_ids)
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT id, thumb_src_folder_id FROM files WHERE id IN ({placeholders}) AND thumb_src_folder_id IS NOT NULL", file_ids)
-        
+        if not file_ids:
+            return {}
+        with self._db_lock:
+            conn = self._get_conn()
+            placeholders = ",".join("?" for _ in file_ids)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT id, thumb_src_folder_id FROM files WHERE id IN ({placeholders}) AND thumb_src_folder_id IS NOT NULL",
+                file_ids,
+            )
+            rows = cursor.fetchall()
+
         result = {}
-        for row in cursor.fetchall():
+        for row in rows:
             src = row['thumb_src_folder_id']
             if src not in result:
                 result[src] = []
@@ -252,8 +257,9 @@ class FolderRepository(BaseRepository):
         return result
 
     def check_folder_exists(self, folder_id: int) -> bool:
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
-        return cursor.fetchone() is not None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,))
+            return cursor.fetchone() is not None
 
