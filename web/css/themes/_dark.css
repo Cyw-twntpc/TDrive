@@ -68,7 +68,6 @@
     border-radius: 6px;
 }
 
-:root[data-theme="dark"] #tree-tooltip,
 :root[data-theme="dark"] .folder-tree-container {
     background-color: #1e293b;
     border-color: var(--border-color);

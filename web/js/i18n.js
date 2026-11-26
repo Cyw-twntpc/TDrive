@@ -94,12 +94,16 @@ class I18nManager {
             }
         });
 
-        // Translate titles (tooltips)
-        document.querySelectorAll('[data-i18n-title]').forEach(el => {
-            const key = el.getAttribute('data-i18n-title');
+        // Translate custom floating tooltips without setting native browser title attributes
+        document.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
+            const key = el.getAttribute('data-i18n-tooltip');
             const translation = this.t(key);
             if (translation !== key) {
-                el.setAttribute('title', translation);
+                el.setAttribute('data-tooltip', translation);
+                el.removeAttribute('title');
+                if (window.TooltipManager && typeof window.TooltipManager.refresh === 'function') {
+                    window.TooltipManager.refresh(el);
+                }
             }
         });
     }

@@ -71,28 +71,3 @@
     background-color: rgba(0, 0, 0, 0.1);
     margin: 0 4px;
 }
-
-/* Modern Tooltip */
-.toolbar-btn::after {
-    content: attr(title);
-    position: absolute;
-    bottom: 100%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-10px);
-    background-color: rgba(30, 30, 30, 0.9);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-
-.toolbar-btn:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) translateY(-15px);
-}

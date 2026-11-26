@@ -107,27 +107,29 @@
 /* Custom Tooltip for Truncated Text */
 #tree-tooltip {
     position: fixed;
-    z-index: 9999;
-    background-color: #fff;
-    color: var(--text-color);
-    padding: 4px 8px;
-    border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 100500;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-text);
+    padding: 6px 10px;
+    border-radius: 8px;
+    box-shadow: var(--tooltip-shadow);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     white-space: nowrap;
     pointer-events: none; /* Allow events to pass through */
-    border: 1px solid var(--border-color);
-    font-size: 16px;
+    border: 1px solid var(--tooltip-border);
+    font-size: 13px;
+    font-weight: 500;
     display: flex;
     align-items: center;
 }
 #tree-tooltip i {
     margin-right: 8px;
-    color: var(--primary-color);
+    color: #60a5fa;
 }
 #tree-tooltip.active-folder {
-    background-color: var(--selected-bg-color);
-    color: var(--primary-color);
-    font-weight: 500;
+    color: #93c5fd;
+    font-weight: 600;
 }
 
 /* Move Modal Tree Styles */

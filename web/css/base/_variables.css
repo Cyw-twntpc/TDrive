@@ -27,6 +27,11 @@
     --item-hover-bg: #f9fbfd;
     --violet-accent: #8B5CF6;
     --pink-accent: #EC4899;
+
+    --tooltip-bg: rgba(15, 23, 42, 0.92);
+    --tooltip-text: #f8fafc;
+    --tooltip-border: rgba(255, 255, 255, 0.14);
+    --tooltip-shadow: 0 10px 26px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.12);
 }
 
 :root[data-theme="dark"] {
@@ -53,4 +58,9 @@
     --sort-icon-color: #64748b;
     --hover-bg-color: #273449;
     --item-hover-bg: #263348;
+
+    --tooltip-bg: rgba(30, 41, 59, 0.96);
+    --tooltip-text: #f8fafc;
+    --tooltip-border: rgba(148, 163, 184, 0.28);
+    --tooltip-shadow: 0 12px 30px rgba(2, 6, 23, 0.6), 0 2px 8px rgba(2, 6, 23, 0.35);
 }

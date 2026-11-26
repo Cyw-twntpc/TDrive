@@ -1,0 +1,98 @@
+/* ==========================================================================
+   Unified Custom Tooltip Overlay
+   ========================================================================== */
+
+.tdrive-tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100500;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    max-width: 280px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-text);
+    border: 1px solid var(--tooltip-border);
+    box-shadow: var(--tooltip-shadow);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    font-family: var(--font-family-main);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    opacity: 0;
+    visibility: hidden;
+    --tooltip-arrow-x: 50%;
+    --tooltip-arrow-y: 50%;
+    transition: opacity 0.14s ease,
+                transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+                visibility 0.14s ease;
+}
+
+.tdrive-tooltip[data-placement="top"] {
+    transform: translate3d(0, 4px, 0);
+}
+
+.tdrive-tooltip[data-placement="bottom"] {
+    transform: translate3d(0, -4px, 0);
+}
+
+.tdrive-tooltip[data-placement="left"] {
+    transform: translate3d(4px, 0, 0);
+}
+
+.tdrive-tooltip[data-placement="right"] {
+    transform: translate3d(-4px, 0, 0);
+}
+
+.tdrive-tooltip.is-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translate3d(0, 0, 0);
+}
+
+/* Directional pointer arrow aligned via --tooltip-arrow-x / --tooltip-arrow-y */
+.tdrive-tooltip::before {
+    content: "";
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: var(--tooltip-bg);
+    transform: rotate(45deg);
+    pointer-events: none;
+}
+
+.tdrive-tooltip[data-placement="top"]::before {
+    left: calc(var(--tooltip-arrow-x) - 4px);
+    bottom: -5px;
+    border-right: 1px solid var(--tooltip-border);
+    border-bottom: 1px solid var(--tooltip-border);
+}
+
+.tdrive-tooltip[data-placement="bottom"]::before {
+    left: calc(var(--tooltip-arrow-x) - 4px);
+    top: -5px;
+    border-left: 1px solid var(--tooltip-border);
+    border-top: 1px solid var(--tooltip-border);
+}
+
+.tdrive-tooltip[data-placement="left"]::before {
+    top: calc(var(--tooltip-arrow-y) - 4px);
+    right: -5px;
+    border-top: 1px solid var(--tooltip-border);
+    border-right: 1px solid var(--tooltip-border);
+}
+
+.tdrive-tooltip[data-placement="right"]::before {
+    top: calc(var(--tooltip-arrow-y) - 4px);
+    left: -5px;
+    border-left: 1px solid var(--tooltip-border);
+    border-bottom: 1px solid var(--tooltip-border);
+}
