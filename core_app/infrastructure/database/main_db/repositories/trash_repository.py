@@ -62,8 +62,12 @@ class TrashRepository(BaseRepository):
 
                 return result
 
+    def _batch_lock_or_write(self):
+        """Use batch_write when supported by db connection to coalesce fsyncs."""
+        return self.db.batch_write() if hasattr(self.db, 'batch_write') else self._db_lock
+
     def remove_folder(self, folder_id: int) -> list:
-        with self._db_lock:
+        with self._batch_lock_or_write():
             conn = self._get_conn()
             with conn:
                 cursor = conn.cursor()
@@ -297,7 +301,7 @@ class TrashRepository(BaseRepository):
         return {"folders": folders, "files": files, "recycle_bin_id": recycle_bin_id}
 
     def empty_trash(self) -> list:
-        with self._db_lock:
+        with self._batch_lock_or_write():
             conn = self._get_conn()
             cursor = conn.cursor()
             recycle_id = self._get_recycle_bin_id(cursor)

@@ -323,6 +323,17 @@ class BotManager:
         return new_token, new_bf_msg_id
 
 
+    @staticmethod
+    async def _safe_disconnect(bot_client: Optional[TelegramClient]) -> None:
+        """Disconnect a TelegramClient instance safely, suppressing disconnection errors."""
+        if not bot_client:
+            return
+        try:
+            if bot_client.is_connected():
+                await bot_client.disconnect()
+        except Exception:
+            pass
+
     async def init_saved_bots(self, shared_state: 'SharedState'):
         """Initializes all registered bots from the database and connects them."""
         
@@ -334,6 +345,8 @@ class BotManager:
         logger.info(f"[init] Loading {len(bots)} saved worker bots from DB...")
         loaded_count = 0
         for bot_info in bots:
+            bot_client = None
+            added_to_pool = False
             try:
                 username = bot_info.get('username', '?')
                 bot_id = bot_info.get('bot_id', '?')
@@ -364,27 +377,29 @@ class BotManager:
                             if not hasattr(shared_state, 'clients_pool'):
                                 shared_state.clients_pool = []
                             shared_state.clients_pool.append(bot_client)
+                            added_to_pool = True
                             loaded_count += 1
                         except Exception as e:
                             logger.warning(f"[init] Bot {username} authorized but get_me failed: {e}")
+                            await self._safe_disconnect(bot_client)
                     else:
                         logger.warning(f"[init] Bot {username} authorized but group_joined=0. Skipping.")
+                        await self._safe_disconnect(bot_client)
                 else:
                     logger.warning(f"[init] Bot {username} not authorized. Token may be revoked.")
+                    await self._safe_disconnect(bot_client)
+            except asyncio.CancelledError:
+                if not added_to_pool:
+                    await self._safe_disconnect(bot_client)
+                raise
             except asyncio.TimeoutError:
                 logger.error(f"[init] TIMEOUT starting bot {username} (30s). Skipping.")
-                try:
-                    await bot_client.disconnect()
-                except Exception:
-                    pass
+                await self._safe_disconnect(bot_client)
             except Exception as e:
                 # Token expired — attempt refresh via /mybots
                 if 'expired' in str(e).lower():
                     logger.warning(f"[init] Token expired for @{username}. Attempting refresh via /mybots...")
-                    try:
-                        await bot_client.disconnect()
-                    except Exception:
-                        pass
+                    await self._safe_disconnect(bot_client)
                     # Query /mybots to get fresh token
                     bf_msg_id, bf_bots = await self._query_mybots_list(shared_state)
                     bf_bot = next((b for b in bf_bots if b['username'] == username), None) if bf_bots else None
@@ -395,6 +410,8 @@ class BotManager:
                             if new_token:
                                 self.update_bot_token(bot_id, new_token)
                                 logger.info(f"[init] Retrying @{username} with refreshed token...")
+                                bot_client2 = None
+                                added_retry = False
                                 try:
                                     bot_client2 = TelegramClient(StringSession(""), shared_state.api_id, shared_state.api_hash)
                                     await asyncio.wait_for(bot_client2.start(bot_token=new_token), timeout=30.0)
@@ -404,10 +421,21 @@ class BotManager:
                                             if not hasattr(shared_state, 'clients_pool'):
                                                 shared_state.clients_pool = []
                                             shared_state.clients_pool.append(bot_client2)
+                                            added_retry = True
                                             loaded_count += 1
                                             logger.info(f"[init] Bot @{username} loaded with refreshed token")
+                                        else:
+                                            await self._safe_disconnect(bot_client2)
+                                    else:
+                                        await self._safe_disconnect(bot_client2)
+                                except asyncio.CancelledError:
+                                    if not added_retry:
+                                        await self._safe_disconnect(bot_client2)
+                                    raise
                                 except Exception as retry_e:
                                     logger.error(f"[init] Retry failed for @{username}: {retry_e}")
+                                    if not added_retry:
+                                        await self._safe_disconnect(bot_client2)
                             else:
                                 logger.error(f"[init] Refresh failed for @{username}. Could not get new token.")
                         else:
@@ -416,6 +444,8 @@ class BotManager:
                         logger.error(f"[init] @{username} not found in BotFather /mybots list.")
                 else:
                     logger.error(f"[init] Failed to init bot @{username}: {e}")
+                    if not added_to_pool:
+                        await self._safe_disconnect(bot_client)
         
         logger.info(f"[init] Done: {loaded_count}/{len(bots)} bots loaded into pool")
 
@@ -563,19 +593,17 @@ class BotManager:
                 await bot_client.disconnect()
                 return False
 
+        except asyncio.CancelledError:
+            if bot_client not in getattr(shared_state, 'clients_pool', []):
+                await self._safe_disconnect(bot_client)
+            raise
         except asyncio.TimeoutError:
             logger.error(f"[recover] TIMEOUT booting @{username} (30s).")
-            try:
-                await bot_client.disconnect()
-            except Exception:
-                pass
+            await self._safe_disconnect(bot_client)
             return False
         except Exception as e:
             logger.error(f"[recover] Error booting @{username}: {e}", exc_info=True)
-            try:
-                await bot_client.disconnect()
-            except Exception:
-                pass
+            await self._safe_disconnect(bot_client)
             return False
 
     async def provision_missing_bots(self, shared_state: 'SharedState', target_count: int = 5):
@@ -667,6 +695,7 @@ class BotManager:
                                 
                                 # 7. Initialize immediately (Hot-plug)
                                 bot_client = TelegramClient(StringSession(""), shared_state.api_id, shared_state.api_hash)
+                                added_hotplug = False
                                 try:
                                     logger.info(f"[provision] Starting hot-plug for {username}...")
                                     t_boot = time.time()
@@ -678,21 +707,21 @@ class BotManager:
                                         if not hasattr(shared_state, 'clients_pool'):
                                             shared_state.clients_pool = []
                                         shared_state.clients_pool.append(bot_client)
+                                        added_hotplug = True
                                         logger.info(f"[provision] {username} hot-plugged into pool. Pool size={len(shared_state.clients_pool)}")
                                     else:
                                         logger.warning(f"[provision] {username} hot-plug started but not authorized.")
+                                        await self._safe_disconnect(bot_client)
+                                except asyncio.CancelledError:
+                                    if not added_hotplug:
+                                        await self._safe_disconnect(bot_client)
+                                    raise
                                 except asyncio.TimeoutError:
                                     logger.error(f"[provision] TIMEOUT starting {username} (30s). Skipping hot-plug.")
-                                    try:
-                                        await bot_client.disconnect()
-                                    except Exception:
-                                        pass
+                                    await self._safe_disconnect(bot_client)
                                 except Exception as e:
                                     logger.error(f"[provision] Error starting {username}: {e}")
-                                    try:
-                                        await bot_client.disconnect()
-                                    except Exception:
-                                        pass
+                                    await self._safe_disconnect(bot_client)
                             else:
                                 logger.error(f"[provision] Failed to invite {username}. Not added to pool.")
                         else:

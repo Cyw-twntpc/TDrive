@@ -44,6 +44,7 @@ class MetadataManager:
         self._map_cache: OrderedDict[int, Dict] = SysOrderedDict()
         self._cache_size = 20
         self._lock = asyncio.Lock()
+        self._sync_pending = False
         
         # Folder-level locks for map file updates
         self._folder_locks = defaultdict(asyncio.Lock)
@@ -56,18 +57,27 @@ class MetadataManager:
              self.db.sync_manager.set_callback(self._trigger_background_sync, self.shared_state.loop)
 
     async def _trigger_background_sync(self):
-        """Callback for SyncManager to trigger DB upload."""
+        """Callback for SyncManager to trigger DB upload, coalescing concurrent triggers."""
         if not self.shared_state.is_logged_in or not self.shared_state.client:
             logger.debug("Skipping background sync: Not logged in.")
             return
 
+        if self._lock.locked():
+            self._sync_pending = True
+            logger.debug("Coalescing background sync: previous sync already in progress.")
+            return
+
         try:
-            logger.debug("Executing adaptive background sync...")
-            await self.sync_db_to_cloud(
-                self.shared_state.client,
-                self.shared_state.group_id,
-                self.shared_state.api_id
-            )
+            while True:
+                self._sync_pending = False
+                logger.debug("Executing adaptive background sync...")
+                await self.sync_db_to_cloud(
+                    self.shared_state.client,
+                    self.shared_state.group_id,
+                    self.shared_state.api_id
+                )
+                if not self._sync_pending:
+                    break
         except Exception as e:
             logger.error(f"Background sync failed: {e}")
 
@@ -358,6 +368,23 @@ class MetadataManager:
 
     # --- Map File Management ---
 
+    async def _decode_map_message(self, msg, key: bytes, map_msg_id: int) -> Dict:
+        """Decode an inline TDM text message or legacy gzipped map media message."""
+        if getattr(msg, 'text', None) and str(msg.text).startswith("TDM:"):
+            encoded_data = msg.text[4:]
+            compressed_data = base64.b64decode(encoded_data)
+            decrypted = cr.decrypt(compressed_data, key)
+            json_data = json.loads(zlib.decompress(decrypted).decode('utf-8'))
+        else:
+            enc_data = await msg.download_media(file=bytes)
+            decrypted = cr.decrypt(enc_data, key)
+            decompressed = gzip.decompress(decrypted)
+            json_data = json.loads(decompressed.decode('utf-8'))
+
+        if not isinstance(json_data, dict):
+            raise ValueError(f"Invalid map file format for {map_msg_id}: expected dict, got {type(json_data)}")
+        return json_data
+
     async def fetch_map_file(self, client, api_id: int, map_msg_id: int) -> Dict:
         if map_msg_id in self._map_cache:
             self._map_cache.move_to_end(map_msg_id)
@@ -374,22 +401,8 @@ class MetadataManager:
                 logger.warning(f"fetch_map_file: no messages returned for map_msg_id={map_msg_id} (raw={raw_map_msg_id}, group={target_gid})")
                 return {}
             
-            msg = msgs[0]
             key = cr.generate_key_from_api_id(str(api_id))
-            
-            if msg.text and msg.text.startswith("TDM:"):
-                encoded_data = msg.text[4:]
-                compressed_data = base64.b64decode(encoded_data)
-                decrypted = cr.decrypt(compressed_data, key)
-                json_data = json.loads(zlib.decompress(decrypted).decode('utf-8'))
-            else:
-                enc_data = await msg.download_media(file=bytes)
-                decrypted = cr.decrypt(enc_data, key)
-                decompressed = gzip.decompress(decrypted)
-                json_data = json.loads(decompressed.decode('utf-8'))
-            
-            if not isinstance(json_data, dict):
-                raise ValueError(f"Invalid map file format for {map_msg_id}: expected dict, got {type(json_data)}")
+            json_data = await self._decode_map_message(msgs[0], key, map_msg_id)
 
             # Cache it
             if len(self._map_cache) >= self._cache_size:
@@ -400,6 +413,103 @@ class MetadataManager:
         except Exception as e:
             logger.error(f"Failed to fetch map file {map_msg_id}: {e}")
             return {}
+
+    async def _fetch_maps_individually(self, client, api_id: int, map_msg_ids: List[int], results: Dict[int, Dict]) -> None:
+        """Fetch map payloads one by one via fetch_map_file and evict them from cache."""
+        for mid in map_msg_ids:
+            try:
+                results[mid] = await self.fetch_map_file(client, api_id, mid)
+            except Exception as e:
+                logger.error(f"Failed to fetch map {mid} during deletion: {e}")
+            finally:
+                self._map_cache.pop(mid, None)
+
+    async def _fetch_group_map_batch(
+        self, client, api_id: int, target_gid: int, pairs: List[tuple[int, int]],
+        key: bytes, results: Dict[int, Dict], legacy_downloads: List[tuple[int, Any]]
+    ) -> None:
+        """Fetch up to 100 map messages from one Telegram group and queue legacy downloads."""
+        raw_to_global = {raw_id: gid for raw_id, gid in pairs}
+        raw_ids = [raw_id for raw_id, _ in pairs]
+        try:
+            msgs = await client.get_messages(target_gid, ids=raw_ids)
+        except Exception as e:
+            logger.error(f"Batch get_messages failed for group {target_gid}: {e}")
+            return
+
+        if not isinstance(msgs, (list, tuple)):
+            await self._fetch_maps_individually(client, api_id, [gid for _, gid in pairs], results)
+            return
+
+        for idx, msg in enumerate(msgs):
+            if msg is None:
+                continue
+            msg_id_val = getattr(msg, 'id', None)
+            if isinstance(msg_id_val, int) and msg_id_val in raw_to_global:
+                global_msg_id = raw_to_global[msg_id_val]
+            elif idx < len(pairs):
+                global_msg_id = pairs[idx][1]
+            else:
+                continue
+
+            if getattr(msg, 'text', None) and str(msg.text).startswith("TDM:"):
+                try:
+                    results[global_msg_id] = await self._decode_map_message(msg, key, global_msg_id)
+                except Exception as e:
+                    logger.error(f"Failed to decode map {global_msg_id} during deletion: {e}")
+            else:
+                legacy_downloads.append((global_msg_id, msg))
+
+    async def _fetch_map_files_batch(self, client, api_id: int, map_msg_ids: List[int], default_group_id: int = None) -> Dict[int, Dict]:
+        """Fetch and evict deleted map payloads in batched 100-ID Telegram RPCs."""
+        results: Dict[int, Dict] = {}
+        unique_ids = list(dict.fromkeys(map_msg_ids))
+        if getattr(self.fetch_map_file, "__func__", None) is not MetadataManager.fetch_map_file:
+            await self._fetch_maps_individually(client, api_id, unique_ids, results)
+            return results
+
+        uncached_ids = [mid for mid in unique_ids if mid not in self._map_cache]
+        for mid in unique_ids:
+            if mid in self._map_cache:
+                results[mid] = self._map_cache.pop(mid)
+
+        if not uncached_ids:
+            return results
+        if len(uncached_ids) == 1:
+            await self._fetch_maps_individually(client, api_id, uncached_ids, results)
+            return results
+
+        key = cr.generate_key_from_api_id(str(api_id))
+        by_group: Dict[Any, List[tuple[int, int]]] = defaultdict(list)
+        for global_msg_id in uncached_ids:
+            g_idx, raw_id = utils.decode_global_msg_id(global_msg_id)
+            target_gid = (
+                self.shared_state.get_telegram_group_id(g_idx)
+                if hasattr(self, 'shared_state') and self.shared_state
+                else default_group_id
+            )
+            by_group[target_gid].append((raw_id, global_msg_id))
+
+        legacy_downloads: List[tuple[int, Any]] = []
+        for target_gid, pairs in by_group.items():
+            for i in range(0, len(pairs), 100):
+                await self._fetch_group_map_batch(
+                    client, api_id, target_gid, pairs[i:i + 100], key, results, legacy_downloads
+                )
+
+        if legacy_downloads:
+            sem = asyncio.Semaphore(5)
+
+            async def _download_legacy(gid: int, message):
+                async with sem:
+                    try:
+                        results[gid] = await self._decode_map_message(message, key, gid)
+                    except Exception as e:
+                        logger.error(f"Failed to download legacy map {gid} during deletion: {e}")
+
+            await asyncio.gather(*(_download_legacy(gid, m) for gid, m in legacy_downloads), return_exceptions=True)
+
+        return results
 
     async def save_map_file(self, client, group_id: int, api_id: int, map_data: Dict) -> int:
         """
@@ -512,36 +622,35 @@ class MetadataManager:
             if cloud_msg_id:
                 maps_to_delete_cloud_ids.add(cloud_msg_id)
                 messages_to_delete.add(cloud_msg_id)
-                self._map_cache.pop(cloud_msg_id, None)
 
         if maps_to_delete_cloud_ids:
             try:
+                fetched_maps = await self._fetch_map_files_batch(
+                    client, api_id, list(maps_to_delete_cloud_ids), default_group_id=group_id
+                )
                 for map_msg_id in maps_to_delete_cloud_ids:
-                    try:
-                        map_data = await self.fetch_map_file(client, api_id, map_msg_id)
-                        if not map_data:
-                            messages_to_delete.discard(map_msg_id)
-                            continue
-                        for file_key, file_info in map_data.items():
-                            if isinstance(file_info, dict):
-                                if 'c' in file_info:
-                                    # Handle chunk lists (list of lists)
-                                    for chunk_batch in file_info['c']:
-                                        if isinstance(chunk_batch, list):
-                                            if len(chunk_batch) >= 2:
-                                                messages_to_delete.add(chunk_batch[1])
-                                            elif len(chunk_batch) == 1:
-                                                messages_to_delete.add(chunk_batch[0])
-                                        else:
-                                            messages_to_delete.add(chunk_batch)
-                                            
-                                # Check for preview inside 'm' just in case
-                                if 'm' in file_info and isinstance(file_info['m'], dict):
-                                    m_data = file_info['m']
-                                    if 'p' in m_data and m_data['p']:
-                                        messages_to_delete.add(m_data['p'])
-                    except Exception as e:
-                        logger.error(f"Failed to fetch map {map_msg_id} during deletion: {e}")
+                    map_data = fetched_maps.get(map_msg_id)
+                    if not map_data:
+                        messages_to_delete.discard(map_msg_id)
+                        continue
+                    for file_key, file_info in map_data.items():
+                        if isinstance(file_info, dict):
+                            if 'c' in file_info:
+                                # Handle chunk lists (list of lists)
+                                for chunk_batch in file_info['c']:
+                                    if isinstance(chunk_batch, list):
+                                        if len(chunk_batch) >= 2:
+                                            messages_to_delete.add(chunk_batch[1])
+                                        elif len(chunk_batch) == 1:
+                                            messages_to_delete.add(chunk_batch[0])
+                                    else:
+                                        messages_to_delete.add(chunk_batch)
+                                        
+                            # Check for preview inside 'm' just in case
+                            if 'm' in file_info and isinstance(file_info['m'], dict):
+                                m_data = file_info['m']
+                                if 'p' in m_data and m_data['p']:
+                                    messages_to_delete.add(m_data['p'])
 
                 if messages_to_delete:
                     msgs_by_group = defaultdict(set)

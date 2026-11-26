@@ -81,6 +81,37 @@ class AppController(QObject):
         self.tdrive_service = TDriveService(loop=self.loop)
         self.show_login_window()
 
+def _has_live_clients(service: TDriveService) -> bool:
+    """Return True if the main Telegram client or any worker bot client is still connected."""
+    shared_state = getattr(service, "_shared_state", None)
+    if not shared_state:
+        return False
+    if shared_state.client and shared_state.client.is_connected():
+        return True
+    return any(bot and bot.is_connected() for bot in (getattr(shared_state, "clients_pool", None) or []))
+
+
+async def _shutdown_remaining_resources(controller: AppController, loop: asyncio.AbstractEventLoop) -> None:
+    """Close any remaining active service connections and cancel leftover asyncio tasks before loop exit."""
+    service = getattr(controller, "tdrive_service", None)
+    if service is not None and _has_live_clients(service):
+        try:
+            await service.close()
+        except Exception as exc:
+            logger.error(f"Error closing TDriveService during final cleanup: {exc}", exc_info=True)
+
+    current = asyncio.current_task(loop)
+    pending = [task for task in asyncio.all_tasks(loop) if task is not current and not task.done()]
+    if pending:
+        logger.debug(f"Cancelling {len(pending)} pending asyncio task(s) before event loop close.")
+        for task in pending:
+            task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for pending asyncio tasks to finish during exit.")
+
+
 def main():
     logger_config.setup_logging()
 
@@ -103,10 +134,19 @@ def main():
     asyncio.set_event_loop(loop)
     
     controller = AppController(app, loop, splash)
-    controller.start()
 
     with loop:
-        loop.run_forever()
+        try:
+            controller.start()
+            loop.run_forever()
+        finally:
+            service = getattr(controller, "tdrive_service", None)
+            has_pending = any(not task.done() for task in asyncio.all_tasks(loop))
+            if (service is not None and _has_live_clients(service)) or has_pending:
+                try:
+                    loop.run_until_complete(_shutdown_remaining_resources(controller, loop))
+                except Exception as exc:
+                    logger.error(f"Failed to drain pending tasks on shutdown: {exc}", exc_info=True)
 
 if __name__ == "__main__":
     main()

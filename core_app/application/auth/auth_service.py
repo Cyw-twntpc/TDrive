@@ -113,7 +113,13 @@ class AuthService:
                     return {"logged_in": True}
                 else:
                     logger.warning("Session is valid but drive initialization failed. Redirecting to login.")
-                    await client.disconnect()
+                    active_client = self.shared_state.client
+                    if active_client and active_client is not client and active_client.is_connected():
+                        await active_client.disconnect()
+                    if client and client.is_connected():
+                        await client.disconnect()
+                    self.shared_state.client = None
+                    self.shared_state.is_logged_in = False
                     return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
             else:
                 logger.info("Session is invalid or expired. Re-login required.")
@@ -121,7 +127,13 @@ class AuthService:
                 return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
         except Exception as e:
             logger.error(f"Error during startup check: {e}", exc_info=True)
-            if client and client.is_connected(): await client.disconnect()
+            active_client = self.shared_state.client
+            if active_client and active_client is not client and active_client.is_connected():
+                await active_client.disconnect()
+            if client and client.is_connected():
+                await client.disconnect()
+            self.shared_state.client = None
+            self.shared_state.is_logged_in = False
             if api_id and api_hash:
                 return {"logged_in": False, "expired_session": True, "api_id": api_id, "api_hash": api_hash}
             return {"logged_in": False}
@@ -129,6 +141,16 @@ class AuthService:
     async def verify_api_credentials(self, api_id: int, api_hash: str) -> Dict[str, Any]:
         client = None
         try:
+            # Disconnect any previously attached client before creating a new session
+            if self.shared_state.client:
+                try:
+                    if self.shared_state.client.is_connected():
+                        await self.shared_state.client.disconnect()
+                except Exception as disc_err:
+                    logger.warning(f"Failed to disconnect previous client during credential verification: {disc_err}")
+                finally:
+                    self.shared_state.client = None
+
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, lambda: os.makedirs('./file/user_data', exist_ok=True))
             

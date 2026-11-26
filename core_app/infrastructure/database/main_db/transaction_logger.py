@@ -1,8 +1,10 @@
+import contextlib
 import pickle
 import os
 import logging
 import sqlite3
 import struct
+import threading
 import zlib
 from typing import Tuple, Any
 
@@ -11,7 +13,43 @@ logger = logging.getLogger(__name__)
 class TransactionLogger:
     def __init__(self, log_path: str = './file/user_data/pending_ops.bin'):
         self.log_path = log_path
+        self._lock = threading.RLock()
+        self._batch_depth = 0
+        self._batch_buffer = bytearray()
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+
+    @contextlib.contextmanager
+    def batch(self):
+        """Buffer WAL appends in memory and flush once with a single fsync on exit."""
+        with self._lock:
+            self._batch_depth += 1
+        try:
+            yield
+        finally:
+            should_flush = False
+            with self._lock:
+                if self._batch_depth > 0:
+                    self._batch_depth -= 1
+                if self._batch_depth == 0 and self._batch_buffer:
+                    should_flush = True
+            if should_flush:
+                self.flush_batch()
+
+    def flush_batch(self):
+        """Flush buffered WAL records to disk in a single write and fsync."""
+        with self._lock:
+            if not self._batch_buffer:
+                return
+            payload = bytes(self._batch_buffer)
+            try:
+                with open(self.log_path, 'ab') as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+                self._batch_buffer.clear()
+            except Exception as e:
+                logger.error(f"Batch log flush failed: {e}")
+                raise
 
     def append(self, sql: str, params: Tuple[Any, ...]):
         """Writes SQL command securely with length header and CRC32."""
@@ -19,43 +57,50 @@ class TransactionLogger:
             data = pickle.dumps((sql, params))
             data_len = len(data)
             crc = zlib.crc32(data) & 0xFFFFFFFF
-            
+
             # Format: <I (length 4 bytes) + data + <I (crc 4 bytes)
             header = struct.pack('<I', data_len)
             footer = struct.pack('<I', crc)
-            
-            with open(self.log_path, 'ab') as f:
-                f.write(header)
-                f.write(data)
-                f.write(footer)
-                f.flush()
-                os.fsync(f.fileno()) # Force write to physical disk
+            frame = header + data + footer
+
+            with self._lock:
+                if self._batch_depth > 0:
+                    self._batch_buffer.extend(frame)
+                    return
+
+                with open(self.log_path, 'ab') as f:
+                    f.write(frame)
+                    f.flush()
+                    os.fsync(f.fileno()) # Force write to physical disk
         except Exception as e:
             logger.error(f"Log append failed: {e}")
             raise # Ensure caller (DB Handler) knows the write failed
 
     def rotate(self):
         """Atomic log rotation: append to .bak, then truncate via os.replace."""
-        if not os.path.exists(self.log_path): return
-        
-        bak_path = self.log_path + '.bak'
-        try:
-            if os.path.getsize(self.log_path) > 0:
-                with open(self.log_path, 'rb') as src:
-                    content = src.read()
-                    if content:
-                        with open(bak_path, 'ab') as dst:
-                            dst.write(content)
-                            dst.flush()
-                            os.fsync(dst.fileno())
-                
-                tmp_path = self.log_path + '.tmp'
-                with open(tmp_path, 'wb') as f:
-                    pass
-                os.replace(tmp_path, self.log_path)
+        with self._lock:
+            if self._batch_buffer:
+                self.flush_batch()
+            if not os.path.exists(self.log_path): return
+            
+            bak_path = self.log_path + '.bak'
+            try:
+                if os.path.getsize(self.log_path) > 0:
+                    with open(self.log_path, 'rb') as src:
+                        content = src.read()
+                        if content:
+                            with open(bak_path, 'ab') as dst:
+                                dst.write(content)
+                                dst.flush()
+                                os.fsync(dst.fileno())
                     
-        except OSError as e:
-            logger.error(f"Log rotation failed: {e}")
+                    tmp_path = self.log_path + '.tmp'
+                    with open(tmp_path, 'wb') as f:
+                        pass
+                    os.replace(tmp_path, self.log_path)
+                        
+            except OSError as e:
+                logger.error(f"Log rotation failed: {e}")
 
     def replay(self, conn: sqlite3.Connection):
         """Replays the transaction log to the in-memory database."""

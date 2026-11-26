@@ -35,6 +35,8 @@ class LoginWindow(QMainWindow):
         self._api_hash = api_hash
         self._drag_offset = None
         self._is_ready_to_close = False
+        self._is_shutting_down = False
+        self._shutdown_task = None
 
         self.setWindowTitle(get_localized_text("login.window_title", "TDrive - 登入"))
         self.setWindowIcon(QIcon(str(get_resource_path("web/icon.ico"))))
@@ -99,8 +101,39 @@ class LoginWindow(QMainWindow):
     def handle_drag_end(self):
         self._drag_offset = None
 
+    async def _graceful_shutdown(self):
+        """Disconnect any active Telegram client and services before quitting from login window."""
+        logger.info("Performing graceful shutdown from LoginWindow...")
+        try:
+            if self.tdrive_service and hasattr(self.tdrive_service, "close"):
+                await self.tdrive_service.close()
+        except asyncio.CancelledError:
+            logger.warning("LoginWindow graceful shutdown task was cancelled unexpectedly.")
+        except Exception as e:
+            logger.error(f"Error during LoginWindow shutdown: {e}", exc_info=True)
+        finally:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+
     def closeEvent(self, event: QCloseEvent):
-        if not self._is_ready_to_close:
-            logger.info("Login not complete. Closing the application.")
-            QApplication.instance().quit()
+        if self._is_ready_to_close:
+            event.accept()
+            return
+
+        if self._is_shutting_down:
+            event.ignore()
+            return
+
+        logger.info("Login not complete. Closing the application.")
+        if self._loop and self._loop.is_running():
+            self._is_shutting_down = True
+            self.hide()
+            event.ignore()
+            self._shutdown_task = self._loop.create_task(self._graceful_shutdown())
+            return
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
         event.accept()

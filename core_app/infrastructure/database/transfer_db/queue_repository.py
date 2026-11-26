@@ -104,15 +104,18 @@ class QueueRepository:
         finally:
             conn.close()
 
-    def update_main_task_status(self, task_id: str, status: str, updated_at: float, error_msg: str=None):
+    def update_main_task_status(self, task_id: str, status: str, updated_at: float, error_msg: str=None, error_code: str=None):
+        """Update main task status, timestamp, and optional error message/code."""
+        # Support both error_msg and error_code callers while storing in error_message.
+        resolved_error = error_msg if error_msg is not None else error_code
         conn = self.db._get_conn()
         try:
             with conn:
                 query = 'UPDATE main_tasks SET status = ?, updated_at = ?'
                 params = [status, updated_at]
-                if error_msg is not None:
+                if resolved_error is not None:
                     query += ', error_message = ?'
-                    params.append(error_msg)
+                    params.append(resolved_error)
                 query += ' WHERE task_id = ?'
                 params.append(task_id)
                 conn.execute(query, params)

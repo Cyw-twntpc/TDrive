@@ -1,3 +1,4 @@
+import contextlib
 import sqlite3
 import logging
 from core_app.application.sync.sync_manager import SyncManager
@@ -31,6 +32,8 @@ class DatabaseConnection:
         self.db_path = db_path # Should be ':memory:' for production as per requirement
         self._connection = None
         self._db_lock = threading.RLock()
+        self._batch_depth = 0
+        self._pending_batch_score = 0
         self.transaction_logger = TransactionLogger()
         self.sync_manager = SyncManager()
         self.shared_state = shared_state
@@ -55,12 +58,40 @@ class DatabaseConnection:
         
         return self._connection
 
+    @contextlib.contextmanager
+    def batch_write(self):
+        """Coalesce WAL fsyncs and SyncManager notifications across bulk DB mutations."""
+        with self._db_lock:
+            is_outer = self._batch_depth == 0
+            if is_outer:
+                self.sync_manager.set_busy(True)
+                self._pending_batch_score = 0
+            self._batch_depth += 1
+            try:
+                with self.transaction_logger.batch():
+                    yield
+                if is_outer:
+                    self._get_conn().commit()
+            finally:
+                self._batch_depth = max(0, self._batch_depth - 1)
+                if is_outer:
+                    pending_score = self._pending_batch_score
+                    self._pending_batch_score = 0
+                    try:
+                        if pending_score > 0:
+                            self.sync_manager.add_change(pending_score)
+                    finally:
+                        self.sync_manager.set_busy(False)
+
     def _execute_write(self, cursor: sqlite3.Cursor, sql: str, params: tuple, score: int = 1):
         """Executes write operation with Write-Ahead Logging (WAL) pattern."""
         with self._db_lock:
             self.transaction_logger.append(sql, params)
             cursor.execute(sql, params)
-            self.sync_manager.add_change(score)
+            if getattr(self, '_batch_depth', 0) > 0:
+                self._pending_batch_score += score
+            else:
+                self.sync_manager.add_change(score)
 
     def _init_db(self):
         logger.debug(f"Initializing database schema in {self.db_path}...")
@@ -241,26 +272,28 @@ class DatabaseConnection:
 
     def rebuild_search_index(self):
         """Manually rebuilds the FTS5 search index."""
-        conn = self._get_conn()
-        with conn:
-            conn.execute("DELETE FROM search_index")
-            conn.execute("""
-                INSERT INTO search_index(name, item_type, item_id, folder_id)
-                SELECT name, 'folder', id, parent_id FROM folders
-            """)
-            conn.execute("""
-                INSERT INTO search_index(name, item_type, item_id, folder_id)
-                SELECT name, 'file', id, folder_id FROM file_folder_map
-            """)
-            logger.info("Search index rebuilt manually.")
+        with self._db_lock:
+            conn = self._get_conn()
+            with conn:
+                conn.execute("DELETE FROM search_index")
+                conn.execute("""
+                    INSERT INTO search_index(name, item_type, item_id, folder_id)
+                    SELECT name, 'folder', id, parent_id FROM folders
+                """)
+                conn.execute("""
+                    INSERT INTO search_index(name, item_type, item_id, folder_id)
+                    SELECT name, 'file', id, folder_id FROM file_folder_map
+                """)
+                logger.info("Search index rebuilt manually.")
 
     def run_integrity_check(self) -> bool:
         """Executes PRAGMA integrity_check to verify database health."""
         try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA integrity_check;")
-            rows = cursor.fetchall()
+            with self._db_lock:
+                conn = self._get_conn()
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA integrity_check;")
+                rows = cursor.fetchall()
             
             # integrity_check returns a single row with 'ok' if healthy
             if rows and len(rows) > 0:

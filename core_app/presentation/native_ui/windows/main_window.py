@@ -156,15 +156,24 @@ class MainWindow(QMainWindow):
         logger.info("Performing graceful shutdown (Window hidden)...")
         try:
             await self.tdrive_service.close()
+        except asyncio.CancelledError:
+            logger.warning("Graceful shutdown task was cancelled unexpectedly.")
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            logger.error(f"Error during shutdown: {e}", exc_info=True)
         finally:
             logger.info("Shutdown complete. Quitting application.")
-            QApplication.instance().quit()
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
 
     def closeEvent(self, event: QCloseEvent):
         if self._is_logging_out:
             event.accept()
+            return
+
+        existing_task = getattr(self, "_shutdown_task", None)
+        if isinstance(existing_task, asyncio.Future) and not existing_task.done():
+            event.ignore()
             return
 
         transfer_service = getattr(self.tdrive_service, "_transfer_service", None)

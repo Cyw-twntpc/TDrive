@@ -138,9 +138,13 @@ class TransferService:
             self.cancel_transfer(task_id)
             
         if self.shared_state:
+            try:
+                current_task = asyncio.current_task()
+            except RuntimeError:
+                current_task = None
             tasks = list(getattr(self.shared_state, "background_tasks", []))
             for t in tasks:
-                if not t.done():
+                if t is not current_task and not t.done():
                     t.cancel()
 
         logger.info("TransferService shutdown complete.")
