@@ -1,6 +1,8 @@
 {
     "window": {
         "minimize": "Minimize",
+        "maximize": "Maximize",
+        "restore": "Restore",
         "close": "Close"
     },
     "login": {
@@ -107,6 +109,10 @@
         "help_title": "Help",
         "settings_title": "Settings",
         "user_info_title": "User Info",
+        "toggle_theme": "Toggle Light / Dark Theme",
+        "collapse_sidebar": "Collapse Sidebar",
+        "expand_sidebar": "Expand Sidebar",
+        "section_folders": "Cloud Folders",
         "conn_lost": "Connection Lost",
         "conn_reconnecting": "Attempting to reconnect, please wait...",
         "loading": "Loading..."
@@ -118,6 +124,7 @@
         "col_size": "Size",
         "empty_text": "Unable to load folder contents.",
         "root_not_found": "Root directory not found.",
+        "selected_count": "{count} selected",
         "type_folder": "Folder",
         "type_file": "File",
         "type_txt": "Text Document",
@@ -233,6 +240,8 @@
         "help_tip_3": "Hold <b>Ctrl</b> and click to select multiple items.",
         "help_tip_4": "<b>Drag the mouse</b> in empty space to box-select multiple items.",
         "settings_title": "Settings",
+        "settings_appearance": "Appearance & Language",
+        "settings_transfer_storage": "Transfers & Storage",
         "settings_language": "Display Language",
         "settings_theme": "Theme",
         "theme_light": "Light Mode",

@@ -1,6 +1,8 @@
 {
     "window": {
         "minimize": "最小化",
+        "maximize": "最大化",
+        "restore": "還原",
         "close": "關閉"
     },
     "login": {
@@ -107,6 +109,10 @@
         "help_title": "幫助",
         "settings_title": "設定",
         "user_info_title": "使用者資訊",
+        "toggle_theme": "切換淺色／深色主題",
+        "collapse_sidebar": "收合側邊欄",
+        "expand_sidebar": "展開側邊欄",
+        "section_folders": "雲端目錄",
         "conn_lost": "連線中斷",
         "conn_reconnecting": "正在嘗試重新連線，請稍候...",
         "loading": "載入中..."
@@ -118,6 +124,7 @@
         "col_size": "檔案大小",
         "empty_text": "無法載入資料夾內容。",
         "root_not_found": "找不到根目錄。",
+        "selected_count": "已選取 {count} 項",
         "type_folder": "資料夾",
         "type_file": "檔案",
         "type_txt": "文字文件",
@@ -233,6 +240,8 @@
         "help_tip_3": "按住 <b>Ctrl</b> 鍵再單擊可進行多選。",
         "help_tip_4": "在空白處<b>拖曳滑鼠</b>可以框選多個項目。",
         "settings_title": "設定",
+        "settings_appearance": "外觀與語言",
+        "settings_transfer_storage": "傳輸與儲存",
         "settings_theme": "主題",
         "theme_light": "明亮模式",
         "theme_dark": "深色模式",

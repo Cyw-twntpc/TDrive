@@ -1,66 +1,206 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto:wght@400;500&display=swap');
-
+/* ==========================================================================
+   Design System Tokens: Refined Desktop Cloud (Cool Porcelain / Obsidian Slate)
+   ========================================================================== */
 :root {
-    --primary-color: #007aff;
-    --primary-color-rgb: 0, 122, 255;
-    --primary-hover-color: #0056b3;
-    --success-color: #28a745;
-    --success-color-rgb: 40, 167, 69;
-    --danger-color: #dc3545;
-    --danger-color-rgb: 220, 53, 69;
-    --danger-hover-color: #c82333;
-    --warning-color: #ffc107;
-    --selected-bg-color: #e0efff;
-    --selection-box-bg: rgba(0, 122, 255, 0.2);
-    --selection-box-border: 1px solid rgba(0, 122, 255, 0.5);
-    --background-color: #f4f7fc;
-    --sidebar-bg: #ffffff;
-    --main-content-bg: #ffffff;
-    --text-color: #333;
-    --text-light-color: #666;
-    --border-color: #e9eef5;
-    --header-bg: #ffffff;
-    --font-family-main: 'Noto Sans TC', 'Roboto', sans-serif;
-    --sort-icon-color: #9db2ce;
+    --font-family-main: 'Segoe UI Variable', 'Inter', 'Noto Sans TC', 'Microsoft JhengHei UI', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
 
-    --hover-bg-color: #f5f7fa;
-    --item-hover-bg: #f9fbfd;
-    --violet-accent: #8B5CF6;
-    --pink-accent: #EC4899;
+    /* Surface Elevation Hierarchy (Light - Cool Porcelain) */
+    --surface-shell: #F3F5F9;
+    --surface-canvas: #FFFFFF;
+    --surface-subtle: #F7F9FC;
+    --surface-hover: #EEF2F7;
+    --surface-active: #E8F0FE;
+    --surface-elevated: rgba(255, 255, 255, 0.92);
+    --surface-scrim: rgba(15, 23, 42, 0.36);
 
-    --tooltip-bg: rgba(15, 23, 42, 0.92);
-    --tooltip-text: #f8fafc;
+    /* Typography Hierarchy */
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-tertiary: #64748B;
+    --text-muted: #94A3B8;
+
+    /* Hairline Borders & Elevation Shadows */
+    --border-subtle: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.14);
+    --inner-highlight: rgba(255, 255, 255, 0.85);
+    --shadow-canvas: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
+    --shadow-elevated: 0 14px 36px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
+    --shadow-dock: 0 14px 36px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(15, 23, 42, 0.06);
+
+    /* Brand & Semantic Colors */
+    --accent: #2563EB;
+    --accent-hover: #1D4ED8;
+    --accent-rgb: 37, 99, 235;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+    --accent-border: rgba(37, 99, 235, 0.28);
+
+    --success: #10B981;
+    --success-rgb: 16, 185, 129;
+    --success-soft: rgba(16, 185, 129, 0.11);
+    --warning: #F59E0B;
+    --warning-soft: rgba(245, 158, 11, 0.12);
+    --danger: #E11D48;
+    --danger-hover: #BE123C;
+    --danger-rgb: 225, 29, 72;
+    --danger-soft: rgba(225, 29, 72, 0.10);
+
+    /* File-Type Tinted Icon Tiles */
+    --tile-folder-bg: rgba(37, 99, 235, 0.11);
+    --tile-folder-fg: #2563EB;
+    --tile-image-bg: rgba(139, 92, 246, 0.12);
+    --tile-image-fg: #7C3AED;
+    --tile-video-bg: rgba(225, 29, 72, 0.11);
+    --tile-video-fg: #E11D48;
+    --tile-audio-bg: rgba(13, 148, 136, 0.12);
+    --tile-audio-fg: #0D9488;
+    --tile-pdf-bg: rgba(239, 68, 68, 0.12);
+    --tile-pdf-fg: #DC2626;
+    --tile-doc-bg: rgba(59, 130, 246, 0.12);
+    --tile-doc-fg: #2563EB;
+    --tile-sheet-bg: rgba(16, 185, 129, 0.12);
+    --tile-sheet-fg: #059669;
+    --tile-code-bg: rgba(99, 102, 241, 0.12);
+    --tile-code-fg: #4F46E5;
+    --tile-archive-bg: rgba(245, 158, 11, 0.13);
+    --tile-archive-fg: #D97706;
+    --tile-default-bg: rgba(100, 116, 139, 0.12);
+    --tile-default-fg: #64748B;
+
+    /* Code Syntax Highlighting (Light) */
+    --code-bg: #F8FAFC;
+    --code-fg: #1E293B;
+    --code-kw: #7C3AED;
+    --code-str: #059669;
+    --code-fn: #2563EB;
+    --code-cm: #94A3B8;
+    --code-num: #D97706;
+
+    /* Motion & Shell Layout Tokens */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    --rail-width: 56px;
+    --sidebar-width: 244px;
+    --main-center-x: 50vw;
+    --main-avail-width: calc(100vw - 96px);
+    --on-accent-text: #FFFFFF;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 999px;
+
+    /* Legacy Aliases for Seamless Inheritance */
+    --primary-color: var(--accent);
+    --primary-color-rgb: var(--accent-rgb);
+    --primary-hover-color: var(--accent-hover);
+    --primary: var(--accent);
+    --success-color: var(--success);
+    --success-color-rgb: var(--success-rgb);
+    --danger-color: var(--danger);
+    --danger-color-rgb: var(--danger-rgb);
+    --danger-hover-color: var(--danger-hover);
+    --warning-color: var(--warning);
+    --selected-bg-color: var(--accent-soft);
+    --selection-box-bg: rgba(37, 99, 235, 0.16);
+    --selection-box-border: 1px solid rgba(37, 99, 235, 0.50);
+    --background-color: var(--surface-shell);
+    --sidebar-bg: var(--surface-canvas);
+    --main-content-bg: var(--surface-canvas);
+    --header-bg: var(--surface-canvas);
+    --text-color: var(--text-primary);
+    --text-light-color: var(--text-secondary);
+    --text-secondary-legacy: var(--text-secondary);
+    --border-color: var(--border-subtle);
+    --sort-icon-color: var(--text-muted);
+    --hover-bg-color: var(--surface-hover);
+    --item-hover-bg: var(--surface-hover);
+
+    --tooltip-bg: rgba(15, 23, 42, 0.94);
+    --tooltip-text: #F8FAFC;
     --tooltip-border: rgba(255, 255, 255, 0.14);
     --tooltip-shadow: 0 10px 26px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.12);
 }
 
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --primary-color: #3b82f6;
-    --primary-color-rgb: 59, 130, 246;
-    --primary-hover-color: #2563eb;
-    --success-color: #22c55e;
-    --success-color-rgb: 34, 197, 94;
-    --danger-color: #ef4444;
-    --danger-color-rgb: 239, 68, 68;
-    --danger-hover-color: #dc2626;
-    --warning-color: #f59e0b;
-    --selected-bg-color: rgba(59, 130, 246, 0.22);
-    --selection-box-bg: rgba(59, 130, 246, 0.25);
-    --selection-box-border: 1px solid rgba(96, 165, 250, 0.65);
-    --background-color: #0f172a;
-    --sidebar-bg: #162032;
-    --main-content-bg: #1e293b;
-    --text-color: #e2e8f0;
-    --text-light-color: #94a3b8;
-    --border-color: #334155;
-    --header-bg: #162032;
-    --sort-icon-color: #64748b;
-    --hover-bg-color: #273449;
-    --item-hover-bg: #263348;
 
-    --tooltip-bg: rgba(30, 41, 59, 0.96);
-    --tooltip-text: #f8fafc;
-    --tooltip-border: rgba(148, 163, 184, 0.28);
-    --tooltip-shadow: 0 12px 30px rgba(2, 6, 23, 0.6), 0 2px 8px rgba(2, 6, 23, 0.35);
+    /* Surface Elevation Hierarchy (Dark - Matte Charcoal Slate) */
+    --surface-shell: #15181F;
+    --surface-canvas: #1C2029;
+    --surface-subtle: #232834;
+    --surface-hover: #2B3140;
+    --surface-active: rgba(79, 134, 232, 0.16);
+    --surface-elevated: rgba(31, 36, 48, 0.96);
+    --surface-scrim: rgba(10, 12, 18, 0.68);
+
+    /* Typography Hierarchy */
+    --text-primary: #C6CDD8;
+    --text-secondary: #909AA8;
+    --text-tertiary: #6E7888;
+    --text-muted: #545E6E;
+
+    /* Hairline Borders & Elevation Shadows */
+    --border-subtle: rgba(210, 220, 238, 0.08);
+    --border-strong: rgba(210, 220, 238, 0.14);
+    --inner-highlight: rgba(210, 220, 238, 0.04);
+    --shadow-canvas: 0 2px 6px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    --shadow-elevated: 0 16px 40px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(210, 220, 238, 0.07);
+    --shadow-dock: 0 18px 42px rgba(0, 0, 0, 0.54), 0 0 0 1px rgba(210, 220, 238, 0.08);
+
+    /* Brand & Semantic Colors */
+    --accent: #4F86E8;
+    --accent-hover: #6496EE;
+    --accent-rgb: 79, 134, 232;
+    --accent-soft: rgba(79, 134, 232, 0.16);
+    --accent-border: rgba(100, 150, 238, 0.34);
+    --on-accent-text: #E6ECF5;
+
+    --success: #4BB88E;
+    --success-rgb: 75, 184, 142;
+    --success-soft: rgba(75, 184, 142, 0.14);
+    --warning: #D9A74A;
+    --warning-soft: rgba(217, 167, 74, 0.14);
+    --danger: #DC6B7E;
+    --danger-hover: #C8566A;
+    --danger-rgb: 220, 107, 126;
+    --danger-soft: rgba(220, 107, 126, 0.14);
+
+    /* File-Type Tinted Icon Tiles (Dark) */
+    --tile-folder-bg: rgba(79, 134, 232, 0.17);
+    --tile-folder-fg: #6A9BF0;
+    --tile-image-bg: rgba(163, 142, 235, 0.16);
+    --tile-image-fg: #A38EEB;
+    --tile-video-bg: rgba(224, 122, 140, 0.16);
+    --tile-video-fg: #E07A8C;
+    --tile-audio-bg: rgba(76, 192, 176, 0.15);
+    --tile-audio-fg: #4CC0B0;
+    --tile-pdf-bg: rgba(226, 125, 125, 0.16);
+    --tile-pdf-fg: #E27D7D;
+    --tile-doc-bg: rgba(106, 155, 240, 0.17);
+    --tile-doc-fg: #6A9BF0;
+    --tile-sheet-bg: rgba(84, 191, 150, 0.15);
+    --tile-sheet-fg: #54BF96;
+    --tile-code-bg: rgba(138, 148, 236, 0.16);
+    --tile-code-fg: #8A94EC;
+    --tile-archive-bg: rgba(223, 177, 90, 0.15);
+    --tile-archive-fg: #DFB15A;
+    --tile-default-bg: rgba(144, 154, 168, 0.14);
+    --tile-default-fg: #909AA8;
+
+    /* Code Syntax Highlighting (Dark) */
+    --code-bg: #171B23;
+    --code-fg: #C2CAD6;
+    --code-kw: #B58BE6;
+    --code-str: #5BBF96;
+    --code-fn: #6D9EF0;
+    --code-cm: #687385;
+    --code-num: #DFB15A;
+
+    /* Legacy Aliases */
+    --selection-box-bg: rgba(79, 134, 232, 0.24);
+    --selection-box-border: 1px solid rgba(100, 150, 238, 0.56);
+    --tooltip-bg: rgba(31, 36, 48, 0.97);
+    --tooltip-text: #C6CDD8;
+    --tooltip-border: rgba(210, 220, 238, 0.16);
+    --tooltip-shadow: 0 12px 30px rgba(0, 0, 0, 0.54), 0 2px 8px rgba(0, 0, 0, 0.32);
 }

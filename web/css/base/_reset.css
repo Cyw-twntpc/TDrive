@@ -1,11 +1,23 @@
+/* Prevent staggered color transitions when toggling Light/Dark themes */
+:root.theme-switching,
+:root.theme-switching *,
+:root.theme-switching *::before,
+:root.theme-switching *::after {
+    transition: none !important;
+}
+
 .hidden {
     display: none !important;
 }
 
-/* Custom Scrollbar Styling */
+.tabular {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Custom Slim Scrollbars */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -13,41 +25,48 @@
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 10px;
+    background: rgba(100, 116, 139, 0.26);
+    border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #9ca3af;
+    background: rgba(100, 116, 139, 0.48);
 }
 
-/* For specific containers that need even thinner scrollbars */
 .file-tree-nav::-webkit-scrollbar,
 .content-scroll-area::-webkit-scrollbar {
     width: 4px;
 }
 
-.unselectable { 
-    user-select: none; 
+.unselectable {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-* { 
-    box-sizing: border-box; 
-    margin: 0; 
-    padding: 0; 
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
     -webkit-app-region: no-drag;
 }
 
-body { 
-    font-family: var(--font-family-main); 
-    background-color: var(--background-color); 
-    color: var(--text-color); 
-    font-size: 16px; 
-    overflow: hidden; 
-    user-select: none; 
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    font-family: var(--font-family-main);
+    background-color: var(--surface-shell);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
     -webkit-user-select: none;
     -webkit-user-drag: none;
-    padding: 0;
+}
+
+button, input, select, textarea {
+    font-family: inherit;
 }
 
 input, textarea {
@@ -59,4 +78,58 @@ input, textarea {
 img, svg, .no-drag {
     -webkit-user-drag: none;
     pointer-events: none;
+}
+
+/* Sleek Custom Range Sliders */
+input[type="range"].audio-seek-slider,
+input[type="range"].audio-volume-slider,
+input[type="range"]#text-jump-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+    height: 16px;
+}
+
+input[type="range"].audio-seek-slider::-webkit-slider-runnable-track,
+input[type="range"].audio-volume-slider::-webkit-slider-runnable-track,
+input[type="range"]#text-jump-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+        to right,
+        var(--accent) 0%,
+        var(--accent) var(--fill-pct, 0%),
+        var(--border-strong) var(--fill-pct, 0%),
+        var(--border-strong) 100%
+    );
+}
+
+input[type="range"].audio-seek-slider::-webkit-slider-thumb,
+input[type="range"].audio-volume-slider::-webkit-slider-thumb,
+input[type="range"]#text-jump-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--surface-canvas);
+    border: 2px solid var(--accent);
+    margin-top: -4px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s var(--ease-spring);
+}
+
+input[type="range"].audio-seek-slider:hover::-webkit-slider-thumb,
+input[type="range"].audio-volume-slider:hover::-webkit-slider-thumb,
+input[type="range"]#text-jump-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }

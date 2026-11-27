@@ -20,29 +20,30 @@
 @import url('pages/_trash.css');
 @import url('pages/_floating_toolbar.css');
 @import url('pages/_transfer.css');
+
 /* Drag and Drop Visuals */
 .drop-target {
-    background-color: rgba(0, 122, 255, 0.1) !important;
-    outline: 2px dashed var(--primary-color) !important;
+    background-color: var(--accent-soft) !important;
+    outline: 2px dashed var(--accent) !important;
     outline-offset: -2px;
 }
 
 .file-item.dragging {
-    opacity: 0.4;
-    background-color: #f0f0f0;
+    opacity: 0.45;
+    background-color: var(--surface-hover);
 }
 
 #drag-ghost {
     position: absolute;
     top: -1000px;
     left: -1000px;
-    padding: 8px 12px;
-    background: var(--primary-color);
-    color: white;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 500;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    padding: 8px 14px;
+    background: var(--accent);
+    color: #FFFFFF;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: var(--shadow-elevated);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -50,7 +51,11 @@
     pointer-events: none;
     max-width: 300px;
 }
-#drag-ghost i { font-size: 16px; }
+
+#drag-ghost i {
+    font-size: 15px;
+}
+
 #drag-ghost span {
     white-space: nowrap;
     overflow: hidden;
