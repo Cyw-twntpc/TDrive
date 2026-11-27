@@ -46,6 +46,7 @@ class Bridge(QObject):
     
     # --- Window Action Signals ---
     window_action = Signal(str)
+    theme_changed = Signal(str)
 
     def __init__(self, tdrive_service: TDriveService, loop: asyncio.AbstractEventLoop, parent=None):
         super().__init__(parent)
@@ -581,12 +582,16 @@ class Bridge(QObject):
 
         if key == "theme":
             val = "dark" if val == "dark" else "light"
+            self._settings_manager.set(key, val)
+            self.theme_changed.emit(val)
+            return
 
         self._settings_manager.set(key, val)
 
     @Slot()
     def restore_default_settings(self):
         self._settings_manager.restore_defaults()
+        self.theme_changed.emit(self._settings_manager.get("theme", "light"))
         transfer_service = getattr(self._service, "_transfer_service", None)
         if transfer_service is not None:
             default_limit = self._settings_manager.get("maxConcurrentTransfers", 3)

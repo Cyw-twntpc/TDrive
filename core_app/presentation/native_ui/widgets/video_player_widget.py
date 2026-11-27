@@ -39,19 +39,19 @@ class LoadingSpinner(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Draw background ring
-        pen_bg = QPen(QColor(255, 255, 255, 40), 6)
+
+        # Draw subtle slate ring
+        pen_bg = QPen(QColor(255, 255, 255, 32), 4)
         painter.setPen(pen_bg)
-        painter.drawEllipse(5, 5, 50, 50)
-        
-        # Draw spinning arc
-        pen_fg = QPen(QColor(59, 130, 246, 255), 6)
+        painter.drawEllipse(6, 6, 48, 48)
+
+        # Draw spinning cerulean arc
+        pen_fg = QPen(QColor(79, 134, 232, 255), 4)
         pen_fg.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen_fg)
-        
-        rect = QRectF(5, 5, 50, 50)
-        painter.drawArc(rect, -self.angle * 16, 120 * 16)
+
+        rect = QRectF(6, 6, 48, 48)
+        painter.drawArc(rect, -self.angle * 16, 115 * 16)
 
 class LoadingOverlay(QWidget):
     def __init__(self, target_widget):
@@ -60,18 +60,21 @@ class LoadingOverlay(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(160, 140)
-        self.setStyleSheet("background: transparent;")
-        
+        self.setFixedSize(172, 138)
+        self.setStyleSheet(
+            "QWidget { background: rgba(21, 24, 31, 0.90); border: 1px solid rgba(210, 220, 238, 0.12); border-radius: 14px; }"
+        )
+
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(15)
-        
+        layout.setSpacing(12)
+
         self.spinner = LoadingSpinner()
+        self.spinner.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self.spinner, 0, Qt.AlignmentFlag.AlignHCenter)
-        
+
         self.label = QLabel(get_localized_text("main.loading", "載入中..."))
-        self.label.setStyleSheet("color: white; font-weight: bold; font-size: 16px; background: transparent;")
+        self.label.setStyleSheet("color: #C6CDD8; font-weight: 600; font-size: 13px; background: transparent; border: none;")
         layout.addWidget(self.label, 0, Qt.AlignmentFlag.AlignHCenter)
 
     def update_position(self):
@@ -95,30 +98,32 @@ class StateOverlay(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(250, 250)
-        self.setStyleSheet("background: transparent;")
-        
+        self.setFixedSize(140, 140)
+        self.setStyleSheet(
+            "QWidget { background: rgba(21, 24, 31, 0.76); border: 1px solid rgba(210, 220, 238, 0.14); border-radius: 70px; }"
+        )
+
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+
         self.icon_label = QLabel()
         self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._update_style(140)
+        self._update_style(52)
         layout.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        
+
         self.opacity_group = QSequentialAnimationGroup(self)
-        self.pause_anim = QPauseAnimation(400)
+        self.pause_anim = QPauseAnimation(360)
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_anim.setDuration(300)
+        self.fade_anim.setDuration(260)
         self.fade_anim.setStartValue(1.0)
         self.fade_anim.setEndValue(0.0)
         self.opacity_group.addAnimation(self.pause_anim)
         self.opacity_group.addAnimation(self.fade_anim)
 
         self.font_anim = QVariantAnimation(self)
-        self.font_anim.setDuration(150)
-        self.font_anim.setStartValue(110)
-        self.font_anim.setEndValue(140)
+        self.font_anim.setDuration(140)
+        self.font_anim.setStartValue(42)
+        self.font_anim.setEndValue(54)
         self.font_anim.valueChanged.connect(self._update_style)
 
         self.animation_group = QParallelAnimationGroup(self)
@@ -127,7 +132,9 @@ class StateOverlay(QWidget):
         self.animation_group.finished.connect(self.hide)
 
     def _update_style(self, size):
-        self.icon_label.setStyleSheet(f"color: rgba(220, 220, 220, 180); font-size: {size}px; font-weight: bold; background: transparent;")
+        self.icon_label.setStyleSheet(
+            f"color: rgba(208, 215, 226, 235); font-size: {size}px; font-weight: bold; background: transparent; border: none;"
+        )
 
     def update_position(self):
         if self.target_widget.isVisible() and self.target_widget.window().isVisible():
@@ -162,16 +169,16 @@ class VideoPlayerWidget(QWidget):
         self._init_vlc_player(stream_url)
 
     def _apply_base_styles(self) -> None:
-        """Apply root dark surface and tooltip stylesheets."""
+        """Apply root Obsidian Slate cinema surface and tooltip stylesheets."""
         self.setStyleSheet("""
-            VideoPlayerWidget { background-color: #000000; }
-            QToolTip { 
-                color: #ffffff; 
-                background-color: rgba(40, 44, 52, 230); 
-                border: 1px solid rgba(255, 255, 255, 40); 
-                padding: 4px 8px; 
-                border-radius: 4px;
-                font-family: 'Segoe UI', sans-serif;
+            VideoPlayerWidget { background-color: #0B0E14; }
+            QToolTip {
+                color: #C6CDD8;
+                background-color: rgba(28, 32, 41, 242);
+                border: 1px solid rgba(210, 220, 238, 36);
+                padding: 5px 9px;
+                border-radius: 6px;
+                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
             }
         """)
 
@@ -204,34 +211,38 @@ class VideoPlayerWidget(QWidget):
 
         self.time_preview_label = QLabel(self)
         self.time_preview_label.setStyleSheet(
-            "background-color: rgba(0, 0, 0, 200); color: white; padding: 3px 6px; border-radius: 4px; font-size: 12px;"
+            "background-color: rgba(28, 32, 41, 238); color: #C6CDD8; border: 1px solid rgba(210, 220, 238, 32); padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;"
         )
         self.time_preview_label.hide()
 
     def _build_top_bar(self, file_name: str) -> None:
         """Build the overlay header displaying the title and close button."""
         self.top_bar = QWidget()
-        self.top_bar.setStyleSheet("background-color: rgba(40, 44, 52, 220);")
+        self.top_bar.setStyleSheet(
+            "background-color: rgba(21, 24, 31, 228); border-bottom: 1px solid rgba(210, 220, 238, 18);"
+        )
         self.top_layout = QHBoxLayout(self.top_bar)
         self.top_layout.setContentsMargins(20, 10, 20, 10)
 
         self.title_label = QLabel(file_name)
-        self.title_label.setStyleSheet("color: #E0E0E0; font-weight: bold; font-size: 15px; background: transparent;")
+        self.title_label.setStyleSheet("color: #C6CDD8; font-weight: 600; font-size: 14px; background: transparent; border: none;")
 
         self.close_button = QPushButton("✕")
         self.close_button.setToolTip("返回")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.setFixedSize(32, 32)
         self.close_button.setStyleSheet("""
-            QPushButton { 
-                background: rgba(255, 255, 255, 0.1); 
-                color: #E0E0E0; 
-                font-size: 16px; 
-                border-radius: 6px; 
+            QPushButton {
+                background: rgba(210, 220, 238, 0.08);
+                color: #C6CDD8;
+                font-size: 15px;
+                border: 1px solid rgba(210, 220, 238, 0.12);
+                border-radius: 8px;
             }
-            QPushButton:hover { 
-                background: rgba(255, 68, 68, 0.8); 
-                color: white; 
+            QPushButton:hover {
+                background: rgba(225, 29, 72, 0.85);
+                border-color: rgba(251, 113, 133, 0.5);
+                color: #E6ECF5;
             }
         """)
         self.close_button.clicked.connect(self.close_player)
@@ -242,9 +253,11 @@ class VideoPlayerWidget(QWidget):
     def _build_bottom_bar(self) -> None:
         """Build transport controls: play/pause, seek slider, clock, and volume."""
         self.bottom_bar = QWidget()
-        self.bottom_bar.setStyleSheet("background-color: rgba(40, 44, 52, 220);")
+        self.bottom_bar.setStyleSheet(
+            "background-color: rgba(21, 24, 31, 228); border-top: 1px solid rgba(210, 220, 238, 18);"
+        )
         self.bottom_layout = QHBoxLayout(self.bottom_bar)
-        self.bottom_layout.setContentsMargins(20, 8, 20, 8)
+        self.bottom_layout.setContentsMargins(20, 10, 20, 10)
         self.bottom_layout.setSpacing(12)
 
         self.play_icon = "►"
@@ -254,15 +267,15 @@ class VideoPlayerWidget(QWidget):
         self.play_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.play_button.setFixedSize(36, 36)
         self.play_button.setStyleSheet("""
-            QPushButton { 
-                background: rgba(255, 255, 255, 0.1); 
-                color: #E0E0E0; 
-                font-size: 14px; 
-                border-radius: 6px; 
+            QPushButton {
+                background: #4F86E8;
+                color: #E6ECF5;
+                font-size: 13px;
+                border: none;
+                border-radius: 18px;
             }
-            QPushButton:hover { 
-                background: rgba(59, 130, 246, 0.8); 
-                color: white; 
+            QPushButton:hover {
+                background: #6496EE;
             }
         """)
         self.play_button.clicked.connect(self.toggle_play)
@@ -273,64 +286,65 @@ class VideoPlayerWidget(QWidget):
         self.position_slider.setMaximum(1000)
         self.position_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.position_slider.setStyleSheet("""
-            QSlider { background: transparent; height: 24px; }
+            QSlider { background: transparent; border: none; height: 24px; }
             QSlider::groove:horizontal {
-                border: none; height: 3px; background: rgba(255, 255, 255, 0.2); border-radius: 1px;
+                border: none; height: 4px; background: rgba(210, 220, 238, 0.18); border-radius: 2px;
             }
             QSlider::sub-page:horizontal {
-                background: #3b82f6; border-radius: 1px;
+                background: #4F86E8; border-radius: 2px;
             }
             QSlider::handle:horizontal {
-                background: #ffffff; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px;
+                background: #D0D7E2; border: 2px solid #4F86E8; width: 12px; height: 12px; margin: -5px 0; border-radius: 7px;
             }
             QSlider::handle:horizontal:hover {
-                background: #60a5fa; transform: scale(1.2);
+                background: #E6ECF5;
             }
         """)
         self.position_slider.sliderMoved.connect(self.handle_time_drag)
         self.bottom_layout.addWidget(self.position_slider)
 
         self.time_label = QLabel("00:00 / 00:00")
-        self.time_label.setFixedWidth(110)
+        self.time_label.setFixedWidth(118)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_label.setStyleSheet("color: #E0E0E0; font-family: 'Segoe UI', monospace; font-size: 13px; background: transparent;")
+        self.time_label.setStyleSheet("color: #909AA8; font-family: 'Consolas', monospace; font-size: 12.5px; background: transparent; border: none;")
         self.bottom_layout.addWidget(self.time_label)
 
         self.volume_button = QPushButton("🔊")
         self.volume_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.volume_button.setFixedSize(30, 30)
+        self.volume_button.setFixedSize(32, 32)
         self.volume_button.setStyleSheet("""
-            QPushButton { 
-                background: transparent; 
-                color: #E0E0E0; 
-                font-size: 16px; 
-                border-radius: 6px; 
+            QPushButton {
+                background: transparent;
+                color: #C6CDD8;
+                font-size: 15px;
+                border: none;
+                border-radius: 8px;
             }
-            QPushButton:hover { 
-                background: rgba(255, 255, 255, 0.1); 
+            QPushButton:hover {
+                background: rgba(210, 220, 238, 0.10);
             }
         """)
         self.volume_button.clicked.connect(self.toggle_mute)
         self.bottom_layout.addWidget(self.volume_button)
 
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
-        self.volume_slider.setFixedWidth(80)
+        self.volume_slider.setFixedWidth(84)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
         self.volume_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.volume_slider.setStyleSheet("""
-            QSlider { background: transparent; height: 20px; }
+            QSlider { background: transparent; border: none; height: 22px; }
             QSlider::groove:horizontal {
-                border: none; height: 3px; background: rgba(255, 255, 255, 0.2); border-radius: 1px;
+                border: none; height: 4px; background: rgba(210, 220, 238, 0.18); border-radius: 2px;
             }
             QSlider::sub-page:horizontal {
-                background: #10b981; border-radius: 1px;
+                background: #4F86E8; border-radius: 2px;
             }
             QSlider::handle:horizontal {
-                background: #ffffff; width: 10px; height: 10px; margin: -3px 0; border-radius: 5px;
+                background: #D0D7E2; border: 2px solid #4F86E8; width: 10px; height: 10px; margin: -4px 0; border-radius: 6px;
             }
             QSlider::handle:horizontal:hover {
-                background: #34d399;
+                background: #E6ECF5;
             }
         """)
         self.volume_slider.sliderMoved.connect(self.handle_volume_drag)

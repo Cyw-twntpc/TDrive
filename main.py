@@ -1,7 +1,15 @@
 import os
+import sys
+
 os.environ['QT_API'] = 'pyside6'
 
-import sys
+if sys.platform == 'win32':
+    # Mitigate Windows 11 DWM/MPO drag stutter while keeping VBlank sync intact
+    existing_flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '').split()
+    if '--disable-direct-composition' not in existing_flags:
+        existing_flags.append('--disable-direct-composition')
+    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ' '.join(existing_flags)
+
 import ctypes
 import asyncio
 import logging
