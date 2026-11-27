@@ -215,6 +215,7 @@ const AudioPlayerHandler = {
             window.addEventListener('touchcancel', finishSeek);
             seekSlider.addEventListener('blur', finishSeek);
             seekSlider.addEventListener('input', () => {
+                seekSlider.style.setProperty('--fill-pct', `${(Number(seekSlider.value) / 10).toFixed(1)}%`);
                 if (AudioPlayerHandler._durationMs > 0) {
                     const previewMs = Math.round((Number(seekSlider.value) / 1000) * AudioPlayerHandler._durationMs);
                     const curEl = document.getElementById('audio-time-current');
@@ -612,13 +613,17 @@ const AudioPlayerHandler = {
                 ? Math.min(1000, Math.round((AudioPlayerHandler._currentMs / AudioPlayerHandler._durationMs) * 1000))
                 : 0;
             seekSlider.value = String(ratio);
+            seekSlider.style.setProperty('--fill-pct', `${(ratio / 10).toFixed(1)}%`);
         }
     },
 
     _renderVolumeUI() {
         const muteBtn = document.getElementById('audio-mute-btn');
         const volSlider = document.getElementById('audio-volume-slider');
-        if (volSlider) volSlider.value = String(AudioPlayerHandler._volume);
+        if (volSlider) {
+            volSlider.value = String(AudioPlayerHandler._volume);
+            volSlider.style.setProperty('--fill-pct', `${AudioPlayerHandler._volume}%`);
+        }
         if (muteBtn) {
             const icon = muteBtn.querySelector('i');
             if (icon) {
