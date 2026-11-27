@@ -1,7 +1,7 @@
 ﻿#text-modal .large-modal {
-    max-width: 90vw;
-    width: 90vw;
-    height: 90vh;
+    max-width: 88vw;
+    width: 88vw;
+    height: 86vh;
     display: flex;
     flex-direction: column;
 }
@@ -34,12 +34,12 @@
 #text-modal #text-code-block {
     display: block;
     margin: 0;
-    padding: 16px;
-    background: #fff;
-    color: #333;
-    font-family: 'Consolas', 'Courier New', monospace;
+    padding: 18px 22px;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.6;
     min-height: 100%;
     white-space: pre;
     tab-size: 4;
@@ -52,15 +52,15 @@
     margin: 0;
 }
 
-/* Plain text: clean light reading area */
+/* Plain text: clean reading surface */
 #text-modal #text-code-block.text-preview-plaintext {
     margin: 0;
     padding: 24px 32px;
-    background: #fafafa;
-    color: #333;
-    font-family: 'Segoe UI', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    background: var(--code-bg);
+    color: var(--text-primary);
+    font-family: var(--font-family-main);
     font-size: 14px;
-    line-height: 1.8;
+    line-height: 1.85;
     min-height: 100%;
     tab-size: 4;
 }
@@ -77,5 +77,3 @@
     contain-intrinsic-size: auto 1.5em;
     white-space: pre;
 }
-
-

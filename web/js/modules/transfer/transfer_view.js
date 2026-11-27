@@ -42,21 +42,38 @@ const TransferView = {
         });
 
         panel.classList.remove('status-completed', 'transfer-active', 'upload-active', 'download-active', 'mixed-active');
-        
+        const statusIconEl = panel.querySelector('.transfer-status-svg-icon');
+        const railBadgeEl = document.getElementById('rail-transfer-badge');
+
         if (activeCount > 0) {
             panel.classList.add('transfer-active');
-            if (activeUploads > 0 && activeDownloads === 0) panel.classList.add('upload-active');
-            else if (activeDownloads > 0 && activeUploads === 0) panel.classList.add('download-active');
-            else panel.classList.add('mixed-active');
+            if (activeUploads > 0 && activeDownloads === 0) {
+                panel.classList.add('upload-active');
+                if (statusIconEl) statusIconEl.className = 'fas fa-cloud-upload-alt transfer-status-svg-icon';
+            } else if (activeDownloads > 0 && activeUploads === 0) {
+                panel.classList.add('download-active');
+                if (statusIconEl) statusIconEl.className = 'fas fa-cloud-download-alt transfer-status-svg-icon';
+            } else {
+                panel.classList.add('mixed-active');
+                if (statusIconEl) statusIconEl.className = 'fas fa-sync-alt fa-spin transfer-status-svg-icon';
+            }
 
+            if (railBadgeEl) {
+                railBadgeEl.textContent = String(activeCount);
+                railBadgeEl.classList.remove('hidden');
+            }
             titleEl.textContent = window.t('transfer.status_active').replace('{count}', activeCount);
             speedEl.textContent = (currentSpeed > 0) ? `${TransferManager.UIManager.formatBytes(currentSpeed)}/s` : '-- B/s';
         } else if (allTasks.some(t => t.status === 'paused')) {
             panel.classList.add('transfer-active');
+            if (statusIconEl) statusIconEl.className = 'fas fa-pause transfer-status-svg-icon';
+            if (railBadgeEl) railBadgeEl.classList.add('hidden');
             titleEl.textContent = window.t('transfer.status_paused');
             speedEl.textContent = '-- B/s';
         } else if ((totalSize > 0 && totalProgress >= totalSize) || (activeCount === 0 && TransferView._showCompletedState)) {
             panel.classList.add('status-completed');
+            if (statusIconEl) statusIconEl.className = 'fas fa-check-circle transfer-status-svg-icon';
+            if (railBadgeEl) railBadgeEl.classList.add('hidden');
             titleEl.textContent = window.t('transfer.status_completed');
             speedEl.textContent = '-- B/s'; 
         } else {
@@ -77,6 +94,10 @@ const TransferView = {
     setPanelToReadyState() {
         const panel = document.getElementById('sidebar-transfer-status');
         panel.classList.remove('status-completed', 'status-failed', 'transfer-active', 'upload-active', 'download-active', 'mixed-active');
+        const statusIconEl = panel.querySelector('.transfer-status-svg-icon');
+        if (statusIconEl) statusIconEl.className = 'fas fa-exchange-alt transfer-status-svg-icon';
+        const railBadgeEl = document.getElementById('rail-transfer-badge');
+        if (railBadgeEl) railBadgeEl.classList.add('hidden');
         document.getElementById('sidebar-transfer-title').innerHTML = '&nbsp;';
         document.getElementById('sidebar-transfer-speed').textContent = '-- B/s';
         document.getElementById('sidebar-transfer-bar').style.transform = 'scaleX(0)';
@@ -173,8 +194,8 @@ const TransferView = {
 
     renderEmptyState(container) {
         container.innerHTML = `
-            <div class="empty-state" style="text-align:center; padding:40px; color:#9ca3af;">
-                <i class="fas fa-tasks" style="font-size:48px; margin-bottom:15px; display:block;"></i>
+            <div class="empty-state">
+                <i class="fas fa-tasks"></i>
                 <p>${window.t('transfer.no_transfers')}</p>
             </div>
         `;
@@ -294,9 +315,12 @@ const TransferView = {
         const pathInfo = (task.type === 'upload') 
             ? `<i class="fas fa-file-upload"></i> ${TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_unknown'))}` 
             : `<i class="fas fa-cloud-download-alt"></i> ` + window.t('transfer.download_to').replace('{path}', TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_default')));
+        const tileClass = typeof TransferManager.UIManager.getFileTileClass === 'function'
+            ? TransferManager.UIManager.getFileTileClass(task.name, false)
+            : 'tile-default';
         el.innerHTML = `
             <div class="card-row-main">
-                <div class="file-icon-lg"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
+                <div class="file-icon-lg icon-tile ${tileClass}"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="card-content">
                     <div class="file-title">${TransferManager.UIManager.escapeHtml(task.name)}</div>
                     <div class="file-path">${pathInfo}</div>
@@ -319,12 +343,12 @@ const TransferView = {
         el.dataset.id = task.id;
         el.dataset.type = task.type;
         el.innerHTML = `
-            <div style="display:flex; align-items:center; gap:15px;">
-                <div style="color:var(--danger-color); font-size:20px;"><i class="fas fa-exclamation-circle"></i></div>
-                <div class="failed-info"><span style="font-weight:600; font-size:14px;">${TransferManager.UIManager.escapeHtml(task.name)}</span><span class="failed-msg">${TransferManager.UIManager.escapeHtml(task.message || window.t('transfer.reason_unknown'))}</span></div>
+            <div class="failed-card-left">
+                <div class="icon-tile tile-pdf"><i class="fas fa-exclamation-circle"></i></div>
+                <div class="failed-info"><span class="failed-name">${TransferManager.UIManager.escapeHtml(task.name)}</span><span class="failed-msg">${TransferManager.UIManager.escapeHtml(task.message || window.t('transfer.reason_unknown'))}</span></div>
             </div>
             <div class="card-actions">
-                <button class="icon-btn btn-retry" style="color:var(--primary-color);"><i class="fas fa-redo"></i></button>
+                <button class="icon-btn btn-retry" style="color:var(--accent);"><i class="fas fa-redo"></i></button>
                 <button class="icon-btn btn-cancel"><i class="fas fa-times"></i></button>
             </div>`;
         TransferView._bindCardActions(el, task);
@@ -496,12 +520,15 @@ const TransferView = {
             if (isUp) btnTitle = isValid ? window.t('transfer.go_to_cloud') : window.t('transfer.folder_not_exists');
             else btnTitle = isValid ? window.t('transfer.show_in_explorer') : window.t('transfer.file_removed');
 
+            const tileClass = typeof TransferManager.UIManager.getFileTileClass === 'function'
+                ? TransferManager.UIManager.getFileTileClass(task.name, false)
+                : 'tile-default';
             row.className = itemClass;
             row.innerHTML = `
-                <div class="sm-icon"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
+                <div class="sm-icon icon-tile ${tileClass}"><i class="${TransferManager.UIManager.getFileTypeIcon(task.name)}"></i></div>
                 <div class="sm-name">
                     ${TransferManager.UIManager.escapeHtml(task.name)}
-                    <div style="font-size:12px; color:#9ca3af; margin-top:2px;">
+                    <div class="history-path-sub">
                         ${isUp ? window.t('transfer.upload_to').replace('{path}', TransferManager.UIManager.escapeHtml(cloudPath)) : window.t('transfer.download_to').replace('{path}', TransferManager.UIManager.escapeHtml(task.localPath || window.t('transfer.path_default')))}
                     </div>
                 </div>

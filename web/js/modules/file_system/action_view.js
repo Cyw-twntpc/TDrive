@@ -158,27 +158,31 @@ const ActionView = {
                 }
             }
 
-            let visualHtml = `<i class="${iconClass}" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>`;
+            const tileClass = typeof UIManager.getFileTileClass === 'function'
+                ? UIManager.getFileTileClass(item.name, item.type === 'folder')
+                : (item.type === 'folder' ? 'tile-folder' : 'tile-default');
+            let visualHtml = `<div class="icon-tile ${tileClass} details-hero-tile"><i class="${iconClass}"></i></div>`;
             if (item.type === 'file' && appState.currentThumbnails && appState.currentThumbnails[item.id]) {
-                visualHtml = `<img src="data:image/jpeg;base64,${appState.currentThumbnails[item.id]}" style="max-width: 120px; max-height: 120px; border-radius: 8px; margin-bottom: 12px; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">`;
+                visualHtml = `<img src="data:image/jpeg;base64,${appState.currentThumbnails[item.id]}" class="details-hero-thumb">`;
             }
 
             contentHTML = `
-                <div style="text-align: center; margin-bottom: 20px;">
+                <div class="details-hero">
                     ${visualHtml}
+                    <h3 class="details-hero-title">${UIManager.escapeHtml(item.name)}</h3>
                 </div>
-                <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
-                    <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_name')}</td><td style="word-break: break-all;">${UIManager.escapeHtml(item.name)}</td></tr>
-                    <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_type')}</td><td>${typeStr}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_size')}</td><td>${sizeStr}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_date')}</td><td>${dateStr}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_path')}</td><td style="word-break: break-all;">${UIManager.escapeHtml(pathStr)}</td></tr>
+                <table class="details-table">
+                    <tr><td>${window.t('dialog.detail_name')}</td><td>${UIManager.escapeHtml(item.name)}</td></tr>
+                    <tr><td>${window.t('dialog.detail_type')}</td><td>${typeStr}</td></tr>
+                    <tr><td>${window.t('dialog.detail_size')}</td><td class="tabular">${sizeStr}</td></tr>
+                    <tr><td>${window.t('dialog.detail_date')}</td><td class="tabular">${dateStr}</td></tr>
+                    <tr><td>${window.t('dialog.detail_path')}</td><td>${UIManager.escapeHtml(pathStr)}</td></tr>
                 </table>
-                <div id="adv-details-container" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; min-height: 40px;">
-                    <div id="adv-details-spinner" style="text-align: center; color: #999;">
+                <div id="adv-details-container" class="details-adv-container">
+                    <div id="adv-details-spinner" class="details-spinner">
                         <i class="fas fa-spinner fa-spin"></i> ${window.t('main.loading')}
                     </div>
-                    <table id="adv-details-table" style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem; display: none;">
+                    <table id="adv-details-table" class="details-table" style="display: none;">
                     </table>
                 </div>
             `;
@@ -202,7 +206,7 @@ const ActionView = {
                         let rows = '';
                         for (const [key, value] of Object.entries(response.metadata)) {
                             const translatedKey = window.t(`meta.${key}`) || key;
-                            rows += `<tr><td style="color: #666; width: 90px;">${UIManager.escapeHtml(translatedKey)}:</td><td style="word-break: break-all;">${UIManager.escapeHtml(value)}</td></tr>`;
+                            rows += `<tr><td>${UIManager.escapeHtml(translatedKey)}:</td><td>${UIManager.escapeHtml(value)}</td></tr>`;
                         }
                         table.innerHTML = rows;
                         table.style.display = 'table';
@@ -241,14 +245,14 @@ const ActionView = {
             });
 
             contentHTML = `
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <i class="fas fa-layer-group" style="font-size: 56px; margin-bottom: 12px; color: var(--primary-color);"></i>
-                    <h3 style="margin: 0;">${items.length} ${window.t('dialog.items_selected')}</h3>
+                <div class="details-hero">
+                    <div class="icon-tile tile-folder details-hero-tile"><i class="fas fa-layer-group"></i></div>
+                    <h3 class="details-hero-title">${items.length} ${window.t('dialog.items_selected')}</h3>
                 </div>
-                <table style="width: 100%; text-align: left; border-spacing: 0 10px; font-size: 0.95rem;">
-                    <tr><td style="color: #666; width: 90px;">${window.t('dialog.detail_folders')}</td><td>${folderCount}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_files')}</td><td>${fileCount}</td></tr>
-                    <tr><td style="color: #666;">${window.t('dialog.detail_total_size')}</td><td>${UIManager.formatBytes(totalSize)}</td></tr>
+                <table class="details-table">
+                    <tr><td>${window.t('dialog.detail_folders')}</td><td class="tabular">${folderCount}</td></tr>
+                    <tr><td>${window.t('dialog.detail_files')}</td><td class="tabular">${fileCount}</td></tr>
+                    <tr><td>${window.t('dialog.detail_total_size')}</td><td class="tabular">${UIManager.formatBytes(totalSize)}</td></tr>
                 </table>
             `;
             

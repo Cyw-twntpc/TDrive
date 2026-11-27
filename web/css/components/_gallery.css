@@ -1,13 +1,18 @@
-/* --- Gallery Modal Styles --- */
+/* --- Cinema Gallery Modal Styles --- */
 .gallery-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
+    inset: 0;
     width: 100vw;
     height: 100vh;
-    background-color: rgba(0, 0, 0, 0.95);
+    background-color: rgba(11, 14, 20, 0.94);
     z-index: 10000;
-    color: white;
+    color: #D2D9E4;
+    animation: gallery-fade 0.2s ease;
+}
+
+@keyframes gallery-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .gallery-overlay.hidden {
@@ -23,46 +28,50 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 20px;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(10px);
+    padding: 0 22px;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
     z-index: 10004;
-    transition: transform 0.3s ease;
+    transition: transform 0.28s var(--ease-out);
 }
 
 #gallery-filename {
-    font-size: 16px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
+    color: #D2D9E4;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 #gallery-close-btn {
-    background: transparent;
-    border: none;
-    color: #ccc;
-    font-size: 24px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #E2E8F0;
+    font-size: 16px;
     cursor: pointer;
-    transition: color 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.16s ease, color 0.16s ease;
 }
 
 #gallery-close-btn:hover {
-    color: white;
+    background: rgba(225, 29, 72, 0.85);
+    color: #E6ECF5;
 }
 
 .gallery-content {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 60px 10% 100px 10%; 
+    padding: 64px 8% 104px 8%;
     overflow: hidden;
-    transition: padding 0.3s ease;
+    transition: padding 0.28s var(--ease-out);
     z-index: 10001;
 }
 
@@ -80,92 +89,83 @@
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    transition: opacity 0.2s;
+    border-radius: 8px;
+    transition: opacity 0.2s ease, transform 0.25s var(--ease-out);
     opacity: 1;
-    cursor: zoom-in; 
-    z-index: 20; 
+    cursor: zoom-in;
+    z-index: 20;
 }
 
 #gallery-image.loading {
-    opacity: 0.5;
+    opacity: 0.45;
 }
 
 /* Navigation Buttons */
 .gallery-content .nav-btn {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 10%;
-    background: transparent;
-    border: none;
-    color: white;
-    font-size: 32px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #D2D9E4;
+    font-size: 18px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 0.2s;
+    transition: opacity 0.2s ease, background-color 0.16s ease, transform 0.16s ease;
     z-index: 30;
-    opacity: 0;
-    text-shadow: 0 2px 15px rgba(0,0,0,0.8);
+    opacity: 0.25;
 }
 
-.gallery-content .nav-btn.left { left: 0; }
-.gallery-content .nav-btn.right { right: 0; }
+.gallery-content .nav-btn.left { left: 20px; }
+.gallery-content .nav-btn.right { right: 20px; }
+
+.gallery-content:hover .nav-btn {
+    opacity: 0.85;
+}
 
 .gallery-content .nav-btn:hover {
     opacity: 1;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0.3) 0%, transparent 70%);
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: translateY(-50%) scale(1.06);
 }
 
 .gallery-filmstrip {
     position: absolute;
     bottom: 0;
     left: 0;
-    height: 100px;
+    height: 96px;
     width: 100%;
     margin: 0;
-    background-color: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(10px);
-    border-radius: 0;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0.84), transparent);
     display: flex;
     align-items: center;
-    padding: 0 10px;
-    gap: 12px;
+    padding: 0 18px;
+    gap: 10px;
     overflow-x: auto;
     overflow-y: hidden;
     white-space: nowrap;
     z-index: 10004;
-    transition: transform 0.3s ease;
+    transition: transform 0.28s var(--ease-out);
     flex-shrink: 0;
-    
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
-}
-
-.gallery-filmstrip::-webkit-scrollbar {
-    height: 6px;
-}
-.gallery-filmstrip::-webkit-scrollbar-track {
-    background: transparent;
-}
-.gallery-filmstrip::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.3);
-    border-radius: 3px;
-}
-.gallery-filmstrip::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.5);
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
 .filmstrip-item {
-    height: 80px;
-    width: 80px;
+    height: 68px;
+    width: 68px;
     flex-shrink: 0;
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
-    opacity: 0.6;
-    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    opacity: 0.55;
+    transition: all 0.2s var(--ease-out);
     border: 2px solid transparent;
     transform-origin: center center;
 }
@@ -178,17 +178,16 @@
 
 .filmstrip-item:hover {
     opacity: 1;
-    transform: scale(1.1);
-    z-index: 10; 
+    transform: scale(1.08);
+    z-index: 10;
 }
 
 .filmstrip-item.active {
     opacity: 1;
-    border-color: var(--primary-color);
-    transform: scale(1.15);
+    border-color: #3B82F6;
+    transform: scale(1.12);
     z-index: 10;
-    border-width: 3px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
 }
 
 /* Fullscreen Mode */
@@ -211,9 +210,9 @@
 }
 
 .gallery-overlay.fullscreen-mode .nav-btn {
-    opacity: 0; 
+    opacity: 0;
 }
 
 .gallery-overlay.fullscreen-mode .gallery-content:hover .nav-btn {
-    opacity: 1;
+    opacity: 0.9;
 }

@@ -113,8 +113,15 @@ const FileListView = {
         if (!FileListView.floatingToolbar) return;
 
         const count = AppState.selectedItems.length;
+        const countEl = document.getElementById('ft-selected-count');
         if (count > 0) {
             FileListView.floatingToolbar.classList.add('visible');
+            if (countEl) {
+                const tpl = window.t('file_list.selected_count');
+                countEl.textContent = (tpl && tpl !== 'file_list.selected_count')
+                    ? tpl.replace('{count}', String(count))
+                    : `${count}`;
+            }
             
             // Rename is only allowed for single selection
             FileListView.ftRenameBtn.disabled = (count !== 1);
@@ -283,10 +290,15 @@ const FileListView = {
         FileListView._bindItemDoubleClick(itemEl, item, isFolder);
 
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
-        
+        const tileClass = typeof UIManager.getFileTileClass === 'function'
+            ? UIManager.getFileTileClass(item.name, isFolder)
+            : (isFolder ? 'tile-folder' : 'tile-default');
+
         itemEl.innerHTML = `
             <div class="grid-thumb-container">
-                <i class="${iconClass} grid-thumb-icon"></i>
+                <div class="icon-tile ${tileClass}">
+                    <i class="${iconClass} grid-thumb-icon"></i>
+                </div>
                 <img class="grid-thumb-img hidden" draggable="false" />
             </div>
             <div class="grid-name" data-tooltip="${UIManager.escapeHtml(item.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(item.name)}</div>
@@ -312,15 +324,19 @@ const FileListView = {
 
         // Determine the correct icon based on item type or upload status.
         const iconClass = isFolder ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
+        const tileClass = typeof UIManager.getFileTileClass === 'function'
+            ? UIManager.getFileTileClass(item.name, isFolder)
+            : (isFolder ? 'tile-folder' : 'tile-default');
         let iconHtml = `<i class="${iconClass} list-thumb-icon"></i>`;
-        
+
         // Thumbnail Image (Hidden by default)
         let thumbHtml = `<img class="list-thumb-img hidden" draggable="false" />`;
 
         if (item.isUploading) {
-             iconHtml = `<i class="fas fa-spinner fa-spin list-thumb-icon"></i>`;
-             thumbHtml = ''; // No thumb while uploading
+            iconHtml = `<i class="fas fa-spinner fa-spin list-thumb-icon"></i>`;
+            thumbHtml = ''; // No thumb while uploading
         }
+        const tileHtml = `<div class="icon-tile ${tileClass}">${iconHtml}${thumbHtml}</div>`;
 
         // If in search mode, generate and display the item's relative path.
         let pathHtml = '';
@@ -363,8 +379,7 @@ const FileListView = {
         itemEl.innerHTML = `
             <div class="col file-item-col name">
                 <div class="name-col-main">
-                    ${iconHtml}
-                    ${thumbHtml}
+                    ${tileHtml}
                     <div class="name-and-path">
                         <div class="name-wrapper">${nameHtml}</div>
                         ${pathHtml} 

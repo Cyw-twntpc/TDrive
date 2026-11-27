@@ -1,7 +1,7 @@
-/* Specific column widths for File List */
+/* File List & Grid View */
 .file-list-section {
     position: relative;
-    padding: 0 24px;
+    padding: 0 20px 88px;
     flex-grow: 1;
     overflow-y: auto;
     display: flex;
@@ -9,33 +9,63 @@
     user-select: none;
 }
 
+.file-list-body {
+    display: flex;
+    flex-direction: column;
+    padding-top: 4px;
+}
+
 .file-item-col.name {
-    flex: 2 1 0px; 
-    min-width: 150px;
+    flex: 2 1 0px;
+    min-width: 180px;
 }
 
 .file-item-col.date {
-    flex: 1; 
-    flex-shrink: 0; 
-    min-width: 160px;
+    flex: 1;
+    flex-shrink: 0;
+    min-width: 150px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
 .file-item-col.type {
-    flex: 0.5; 
-    flex-shrink: 0; 
-    min-width: 100px;
+    flex: 0.6;
+    flex-shrink: 0;
+    min-width: 110px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
 }
 
 .file-item-col.size {
-    flex: 0.5; 
-    flex-shrink: 0; 
+    flex: 0.5;
+    flex-shrink: 0;
     justify-content: flex-end;
-    min-width: 100px;
+    min-width: 96px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
-/* 樂觀更新的上傳中樣式 */
+/* Optimistic upload shimmer state */
 .list-item.is-uploading {
-    opacity: 0.6;
+    opacity: 0.7;
+    position: relative;
+    overflow: hidden;
+}
+
+.list-item.is-uploading::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.08), transparent);
+    animation: upload-shimmer 1.8s infinite linear;
+    pointer-events: none;
+}
+
+@keyframes upload-shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
 }
 
 .list-item.is-uploading .item-action-btn {
@@ -43,34 +73,12 @@
 }
 
 .list-item.in-transfer {
-    opacity: 0.6;
+    opacity: 0.65;
     pointer-events: none;
 }
 
-.list-item .transfer-overlay-icon {
-    position: absolute;
-    left: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 12px;
-    color: white;
-    background-color: rgba(0, 0, 0, 0.6);
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.list-item .transfer-overlay-icon .fa-spin {
-    animation: spin 1s linear infinite;
-}
-
 @keyframes spin {
-    100% {
-        transform: rotate(360deg);
-    }
+    100% { transform: rotate(360deg); }
 }
 
 .list-item.flash-success {
@@ -83,19 +91,19 @@
 
 @keyframes flash-green {
     0% { background-color: transparent; }
-    30% { background-color: rgba(40, 167, 69, 0.4); }
+    30% { background-color: var(--success-soft); }
     100% { background-color: transparent; }
 }
 
 @keyframes flash-red {
     0% { background-color: transparent; }
-    30% { background-color: rgba(220, 53, 69, 0.35); }
+    30% { background-color: var(--danger-soft); }
     100% { background-color: transparent; }
 }
 
 .search-result-path {
-    font-size: 12px;
-    color: var(--text-light-color);
+    font-size: 11.5px;
+    color: var(--text-tertiary);
     margin-top: 2px;
     white-space: nowrap;
     overflow: hidden;
@@ -109,78 +117,96 @@
     flex-shrink: 0;
 }
 
-/* --- Grid View Styles --- */
+/* --- Grid View --- */
 .file-list-body.grid-view {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 16px;
-    padding: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+    gap: 14px;
+    padding: 14px 4px;
     align-content: start;
 }
 
 .list-item.grid-item {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding: 8px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background-color: transparent;
-    transition: background-color 0.2s, box-shadow 0.2s;
-    height: 180px; /* Fixed height for uniformity */
+    align-items: stretch;
+    padding: 10px;
+    margin-top: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-subtle);
+    transition: transform 0.2s var(--ease-out), box-shadow 0.2s ease, border-color 0.16s ease, background-color 0.16s ease;
+    height: auto;
     gap: 8px;
 }
 
 .list-item.grid-item:hover {
-    background-color: #f0f6ff;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transform: translateY(-2px);
+    background-color: var(--surface-canvas);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-canvas);
 }
 
 .list-item.grid-item.selected {
-    background-color: var(--selected-bg-color);
-    border-color: rgba(0, 122, 255, 0.3);
+    background-color: var(--accent-soft);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .grid-thumb-container {
     width: 100%;
-    height: 120px;
+    aspect-ratio: 16 / 10;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    background-color: #f8f9fa; /* Placeholder bg */
-    border-radius: 6px;
+    background-color: var(--surface-canvas);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
     position: relative;
 }
 
+.grid-thumb-container .icon-tile {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    font-size: 22px;
+    transition: transform 0.25s var(--ease-out);
+}
+
+.list-item.grid-item:hover .grid-thumb-container .icon-tile,
+.list-item.grid-item:hover .grid-thumb-img {
+    transform: scale(1.04);
+}
+
 .grid-thumb-img {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
+    transition: transform 0.25s var(--ease-out);
 }
 
 .grid-thumb-icon {
-    font-size: 48px;
-    color: var(--text-light-color);
-}
-
-.grid-thumb-icon.folder-icon {
-    color: var(--primary-color);
+    font-size: 24px;
 }
 
 .grid-name {
     font-size: 13px;
-    color: var(--text-color);
-    text-align: center;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: left;
     width: 100%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding: 0 4px;
+    padding: 0 2px;
 }
 
 .list-item.grid-item.dragging {
-    opacity: 0.5;
-    transform: scale(0.95);
+    opacity: 0.45;
+    transform: scale(0.96);
 }

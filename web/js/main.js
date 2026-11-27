@@ -11,11 +11,34 @@ document.addEventListener('DOMContentLoaded', () => {
         TransferView.updateMainFileListUI();
     }
     
+    /**
+     * Synchronize CSS layout variables with the visible main-content pane so fixed docks
+     * (Audio Studio bar/window and floating toolbar) stay centered over the active workspace.
+     */
+    function syncMainContentMetrics() {
+        const mainContent = document.querySelector('.main-content');
+        if (!mainContent) return;
+        const rect = mainContent.getBoundingClientRect();
+        if (rect && rect.width > 0) {
+            const rootStyle = document.documentElement.style;
+            rootStyle.setProperty('--main-center-x', `${(rect.left + rect.width / 2).toFixed(1)}px`);
+            rootStyle.setProperty('--main-avail-width', `${rect.width.toFixed(1)}px`);
+        }
+    }
+
     function updateNavState() {
-        if (AppState.currentPage !== 'files') {
-            navRail.classList.add('expanded');
+        const contextSidebar = document.getElementById('context-sidebar');
+        const isFilesPage = AppState.currentPage === 'files';
+        if (navRail) {
+            navRail.classList.toggle('expanded', !isFilesPage);
+        }
+        if (contextSidebar) {
+            contextSidebar.classList.toggle('hidden', !isFilesPage);
+        }
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(syncMainContentMetrics);
         } else {
-            navRail.classList.remove('expanded');
+            syncMainContentMetrics();
         }
     }
 
@@ -188,15 +211,40 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        navRail.addEventListener('click', (e) => {
-            if (AppState.currentPage !== 'files') return;
-            if (e.target.closest('.nav-item')) return;
-
-            navRail.classList.add('temp-disabled');
-            navRail.addEventListener('mouseenter', () => {
-                navRail.classList.remove('temp-disabled');
-            }, { once: true });
-        });
+        const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
+        const sidebarExpandBtn = document.getElementById('sidebar-expand-btn');
+        const contextSidebar = document.getElementById('context-sidebar');
+        if (sidebarCollapseBtn && contextSidebar) {
+            sidebarCollapseBtn.addEventListener('click', () => {
+                contextSidebar.classList.add('collapsed');
+                sidebarExpandBtn?.classList.remove('hidden');
+                if (typeof requestAnimationFrame === 'function') {
+                    requestAnimationFrame(syncMainContentMetrics);
+                } else {
+                    syncMainContentMetrics();
+                }
+            });
+        }
+        if (sidebarExpandBtn && contextSidebar) {
+            sidebarExpandBtn.addEventListener('click', () => {
+                contextSidebar.classList.remove('collapsed');
+                sidebarExpandBtn.classList.add('hidden');
+                if (typeof requestAnimationFrame === 'function') {
+                    requestAnimationFrame(syncMainContentMetrics);
+                } else {
+                    syncMainContentMetrics();
+                }
+            });
+        }
+        if (contextSidebar) {
+            contextSidebar.addEventListener('transitionend', () => syncMainContentMetrics());
+        }
+        const mainContent = document.querySelector('.main-content');
+        if (mainContent && typeof ResizeObserver === 'function') {
+            const mainObserver = new ResizeObserver(() => syncMainContentMetrics());
+            mainObserver.observe(mainContent);
+        }
+        window.addEventListener('resize', syncMainContentMetrics);
         
         if (closeTransferPageBtn) {
             closeTransferPageBtn.addEventListener('click', () => switchPage('files'));
@@ -379,6 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadUserDisplayInfo();
         
         setupEventListeners();
+        syncMainContentMetrics();
         
         setupGlobalDragAndDrop();
     }

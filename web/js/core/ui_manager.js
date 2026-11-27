@@ -21,6 +21,33 @@ const UIManager = {
         document.getElementById('interaction-lock-overlay')?.classList.toggle('visible', isLocked);
     },
     
+    getFileTileClass(fileName, isFolder = false) {
+        if (isFolder) return 'tile-folder';
+        if (!fileName || !fileName.includes('.')) return 'tile-default';
+        const extension = fileName.split('.').pop().toLowerCase();
+        switch (extension) {
+            case 'jpg': case 'jpeg': case 'png': case 'gif': case 'webp':
+                return 'tile-image';
+            case 'mp4': case 'mkv': case 'avi': case 'mov': case 'wmv': case 'flv': case 'webm': case 'm4v': case 'ts': case 'mts': case 'm2ts':
+                return 'tile-video';
+            case 'mp3': case 'wav': case 'flac': case 'ogg': case 'opus': case 'm4a': case 'wma': case 'aac':
+                return 'tile-audio';
+            case 'pdf':
+                return 'tile-pdf';
+            case 'doc': case 'docx': case 'odt': case 'txt': case 'md':
+                return 'tile-doc';
+            case 'xls': case 'xlsx': case 'ods': case 'csv':
+                return 'tile-sheet';
+            case 'ppt': case 'pptx': case 'odp':
+            case 'zip': case 'rar': case '7z': case 'tar': case 'gz':
+                return 'tile-archive';
+            case 'py': case 'js': case 'ts': case 'html': case 'css': case 'json': case 'xml': case 'yaml': case 'yml': case 'sql': case 'sh':
+                return 'tile-code';
+            default:
+                return 'tile-default';
+        }
+    },
+
     getFileTypeIcon(fileName) {
         const extension = fileName.split('.').pop().toLowerCase();
         if (fileName.includes('.') === false) return 'fa-solid fa-file';
@@ -122,6 +149,10 @@ const UIManager = {
             if (!e.target.closest('.popover') && !e.target.closest('[data-popover]')) {
                 document.querySelectorAll('.popover').forEach(p => p.classList.add('hidden'));
             }
+        });
+
+        document.getElementById('settings-close-btn')?.addEventListener('click', () => {
+            document.getElementById('settings-popover')?.classList.add('hidden');
         });
     },
 

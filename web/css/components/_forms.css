@@ -1,27 +1,30 @@
 .modal-input {
     width: 100%;
     padding: 10px 12px;
-    font-size: 16px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    font-size: 14px;
+    border-radius: 9px;
+    border: 1px solid var(--border-strong);
+    background-color: var(--surface-subtle);
+    color: var(--text-primary);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .modal-input:focus {
-    border-color: var(--primary-color);
+    background-color: var(--surface-canvas);
+    border-color: var(--accent);
     outline: none;
-    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .modal-input.input-error,
 .form-input.input-error {
-    border-color: var(--danger-color) !important;
-    box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.15) !important;
+    border-color: var(--danger) !important;
+    box-shadow: 0 0 0 3px var(--danger-soft) !important;
 }
 
 .modal-error {
-    color: var(--danger-color) !important;
-    font-size: 14px;
+    color: var(--danger) !important;
+    font-size: 13px;
     margin-top: 8px;
     min-height: 20px;
     display: none;
@@ -35,16 +38,33 @@
 
 .modal-error::before {
     content: "\f071";
-    font-family: "Font Awesome 5 Free";
+    font-family: "Font Awesome 6 Free", "Font Awesome 5 Free";
     font-weight: 900;
 }
 
-/* Toggle Switch CSS */
+select {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background-color: var(--surface-canvas);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+}
+
+select:focus {
+    border-color: var(--accent);
+}
+
+/* Toggle Switch */
 .switch {
     position: relative;
     display: inline-block;
-    width: 44px;
-    height: 24px;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
 }
 
 .switch input {
@@ -56,41 +76,39 @@
 .slider {
     position: absolute;
     cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #ccc;
-    transition: .4s;
+    inset: 0;
+    background-color: var(--border-strong);
+    transition: background-color 0.2s ease;
 }
 
 .slider:before {
     position: absolute;
     content: "";
-    height: 18px;
-    width: 18px;
+    height: 16px;
+    width: 16px;
     left: 3px;
     bottom: 3px;
-    background-color: white;
-    transition: .4s;
+    background-color: #FFFFFF;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s var(--ease-spring);
 }
 
 .slider.round {
-    border-radius: 24px;
+    border-radius: 999px;
 }
 
 .slider.round:before {
     border-radius: 50%;
 }
 
-input:checked+.slider {
-    background-color: var(--primary-color);
+input:checked + .slider {
+    background-color: var(--accent);
 }
 
-input:focus+.slider {
-    box-shadow: 0 0 1px var(--primary-color);
+input:focus + .slider {
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-input:checked+.slider:before {
-    transform: translateX(20px);
+input:checked + .slider:before {
+    transform: translateX(18px);
 }

@@ -1,11 +1,14 @@
+/* Single-Row 58px Top Bar */
 .top-bar {
+    min-height: 58px;
     display: flex;
-    flex-direction: column;
-    padding: 12px 24px;
-    border-bottom: 1px solid var(--border-color);
-    background-color: var(--header-bg);
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--surface-canvas);
     flex-shrink: 0;
-    gap: 12px;
+    gap: 16px;
 }
 
 .top-row,
@@ -13,116 +16,148 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    width: 100%;
+    gap: 12px;
 }
 
-/* 搜尋樣式 */
+.top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* Unified Pill Search Bar */
 .search-container {
     display: flex;
     align-items: center;
-    height: 40px;
-    flex: 1 1 50%;
-    min-width: 350px;
-    max-width: 800px;
+    height: 36px;
+    width: 340px;
+    padding: 0 4px 0 12px;
+    border-radius: var(--radius-pill);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border-subtle);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+.search-container:focus-within {
+    background-color: var(--surface-canvas);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .search-bar {
     display: flex;
     align-items: center;
     flex-grow: 1;
-    padding: 0 12px;
-    background-color: #f0f2f5;
-    border-radius: 8px 0 0 8px;
+    min-width: 0;
     height: 100%;
     position: relative;
 }
 
 .search-bar i {
-    color: #888;
+    color: var(--text-tertiary);
+    font-size: 13px;
 }
 
 .search-bar input {
     border: none;
     background: transparent;
     outline: none;
-    margin-left: 10px;
-    font-size: 15px;
+    margin-left: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
     width: 100%;
     height: 100%;
 }
 
+.search-bar input::placeholder {
+    color: var(--text-muted);
+}
+
 .search-scope-btn {
-    background-color: #e1e4e8;
-    border: none;
-    height: 100%;
-    padding: 0 16px;
-    font-size: 14px;
-    font-family: inherit;
-    color: var(--text-color);
+    height: 26px;
+    padding: 0 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-subtle);
+    background-color: var(--surface-canvas);
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-weight: 500;
     outline: none;
     cursor: pointer;
-    border-radius: 0 8px 8px 0;
     flex-shrink: 0;
-    transition: background-color 0.2s;
+    white-space: nowrap;
+    transition: border-color 0.16s ease, color 0.16s ease, background-color 0.16s ease;
 }
 
 .search-scope-btn:hover {
-    background-color: #d1d5db;
+    border-color: var(--accent-border);
+    color: var(--accent);
 }
 
 .user-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     position: relative;
 }
 
-/* 使用者頭像按鈕樣式 */
-#user-btn img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    border-radius: 50%;
-}
-
-/* 麵包屑樣式 */
+/* Breadcrumbs */
 .breadcrumb-nav {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 18px;
+    gap: 4px;
+    font-size: 13.5px;
+    min-width: 0;
+    overflow: hidden;
     user-select: none;
 }
 
 .breadcrumb-nav a {
-    color: #57606a;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
     text-decoration: none;
-    transition: color 0.2s;
+    white-space: nowrap;
+    transition: background-color 0.14s ease, color 0.14s ease;
 }
 
 .breadcrumb-nav a:hover {
-    color: var(--primary-color);
+    background-color: var(--surface-hover);
+    color: var(--text-primary);
 }
 
 .breadcrumb-nav span.separator {
-    color: #aab1b9;
+    color: var(--text-muted);
+    font-size: 11px;
 }
 
 .breadcrumb-nav .breadcrumb-current {
-    color: #1c2025;
-    font-weight: 700;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* 搜尋結果中，麵包屑的醒目提示樣式 */
 .breadcrumb-search-term {
-    color: var(--primary-color);
-    font-weight: 700;
-    background-color: var(--selected-bg-color);
+    color: var(--accent);
+    font-weight: 600;
+    background-color: var(--accent-soft);
     padding: 2px 8px;
     border-radius: 6px;
 }
 
 .action-buttons {
     display: flex;
-    gap: 10px;
+    gap: 8px;
 }

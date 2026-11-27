@@ -7,8 +7,8 @@
     <title data-i18n="main.window_title"></title>
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css?v=6">
     <link rel="stylesheet" href="vendor/highlightjs/github.min.css?v=11.11.1">
-    <link rel="stylesheet" href="css/style.css?v=8">
-    <link rel="stylesheet" href="css/themes/_dark.css?v=1">
+    <link rel="stylesheet" href="css/style.css?v=9">
+    <link rel="stylesheet" href="css/themes/_dark.css?v=2">
     <script src="vendor/highlightjs/highlight.min.js?v=11.11.1"></script>
     <script type="text/javascript" src="js/qwebchannel.js?v=6"></script>
     <script type="text/javascript">
@@ -16,11 +16,9 @@
             if (typeof qt !== 'undefined') {
                 new QWebChannel(qt.webChannelTransport, function(channel) {
                     window.tdrive_bridge = channel.objects.tdrive_bridge;
-                    console.log("QWebChannel bridge initialized.");
                     document.dispatchEvent(new Event("TDriveBridgeReady"));
                 });
             } else {
-                console.warn("QWebChannel object 'qt' not found. Running in UI testing mode.");
                 document.dispatchEvent(new Event("TDriveBridgeReady"));
             }
         });
@@ -28,42 +26,64 @@
 </head>
 <body oncontextmenu="return false;">
     <div class="app-container">
-        <aside class="sidebar">
-            <div class="logo unselectable">
-                <img src="title.png" alt="TDrive Logo">
+        <!-- Fixed 56px Left Navigation Rail -->
+        <nav id="nav-rail" class="nav-rail">
+            <div class="rail-group">
+                <ul class="nav-items">
+                    <li class="nav-item active" data-page="files" data-i18n-tooltip="main.nav_files" data-tooltip-pos="right">
+                        <i class="fas fa-folder"></i>
+                        <span class="nav-text" data-i18n="main.nav_files"></span>
+                    </li>
+                    <li class="nav-item" data-page="transfer" data-i18n-tooltip="main.nav_transfer" data-tooltip-pos="right">
+                        <i class="fas fa-exchange-alt"></i>
+                        <span class="nav-text" data-i18n="main.nav_transfer"></span>
+                        <span id="rail-transfer-badge" class="rail-badge hidden">0</span>
+                    </li>
+                    <li class="nav-item disabled" data-page="shared" data-i18n-tooltip="main.coming_soon" data-tooltip-pos="right">
+                        <i class="fas fa-share-alt"></i>
+                        <span class="nav-text" data-i18n="main.nav_shared"></span>
+                    </li>
+                    <li class="nav-item" data-page="trash" data-i18n-tooltip="main.nav_trash" data-tooltip-pos="right">
+                        <i class="fas fa-trash-alt"></i>
+                        <span class="nav-text" data-i18n="main.nav_trash"></span>
+                    </li>
+                </ul>
             </div>
-            
-            <div class="sidebar-body">
-                <!-- Nav Rail -->
-                <nav id="nav-rail" class="nav-rail">
-                    <ul class="nav-items">
-                        <li class="nav-item active" data-page="files">
-                            <i class="fas fa-folder"></i>
-                            <span class="nav-text" data-i18n="main.nav_files"></span>
-                        </li>
-                        <li class="nav-item" data-page="transfer">
-                            <i class="fas fa-exchange-alt"></i>
-                            <span class="nav-text" data-i18n="main.nav_transfer"></span>
-                        </li>
-                        <li class="nav-item disabled" data-page="shared" data-i18n-tooltip="main.coming_soon" data-tooltip-pos="right">
-                            <i class="fas fa-share-alt"></i>
-                            <span class="nav-text" data-i18n="main.nav_shared"></span>
-                        </li>
-                        <li class="nav-item" data-page="trash">
-                            <i class="fas fa-trash-alt"></i>
-                            <span class="nav-text" data-i18n="main.nav_trash"></span>
-                        </li>
-                    </ul>
-                </nav>
 
-                <!-- Sidebar Content -->
+            <div class="rail-group">
+                <button id="theme-quick-toggle-btn" class="rail-util-btn" data-i18n-tooltip="main.toggle_theme" data-tooltip-pos="right">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <div class="rail-divider"></div>
+                <button id="help-btn" class="rail-util-btn" data-popover="help-popover">
+                    <i class="fas fa-question-circle"></i>
+                </button>
+                <button id="settings-btn" class="rail-util-btn" data-popover="settings-popover">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <button id="user-btn" data-popover="user-popover">
+                    <i class="fas fa-user-circle"></i>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Collapsible 244px Context Sidebar (Files Page) -->
+        <aside class="sidebar" id="context-sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-title unselectable" data-i18n="main.nav_files"></span>
+                <button id="sidebar-collapse-btn" class="icon-ghost-btn" data-i18n-tooltip="main.collapse_sidebar" data-tooltip-pos="right">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-body">
                 <div class="sidebar-content">
                     <div class="sidebar-actions">
                         <button id="sidebar-new-btn" class="btn-primary-block" data-popover="new-menu-popover">
                             <i class="fas fa-plus"></i> <span data-i18n="main.btn_new"></span>
                         </button>
                         <div id="new-menu-popover" class="popover hidden unselectable">
-                            <ul style="list-style: none; padding: 0;">
+                            <ul>
                                 <li id="new-upload-file-btn" class="popover-item">
                                     <i class="fas fa-file-upload"></i> <span data-i18n="main.new_upload_file"></span>
                                 </li>
@@ -76,20 +96,21 @@
                             </ul>
                         </div>
                     </div>
-                    
+
                     <nav class="file-tree-nav">
+                        <div class="tree-section-label" data-i18n="main.section_folders"></div>
                         <ul id="file-tree"></ul>
                     </nav>
-                    
+
                     <div id="sidebar-transfer-status" class="sidebar-transfer-status">
                         <div class="sidebar-transfer-left">
-                             <div class="transfer-icon-wrapper"></div>
+                            <div class="transfer-icon-wrapper">
+                                <i class="fas fa-exchange-alt transfer-status-svg-icon"></i>
+                            </div>
                         </div>
                         <div class="sidebar-transfer-right">
                             <div class="transfer-info-row">
                                 <span id="sidebar-transfer-title"></span>
-                            </div>
-                            <div class="transfer-info-row">
                                 <span id="sidebar-transfer-speed">-- B/s</span>
                             </div>
                             <div class="sidebar-progress-container">
@@ -101,13 +122,20 @@
             </div>
         </aside>
 
+        <!-- Inset Rounded Main Canvas -->
         <main class="main-content">
             <div id="global-progress-bar"><div class="runner"></div></div>
-            
+
             <!-- Files Page -->
             <div id="page-files" class="page-view active">
                 <header class="top-bar">
-                    <div class="top-row">
+                    <div class="top-bar-left">
+                        <button id="sidebar-expand-btn" class="icon-ghost-btn hidden" data-i18n-tooltip="main.expand_sidebar" data-tooltip-pos="bottom">
+                            <i class="fas fa-bars"></i>
+                        </button>
+                        <nav id="breadcrumb" class="breadcrumb-nav"></nav>
+                    </div>
+                    <div class="top-bar-right">
                         <div class="search-container">
                             <div class="search-bar">
                                 <i class="fas fa-search"></i>
@@ -115,17 +143,7 @@
                             </div>
                             <button id="search-scope-toggle" class="search-scope-btn" data-i18n-tooltip="main.search_scope_title"><span data-i18n="main.search_scope_all"></span></button>
                         </div>
-                        <div class="user-actions">
-                            <button id="view-toggle-btn" class="btn-icon" data-i18n-tooltip="main.view_toggle_title"><i class="fas fa-th-large"></i></button>
-                            <button id="help-btn" class="btn-icon" data-popover="help-popover"><i class="fas fa-question-circle"></i></button>
-                            <button id="settings-btn" class="btn-icon" data-popover="settings-popover"><i class="fas fa-cog"></i></button>
-                            <button id="user-btn" class="btn-icon" data-popover="user-popover">
-                                <i class="fas fa-user-circle"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="bottom-row">
-                        <nav id="breadcrumb" class="breadcrumb-nav"></nav>
+                        <button id="view-toggle-btn" class="btn-icon" data-i18n-tooltip="main.view_toggle_title"><i class="fas fa-th-large"></i></button>
                     </div>
                 </header>
 
@@ -160,9 +178,10 @@
                     </div>
                     <div id="selection-box" class="selection-box"></div>
                 </section>
-                
-                <!-- Floating Action Toolbar -->
+
+                <!-- Floating Action Dock -->
                 <div id="file-floating-toolbar" class="floating-toolbar">
+                    <span id="ft-selected-count" class="dock-count-pill tabular"></span>
                     <button class="toolbar-btn" id="ft-download-btn" data-i18n-tooltip="menu.download"><i class="fas fa-download"></i></button>
                     <button class="toolbar-btn" id="ft-move-btn" data-i18n-tooltip="menu.move"><i class="fas fa-arrow-right-to-bracket"></i></button>
                     <button class="toolbar-btn" id="ft-rename-btn" data-i18n-tooltip="menu.rename"><i class="fas fa-pencil-alt"></i></button>
@@ -178,23 +197,27 @@
             <!-- Trash Page -->
             <div id="page-trash" class="page-view hidden">
                 <header class="top-bar">
-                    <div class="top-row">
+                    <div class="top-bar-left">
                         <div class="trash-header-title">
-                            <i class="fas fa-trash-alt"></i> <span data-i18n="main.nav_trash"></span> <span class="trash-tip" data-i18n="trash.tip"></span>
+                            <i class="fas fa-trash-alt"></i> <span data-i18n="main.nav_trash"></span>
                         </div>
                     </div>
-                    <div class="bottom-row">
-                        <div id="trash-bulk-actions" class="action-buttons hidden">
-                            <button id="trash-restore-btn" class="btn"><i class="fas fa-undo-alt"></i> <span data-i18n="trash.btn_restore"></span></button>
-                            <button id="trash-delete-btn" class="btn btn-danger"><i class="fas fa-trash-alt"></i> <span data-i18n="trash.btn_delete"></span></button>
-                        </div>
-                        <div class="action-buttons">
-                            <button id="empty-trash-btn" class="btn">
-                                <i class="fas fa-dumpster"></i> <span data-i18n="trash.btn_empty"></span>
-                            </button>
-                        </div>
+                    <div class="top-bar-right">
+                        <button id="empty-trash-btn" class="btn">
+                            <i class="fas fa-dumpster"></i> <span data-i18n="trash.btn_empty"></span>
+                        </button>
                     </div>
                 </header>
+                <div class="trash-policy-bar">
+                    <div class="trash-policy-text">
+                        <i class="fas fa-clock"></i>
+                        <span class="trash-tip" data-i18n="trash.tip"></span>
+                    </div>
+                    <div id="trash-bulk-actions" class="action-buttons hidden">
+                        <button id="trash-restore-btn" class="btn btn-secondary"><i class="fas fa-undo-alt"></i> <span data-i18n="trash.btn_restore"></span></button>
+                        <button id="trash-delete-btn" class="btn btn-ghost-danger"><i class="fas fa-trash-alt"></i> <span data-i18n="trash.btn_delete"></span></button>
+                    </div>
+                </div>
                 <section class="file-list-section">
                     <div class="data-list-header trash-list-header trash-header">
                         <div class="sortable" data-sort="name">
@@ -222,11 +245,17 @@
 
             <!-- Transfer Dashboard -->
             <div id="page-transfer" class="page-view hidden">
+                <header class="top-bar">
+                    <div class="top-bar-left">
+                        <div class="trash-header-title">
+                            <i class="fas fa-exchange-alt"></i> <span data-i18n="main.nav_transfer"></span>
+                        </div>
+                    </div>
+                </header>
                 <div class="transfer-dashboard-body">
-                    
-                    <!-- Hero Section -->
-                    <div class="hero-section">
 
+                    <!-- Hero KPI Section -->
+                    <div class="hero-section">
                         <div class="hero-content">
                             <div class="hero-stat-block">
                                 <h2 id="hero-total-speed">-- B/s</h2>
@@ -248,7 +277,7 @@
                         </div>
                     </div>
 
-                    <!-- Tabs -->
+                    <!-- Segmented Tabs -->
                     <div class="tabs-container">
                         <div class="tab-item active" data-tab="uploads" data-i18n="transfer.tab_uploads"></div>
                         <div class="tab-item" data-tab="downloads" data-i18n="transfer.tab_downloads"></div>
@@ -257,25 +286,22 @@
 
                     <!-- Dynamic Content -->
                     <div id="transfer-live-view">
-                        <!-- Active Tasks -->
                         <div id="section-active" class="task-section">
-                            <div class="task-group-title" style="color:var(--primary);">
+                            <div class="task-group-title is-active">
                                 <span data-i18n="transfer.section_active"></span> (<span id="count-active">0</span>) <div class="group-line"></div>
                             </div>
                             <div id="list-active" class="task-list-container"></div>
                         </div>
 
-                        <!-- Failed Tasks -->
                         <div id="section-failed" class="task-section hidden">
-                            <div class="task-group-title" style="color:var(--danger);">
-                                <span data-i18n="transfer.section_failed"></span> (<span id="count-failed">0</span>) 
-                                <div class="group-line"></div> 
+                            <div class="task-group-title is-failed">
+                                <span data-i18n="transfer.section_failed"></span> (<span id="count-failed">0</span>)
+                                <div class="group-line"></div>
                                 <button id="retry-all-btn" class="retry-all-btn" data-i18n="transfer.btn_retry_all"></button>
                             </div>
                             <div id="list-failed" class="task-list-container"></div>
                         </div>
 
-                        <!-- Queued Tasks -->
                         <div id="section-queued" class="task-section">
                             <div class="task-group-title">
                                 <span data-i18n="transfer.section_queued"></span> (<span id="count-queued">0</span>) <div class="group-line"></div>
@@ -304,10 +330,9 @@
 
                 </div>
             </div>
-
         </main>
     </div>
-    
+
     <div id="help-popover" class="popover hidden unselectable">
         <h3 data-i18n="dialog.help_title"></h3>
         <p data-i18n="dialog.help_intro"></p>
@@ -320,56 +345,75 @@
         </ul>
     </div>
 
-    <div id="settings-popover" class="popover hidden unselectable">
-        <h3 data-i18n="dialog.settings_title"></h3>
-        <div class="setting-item">
-            <label for="language-select" data-i18n="dialog.settings_language"></label>
-            <select id="language-select">
-                <option value="zh-TW">繁體中文</option>
-                <option value="en-US">English</option>
-            </select>
+    <!-- Centered Structured Settings Modal -->
+    <div id="settings-popover" class="popover settings-modal-popover hidden unselectable">
+        <div class="settings-modal-header">
+            <h3 data-i18n="dialog.settings_title"></h3>
+            <button id="settings-close-btn" class="icon-ghost-btn"><i class="fas fa-times"></i></button>
         </div>
-        <div class="setting-item">
-            <label for="theme-select" data-i18n="dialog.settings_theme"></label>
-            <select id="theme-select">
-                <option value="light" data-i18n="dialog.theme_light"></option>
-                <option value="dark" data-i18n="dialog.theme_dark"></option>
-            </select>
-        </div>
-        <div class="setting-item">
-            <label for="concurrency-select" data-i18n="dialog.settings_concurrency"></label>
-            <select id="concurrency-select">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3" selected>3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-                <option value="6">6</option>
-                <option value="7">7</option>
-                <option value="8">8</option>
-                <option value="9">9</option>
-                <option value="10">10</option>
-            </select>
-        </div>
-        <div class="setting-item">
-            <label data-i18n="dialog.settings_default_dl"></label>
-            <div class="setting-control-group">
-                <label class="switch">
-                    <input type="checkbox" id="use-default-download-path-toggle">
-                    <span class="slider round"></span>
-                </label>
-                <button id="set-default-download-path-btn" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;" data-i18n="dialog.btn_select_path"></button>
+        <div class="settings-modal-body">
+            <div>
+                <div class="settings-group-title" data-i18n="dialog.settings_appearance"></div>
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="language-select" data-i18n="dialog.settings_language"></label>
+                        <select id="language-select">
+                            <option value="zh-TW">繁體中文</option>
+                            <option value="en-US">English</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="theme-select" data-i18n="dialog.settings_theme"></label>
+                        <select id="theme-select">
+                            <option value="light" data-i18n="dialog.theme_light"></option>
+                            <option value="dark" data-i18n="dialog.theme_dark"></option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="settings-group-title" data-i18n="dialog.settings_transfer_storage"></div>
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="concurrency-select" data-i18n="dialog.settings_concurrency"></label>
+                        <select id="concurrency-select">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3" selected>3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label data-i18n="dialog.settings_default_dl"></label>
+                        <div class="setting-control-group">
+                            <label class="switch">
+                                <input type="checkbox" id="use-default-download-path-toggle">
+                                <span class="slider round"></span>
+                            </label>
+                            <button id="set-default-download-path-btn" class="btn btn-secondary" style="height: 28px; padding: 0 10px; font-size: 12px;" data-i18n="dialog.btn_select_path"></button>
+                        </div>
+                    </div>
+                    <div id="default-download-path-display" class="setting-path-display"><span data-i18n="dialog.path_not_set"></span></div>
+                </div>
             </div>
         </div>
-        <div id="default-download-path-display" class="setting-path-display"><span data-i18n="dialog.path_not_set"></span></div>
-        <button id="save-settings-btn" class="btn" style="margin-top: 20px; width: 100%;" data-i18n="dialog.btn_save_settings"></button>
-        <button id="restore-settings-btn" class="btn btn-danger" style="margin-top: 10px; width: 100%;" data-i18n="dialog.btn_restore_settings">恢復預設值</button>
+        <div class="settings-modal-footer">
+            <button id="restore-settings-btn" class="btn btn-ghost-danger" data-i18n="dialog.btn_restore_settings">恢復預設值</button>
+            <button id="save-settings-btn" class="btn" data-i18n="dialog.btn_save_settings"></button>
+        </div>
     </div>
 
     <div id="user-popover" class="popover hidden unselectable">
         <h3 data-i18n="dialog.user_info_title"></h3>
         <div id="user-info-content"></div>
-        <button id="logout-btn" class="btn btn-danger" style="margin-top: 20px; width: 100%;" data-i18n="dialog.btn_logout"></button>
+        <button id="logout-btn" class="btn btn-ghost-danger" style="margin-top: 6px; width: 100%;" data-i18n="dialog.btn_logout"></button>
     </div>
 
     <div id="confirm-modal" class="modal-overlay hidden unselectable">
@@ -439,7 +483,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Text Preview Modal -->
     <div id="text-modal" class="modal-overlay hidden">
         <div class="modal-content large-modal">
@@ -518,15 +562,15 @@
         </div>
     </div>
 
-    <div id="blocking-overlay" class="modal-overlay hidden" style="z-index: 9998; background-color: rgba(90, 90, 90, 0.2);">
-        <!-- This is a generic, content-less overlay to block UI interactions -->
+    <div id="blocking-overlay" class="modal-overlay hidden" style="z-index: 9998; background-color: rgba(15, 23, 42, 0.22);">
+        <!-- Generic overlay to block UI interactions -->
     </div>
 
-    <div id="connection-lost-overlay" class="modal-overlay hidden" style="z-index: 10000; background-color: rgba(0, 0, 0, 0.6);">
-        <div class="loading-content" style="color: white; text-align: center;">
-            <i class="fas fa-wifi-slash" style="font-size: 48px; margin-bottom: 20px;"></i>
-            <p style="font-size: 20px; font-weight: 500;"><span data-i18n="main.conn_lost"></span></p>
-            <p style="font-size: 16px; color: #ccc; margin-top: 8px;"><span data-i18n="main.conn_reconnecting"></span></p>
+    <div id="connection-lost-overlay" class="modal-overlay hidden" style="z-index: 10000; background-color: rgba(2, 6, 23, 0.72);">
+        <div class="loading-content" style="color: #F8FAFC; text-align: center;">
+            <i class="fas fa-wifi-slash" style="font-size: 48px; margin-bottom: 18px; color: var(--danger);"></i>
+            <p style="font-size: 18px; font-weight: 600;"><span data-i18n="main.conn_lost"></span></p>
+            <p style="font-size: 14px; color: #94A3B8; margin-top: 8px;"><span data-i18n="main.conn_reconnecting"></span></p>
         </div>
     </div>
 
@@ -554,7 +598,7 @@
         <div class="audio-studio-window-body" id="audio-studio-window-body">
             <div class="audio-studio-header">
                 <div class="audio-studio-title-group">
-                    <i class="fas fa-compact-disc audio-studio-logo-icon"></i>
+                    <span class="audio-studio-brand-badge"><i class="fas fa-compact-disc audio-studio-logo-icon"></i></span>
                     <h2 data-i18n="music.studio_title"></h2>
                 </div>
                 <div class="audio-studio-search-box">
@@ -634,44 +678,48 @@
             <div id="audio-bar-queue-list" class="audio-bar-queue-list"></div>
         </div>
 
-        <!-- Stage 2 & Shared Bottom Transport Bar -->
+        <!-- Stage 2 & Shared 2-Tier Pro Transport Deck -->
         <div class="audio-transport-bar" id="audio-transport-bar">
-            <div class="audio-bar-track-info">
-                <div class="audio-bar-art">
-                    <div class="audio-eq-bars" id="audio-bar-eq">
-                        <span></span><span></span><span></span>
+            <div class="audio-progress-row">
+                <span id="audio-time-current" class="audio-time-label">00:00</span>
+                <input type="range" id="audio-seek-slider" class="audio-seek-slider" min="0" max="1000" value="0">
+                <span id="audio-time-total" class="audio-time-label">00:00</span>
+            </div>
+
+            <div class="audio-transport-main">
+                <div class="audio-bar-track-info">
+                    <div class="audio-bar-art">
+                        <div class="audio-eq-bars" id="audio-bar-eq">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <i class="fas fa-music audio-bar-idle-icon"></i>
                     </div>
-                    <i class="fas fa-music audio-bar-idle-icon"></i>
+                    <div class="audio-bar-meta">
+                        <div id="audio-bar-title" class="audio-bar-title" data-i18n="music.no_track_playing" data-tooltip-truncated="true"></div>
+                        <div id="audio-bar-subtitle" class="audio-bar-subtitle"></div>
+                    </div>
                 </div>
-                <div class="audio-bar-meta">
-                    <div id="audio-bar-title" class="audio-bar-title" data-i18n="music.no_track_playing" data-tooltip-truncated="true"></div>
-                    <div id="audio-bar-subtitle" class="audio-bar-subtitle"></div>
-                </div>
-            </div>
 
-            <div class="audio-bar-center">
-                <div class="audio-transport-buttons">
-                    <button id="audio-prev-btn" class="audio-icon-btn"><i class="fas fa-step-backward"></i></button>
-                    <button id="audio-play-pause-btn" class="audio-play-btn"><i class="fas fa-play"></i></button>
-                    <button id="audio-next-btn" class="audio-icon-btn"><i class="fas fa-step-forward"></i></button>
+                <div class="audio-bar-center">
+                    <div class="audio-transport-buttons">
+                        <button id="audio-prev-btn" class="audio-icon-btn"><i class="fas fa-step-backward"></i></button>
+                        <button id="audio-play-pause-btn" class="audio-play-btn"><i class="fas fa-play"></i></button>
+                        <button id="audio-next-btn" class="audio-icon-btn"><i class="fas fa-step-forward"></i></button>
+                    </div>
                 </div>
-                <div class="audio-progress-row">
-                    <span id="audio-time-current" class="audio-time-label">00:00</span>
-                    <input type="range" id="audio-seek-slider" class="audio-seek-slider" min="0" max="1000" value="0">
-                    <span id="audio-time-total" class="audio-time-label">00:00</span>
-                </div>
-            </div>
 
-            <div class="audio-bar-right">
-                <button id="audio-loop-btn" class="audio-icon-btn sm" data-loop-state="off" data-i18n-tooltip="music.mode_loop_off"><i class="fas fa-redo"></i></button>
-                <div class="audio-volume-group">
-                    <button id="audio-mute-btn" class="audio-icon-btn sm"><i class="fas fa-volume-up"></i></button>
-                    <input type="range" id="audio-volume-slider" class="audio-volume-slider" min="0" max="100" value="80">
+                <div class="audio-bar-right">
+                    <button id="audio-loop-btn" class="audio-icon-btn sm" data-loop-state="off" data-i18n-tooltip="music.mode_loop_off"><i class="fas fa-redo"></i></button>
+                    <div class="audio-volume-group">
+                        <button id="audio-mute-btn" class="audio-icon-btn sm"><i class="fas fa-volume-up"></i></button>
+                        <input type="range" id="audio-volume-slider" class="audio-volume-slider" min="0" max="100" value="80">
+                    </div>
+                    <span class="audio-bar-divider" aria-hidden="true"></span>
+                    <button id="audio-bar-open-window-btn" class="audio-studio-expand-btn">
+                        <i class="fas fa-list-ul"></i> <span data-i18n="music.btn_playlists_library"></span>
+                    </button>
+                    <button id="audio-stop-btn" class="audio-icon-btn sm danger" data-i18n-tooltip="music.stop_close"><i class="fas fa-times"></i></button>
                 </div>
-                <button id="audio-bar-open-window-btn" class="audio-studio-expand-btn">
-                    <i class="fas fa-list-ul"></i> <span data-i18n="music.btn_playlists_library"></span> <i class="fas fa-chevron-up"></i>
-                </button>
-                <button id="audio-stop-btn" class="audio-icon-btn sm danger" data-i18n-tooltip="music.stop_close"><i class="fas fa-times"></i></button>
             </div>
         </div>
     </section>
@@ -697,32 +745,32 @@
         </div>
     </div>
 
-    <script type="text/javascript" src="js/i18n.js?v=7"></script>
-    <script type="text/javascript" src="js/components/tooltip_manager.js?v=1"></script>
+    <script type="text/javascript" src="js/i18n.js?v=8"></script>
+    <script type="text/javascript" src="js/components/tooltip_manager.js?v=2"></script>
     <script type="text/javascript" src="js/components/selection_manager.js?v=1"></script>
     <script type="text/javascript" src="js/core/state.js?v=7"></script>
     <script type="text/javascript" src="js/core/api_service.js?v=9"></script>
     <script type="text/javascript" src="js/components/ui_modals.js?v=7"></script>
     <script type="text/javascript" src="js/modules/transfer/transfer_model.js?v=7"></script>
-<script type="text/javascript" src="js/modules/transfer/transfer_view.js?v=7"></script>
-<script type="text/javascript" src="js/modules/transfer/transfer_controller.js?v=9"></script>
-    <script type="text/javascript" src="js/core/ui_manager.js?v=7"></script>
-    <script type="text/javascript" src="js/modules/settings/settings_handler.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/file_tree_view.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/file_tree_controller.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/file_list_view.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/file_list_controller.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/action_view.js?v=7"></script>
-<script type="text/javascript" src="js/modules/file_system/action_controller.js?v=7"></script>
-<script type="text/javascript" src="js/modules/trash/trash_view.js?v=7"></script>
+    <script type="text/javascript" src="js/modules/transfer/transfer_view.js?v=8"></script>
+    <script type="text/javascript" src="js/modules/transfer/transfer_controller.js?v=9"></script>
+    <script type="text/javascript" src="js/core/ui_manager.js?v=8"></script>
+    <script type="text/javascript" src="js/modules/settings/settings_handler.js?v=8"></script>
+    <script type="text/javascript" src="js/modules/file_system/file_tree_view.js?v=7"></script>
+    <script type="text/javascript" src="js/modules/file_system/file_tree_controller.js?v=7"></script>
+    <script type="text/javascript" src="js/modules/file_system/file_list_view.js?v=8"></script>
+    <script type="text/javascript" src="js/modules/file_system/file_list_controller.js?v=7"></script>
+    <script type="text/javascript" src="js/modules/file_system/action_view.js?v=8"></script>
+    <script type="text/javascript" src="js/modules/file_system/action_controller.js?v=7"></script>
+    <script type="text/javascript" src="js/modules/trash/trash_view.js?v=8"></script>
     <script type="text/javascript" src="js/modules/trash/trash_controller.js?v=7"></script>
     <script type="text/javascript" src="js/modules/gallery/gallery_handler.js?v=6"></script>
-    <script type="text/javascript" src="js/modules/preview/text_handler.js?v=5"></script>
+    <script type="text/javascript" src="js/modules/preview/text_handler.js?v=6"></script>
     <script type="text/javascript" src="js/modules/preview/document_handler.js?v=2"></script>
-    <script type="text/javascript" src="js/modules/audio/audio_player_core.js?v=1"></script>
+    <script type="text/javascript" src="js/modules/audio/audio_player_core.js?v=2"></script>
     <script type="text/javascript" src="js/modules/audio/audio_queue_store.js?v=1"></script>
     <script type="text/javascript" src="js/modules/audio/audio_studio_view.js?v=1"></script>
     <script type="text/javascript" src="js/modules/audio/audio_playlist_picker.js?v=1"></script>
-    <script type="text/javascript" src="js/main.js?v=7"></script>
+    <script type="text/javascript" src="js/main.js?v=8"></script>
 </body>
 </html>

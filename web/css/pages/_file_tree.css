@@ -1,60 +1,73 @@
 /* File Tree Navigation Styles */
-.file-tree-nav { flex-grow: 1; overflow-y: auto; }
-#file-tree, #file-tree ul { list-style-type: none; padding-left: 0; }
+.file-tree-nav {
+    flex-grow: 1;
+    overflow-y: auto;
+}
 
-/* Tree Item Container */
-.tree-item { 
-    display: flex; 
-    align-items: center; 
-    padding-right: 8px; /* Left padding set by JS */
-    border-radius: 0; 
-    user-select: none; 
-    cursor: default; 
-    position: relative; /* For absolute background */
-    background-color: transparent; /* Background handled by pseudo-element */
+#file-tree,
+#file-tree ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.tree-item {
+    display: flex;
+    align-items: center;
+    padding-right: 8px;
+    height: 32px;
+    user-select: none;
+    cursor: default;
+    position: relative;
+    background-color: transparent;
     z-index: 1;
 }
 
-/* Full-width Background using Pseudo-element */
 .tree-item::before {
     content: '';
     position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
+    inset: 1px 0;
     z-index: -1;
-    border-radius: 6px; /* Rounded corners for the background */
-    transition: background-color 0.15s;
+    border-radius: var(--radius-sm);
+    transition: background-color 0.14s ease;
 }
 
-.tree-item:hover::before { background-color: var(--item-hover-bg); }
-.tree-item.active::before { background-color: var(--selected-bg-color); }
+.tree-item:hover::before {
+    background-color: var(--surface-hover);
+}
 
-/* Active text styling remains on content */
-.tree-item.active .folder-content { color: var(--primary-color); font-weight: 500; }
-.tree-item.active .folder-content i { color: var(--primary-color); }
+.tree-item.active::before {
+    background-color: var(--accent-soft);
+}
 
-/* Wrapper for the interactive part (Toggle + Icon + Name + Right Space) */
-/* Note: Toggle is now outside wrapper in JS logic, wrapper contains content only */
+.tree-item.active .folder-content {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.tree-item.active .folder-content i {
+    color: var(--accent);
+}
+
 .tree-item-wrapper {
     display: flex;
     align-items: center;
     flex-grow: 1;
-    cursor: pointer; 
-    overflow: hidden; 
+    cursor: pointer;
+    overflow: hidden;
 }
 
-/* Folder Content (Icon + Text) */
-.tree-item > .tree-item-wrapper > .folder-content { 
-    flex-grow: 0; 
-    display: flex; 
-    align-items: center; 
-    padding: 4px 8px; 
-    overflow: hidden; 
+.tree-item > .tree-item-wrapper > .folder-content {
+    flex-grow: 0;
+    display: flex;
+    align-items: center;
+    padding: 3px 6px;
+    overflow: hidden;
     max-width: 100%;
     cursor: inherit;
+    font-size: 13px;
+    color: var(--text-secondary);
 }
+
 .tree-item > .tree-item-wrapper > .folder-content .folder-name {
     white-space: nowrap;
     overflow: hidden;
@@ -62,49 +75,61 @@
 }
 
 /* Expand/Collapse Toggle Button */
-.folder-toggle { 
-    width: 24px; 
-    height: 24px; 
-    text-align: center; 
-    line-height: 24px; 
-    margin-right: 2px; 
-    color: #888; 
-    transition: transform 0.3s ease; /* Smoother rotation */
-    display: inline-flex; 
-    justify-content: center; 
-    align-items: center; 
-    cursor: pointer; 
-    border-radius: 50%; 
-    flex-shrink: 0; 
+.folder-toggle {
+    width: 20px;
+    height: 20px;
+    text-align: center;
+    margin-right: 2px;
+    color: var(--text-muted);
+    font-size: 11px;
+    transition: transform 0.22s var(--ease-out), color 0.14s ease;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    border-radius: 50%;
+    flex-shrink: 0;
 }
-.folder-toggle:hover { background-color: var(--hover-bg-color); }
-.folder-toggle.open { transform: rotate(90deg); }
 
-/* Placeholder for items without children to maintain alignment */
+.folder-toggle:hover {
+    background-color: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.folder-toggle.open {
+    transform: rotate(90deg);
+}
+
 .folder-toggle-placeholder {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     margin-right: 2px;
     flex-shrink: 0;
 }
 
-.tree-item .folder-icon { margin-right: 8px; color: var(--primary-color); }
+.tree-item .folder-icon {
+    margin-right: 7px;
+    font-size: 13px;
+    color: var(--tile-folder-fg);
+}
 
-/* Subtree Animation Wrapper */
+/* Subtree Guide Lines & Animation Wrapper */
 .subtree-wrapper {
     display: grid;
     grid-template-rows: 0fr;
-    transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: grid-template-rows 0.25s var(--ease-out);
 }
+
 .subtree-wrapper.is-expanded {
     grid-template-rows: 1fr;
 }
+
 .subtree-wrapper > ul {
     overflow: hidden;
-    min-height: 0; /* Necessary for grid transition */
+    min-height: 0;
 }
 
-/* Custom Tooltip for Truncated Text */
+/* Custom Tooltip for Truncated Tree Text */
 #tree-tooltip {
     position: fixed;
     z-index: 100500;
@@ -116,89 +141,75 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     white-space: nowrap;
-    pointer-events: none; /* Allow events to pass through */
+    pointer-events: none;
     border: 1px solid var(--tooltip-border);
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     display: flex;
     align-items: center;
 }
+
 #tree-tooltip i {
-    margin-right: 8px;
-    color: #60a5fa;
+    margin-right: 7px;
+    color: var(--accent);
 }
+
 #tree-tooltip.active-folder {
-    color: #93c5fd;
+    color: var(--accent-hover);
     font-weight: 600;
 }
 
-/* Move Modal Tree Styles */
-#move-tree-container .tree-node { margin-bottom: 2px; user-select: none; }
+/* Move Modal Tree View */
+#move-tree-container .tree-node {
+    margin-bottom: 2px;
+    user-select: none;
+}
+
 #move-tree-container .tree-content {
     display: flex;
     align-items: center;
-    padding: 6px 10px;
-    border-radius: 6px;
+    padding: 7px 10px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.15s;
-    color: var(--text-color);
-}
-#move-tree-container .tree-content:hover { background-color: var(--hover-bg-color); }
-#move-tree-container .tree-content.selected { background-color: var(--selected-bg-color); color: var(--primary-color); font-weight: 500; }
-#move-tree-container .tree-content i.fa-folder { margin-right: 8px; color: var(--primary-color); font-size: 16px; }
-#move-tree-container .tree-toggle { width: 20px; text-align: center; color: #888; margin-right: 4px; font-size: 12px; transition: transform 0.2s; }
-#move-tree-container .tree-toggle:hover { color: #555; }
-#move-tree-container .tree-toggle-placeholder { width: 24px; display: inline-block; }
-
-/* Current Location Style (Disabled state in Move Modal) */
-#move-tree-container .tree-content.current-location {
-    opacity: 0.6;
-    background-color: #f8f9fa;
-    cursor: default;
-    color: #6c757d;
-}
-#move-tree-container .tree-content.current-location:hover { background-color: #f8f9fa; }
-#move-tree-container .tree-content.current-location i.fa-folder { color: #adb5bd; }
-
-/* --- Move Modal Tree View --- */
-.tree-node {
-    margin-bottom: 2px;
-}
-
-.tree-content {
-    display: flex;
-    align-items: center;
-    padding: 6px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    font-size: 14px;
+    transition: background-color 0.14s ease;
+    color: var(--text-primary);
+    font-size: 13.5px;
     gap: 8px;
 }
 
-.tree-content:hover {
-    background-color: var(--hover-bg-color);
+#move-tree-container .tree-content:hover {
+    background-color: var(--surface-hover);
 }
 
-.tree-content.selected {
-    background-color: var(--selected-bg-color);
-    color: var(--primary-color);
+#move-tree-container .tree-content.selected {
+    background-color: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
 }
 
-.tree-content.current-location {
-    opacity: 0.6;
-    cursor: not-allowed;
-    background-color: #f8f9fa;
+#move-tree-container .tree-content i.fa-folder {
+    color: var(--tile-folder-fg);
+    font-size: 15px;
 }
 
-.tree-toggle {
-    width: 16px;
-    color: #adb5bd;
+#move-tree-container .tree-toggle {
+    width: 18px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
     cursor: pointer;
 }
 
-.tree-toggle-placeholder {
-    width: 16px;
+#move-tree-container .tree-toggle-placeholder {
+    width: 18px;
+    display: inline-block;
+}
+
+#move-tree-container .tree-content.current-location {
+    opacity: 0.55;
+    background-color: var(--surface-hover);
+    cursor: not-allowed;
+    color: var(--text-tertiary);
 }
 
 .folder-name {

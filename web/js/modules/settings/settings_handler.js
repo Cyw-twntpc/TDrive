@@ -8,13 +8,31 @@ const SettingsHandler = {
      */
     applyTheme(theme) {
         const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', normalizedTheme);
+        const root = document.documentElement;
+        // Suppress per-component CSS transitions so all elements switch theme in the exact same frame
+        root.classList.add('theme-switching');
+        root.setAttribute('data-theme', normalizedTheme);
         if (document.body) {
             document.body.dataset.theme = normalizedTheme;
         }
         const logoImg = document.querySelector('.logo img');
         if (logoImg) {
             logoImg.setAttribute('src', normalizedTheme === 'dark' ? 'title_dark.png' : 'title.png');
+        }
+        const quickThemeIcon = document.querySelector('#theme-quick-toggle-btn i');
+        if (quickThemeIcon) {
+            quickThemeIcon.className = normalizedTheme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        }
+        // Force synchronous style/layout flush before re-enabling hover/motion transitions
+        void root.offsetHeight;
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    root.classList.remove('theme-switching');
+                });
+            });
+        } else {
+            root.classList.remove('theme-switching');
         }
     },
 
@@ -90,8 +108,6 @@ const SettingsHandler = {
             ? Math.max(1, Math.min(10, parseInt(concurrencySelect.value, 10) || 3))
             : 3;
 
-        SettingsHandler.applyTheme(selectedTheme);
-
         // Save user settings to the backend bridge
         if (window.tdrive_bridge) {
             window.tdrive_bridge.save_setting('useDefaultDownloadPath', useDefaultToggle.checked.toString());
@@ -102,6 +118,8 @@ const SettingsHandler = {
                 window.tdrive_bridge.save_setting('maxConcurrentTransfers', JSON.stringify(concurrencyLimit));
             }
         }
+
+        SettingsHandler.applyTheme(selectedTheme);
         
         UIModals.showAlert(window.t('dialog.settings_saved'), window.t('dialog.settings_saved_msg'), 'btn-primary');
         document.getElementById('settings-popover').classList.add('hidden');
@@ -145,10 +163,23 @@ const SettingsHandler = {
         if (themeSelect) {
             themeSelect.addEventListener('change', (e) => {
                 const selectedTheme = e.target.value === 'dark' ? 'dark' : 'light';
-                SettingsHandler.applyTheme(selectedTheme);
                 if (window.tdrive_bridge) {
                     window.tdrive_bridge.save_setting('theme', JSON.stringify(selectedTheme));
                 }
+                SettingsHandler.applyTheme(selectedTheme);
+            });
+        }
+
+        const quickThemeBtn = document.getElementById('theme-quick-toggle-btn');
+        if (quickThemeBtn) {
+            quickThemeBtn.addEventListener('click', () => {
+                const currentTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+                const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                if (window.tdrive_bridge) {
+                    window.tdrive_bridge.save_setting('theme', JSON.stringify(nextTheme));
+                }
+                SettingsHandler.applyTheme(nextTheme);
+                if (themeSelect) themeSelect.value = nextTheme;
             });
         }
 

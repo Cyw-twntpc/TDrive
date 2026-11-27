@@ -46,13 +46,18 @@ const TrashView = {
         el.dataset.type = item.type;
 
         const iconClass = item.type === 'folder' ? 'fas fa-folder folder-icon' : UIManager.getFileTypeIcon(item.name);
+        const tileClass = typeof UIManager.getFileTileClass === 'function'
+            ? UIManager.getFileTileClass(item.name, item.type === 'folder')
+            : (item.type === 'folder' ? 'tile-folder' : 'tile-default');
         const pathName = UIManager.escapeHtml(item.displayPath || window.t('trash.unknown_location'));
 
         el.innerHTML = `
             <div class="trash-col-name">
                 <div class="trash-col-main">
-                    <i class="${iconClass} list-thumb-icon"></i>
-                    <img class="list-thumb-img hidden" draggable="false" />
+                    <div class="icon-tile ${tileClass}">
+                        <i class="${iconClass} list-thumb-icon"></i>
+                        <img class="list-thumb-img hidden" draggable="false" />
+                    </div>
                     <span data-tooltip="${UIManager.escapeHtml(item.name)}" data-tooltip-truncated="true">${UIManager.escapeHtml(item.name)}</span>
                 </div>
                 <div class="trash-col-actions">
@@ -60,10 +65,10 @@ const TrashView = {
                     <button class="trash-action-btn delete-btn" data-tooltip="${window.t('trash.btn_delete')}"><i class="fas fa-trash-alt"></i></button>
                 </div>
             </div>
-            <div>${item.trashed_date}</div>
+            <div class="tabular">${item.trashed_date}</div>
             <div>${item.type === 'folder' ? window.t('file_list.type_folder') : window.t('file_list.type_file')}</div>
-            <div class="trash-col-path" data-tooltip="${pathName}" data-tooltip-truncated="true">${pathName}</div> 
-            <div>${item.size}</div>
+            <div class="trash-col-path" data-tooltip="${pathName}" data-tooltip-truncated="true"><span class="path-pill"><i class="fas fa-folder"></i> ${pathName}</span></div>
+            <div class="tabular">${item.size}</div>
         `;
 
         if (item.type === 'file' && TrashView._thumbnails instanceof Map) {

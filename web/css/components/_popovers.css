@@ -1,17 +1,29 @@
 .popover {
-    position: absolute;
-    top: 55px;
-    right: 0;
-    width: 320px;
-    background-color: white;
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-    z-index: 1001;
-    padding: 20px;
+    position: fixed;
+    z-index: 10050;
+    width: 290px;
+    background-color: var(--surface-elevated);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-elevated);
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
+    animation: pop-in 0.16s var(--ease-out);
+}
+
+@keyframes pop-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 .popover.hidden {
@@ -19,26 +31,148 @@
 }
 
 .popover h3 {
-    margin: 0 0 10px 0;
-    color: var(--primary-color);
+    margin: 0 0 6px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
     padding-bottom: 10px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.popover p {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
 }
 
 .popover ul {
-    padding-left: 20px;
+    padding-left: 18px;
     margin: 0;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
-.popover ul li {
+/* Rail-anchored popovers (Help / User) */
+#help-popover,
+#user-popover {
+    left: 64px;
+    bottom: 14px;
+    top: auto;
+    right: auto;
+}
+
+#user-info-content p {
+    margin: 0;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+}
+
+#user-info-content p strong {
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+#user-info-content p span {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+#user-info-content p:last-child {
+    border-bottom: none;
+}
+
+/* Centered Structured Settings Modal */
+#settings-popover.settings-modal-popover {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    width: min(520px, 92vw);
+    max-height: 86vh;
+    padding: 0;
+    gap: 0;
+    border-radius: var(--radius-lg);
+    background-color: var(--surface-canvas);
+    overflow: hidden;
+    animation: settings-modal-pop 0.22s var(--ease-spring);
+}
+
+@keyframes settings-modal-pop {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -48%) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+.settings-modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.settings-modal-header h3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.settings-modal-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.settings-group-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
     margin-bottom: 8px;
 }
 
-.popover .setting-item {
+.settings-card {
+    border-radius: var(--radius-md);
+    background-color: var(--surface-subtle);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+}
+
+.settings-card .setting-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 0;
+    gap: 14px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-card .setting-item:last-of-type {
+    border-bottom: none;
+}
+
+.settings-card .setting-item > label {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-primary);
 }
 
 .setting-control-group {
@@ -48,66 +182,73 @@
 }
 
 .setting-path-display {
-    font-size: 11px;
-    background-color: #f0f2f5;
-    padding: 6px 10px;
-    border-radius: 6px;
-    color: var(--text-light-color);
+    margin: 0 14px 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: var(--surface-canvas);
+    border: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-secondary);
     word-break: break-all;
-    margin-top: -5px;
-    margin-bottom: 10px;
-    border: 1px solid var(--border-color);
+}
+
+.settings-modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border-subtle);
+    background-color: var(--surface-subtle);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
 }
 
 #set-default-download-path-btn:disabled {
-    background-color: #e9ecef;
-    border-color: #dee2e6;
+    opacity: 0.55;
     cursor: not-allowed;
-    opacity: 0.7;
 }
 
-#user-info-content p {
-    margin: 0;
-    padding: 8px 0;
-    border-bottom: 1px solid #eee;
-    display: flex;
-    justify-content: space-between;
-}
-
-#user-info-content p:last-child {
-    border-bottom: none;
-}
-
-/* New Menu Popover specific styles */
+/* New Menu Popover */
 #new-menu-popover {
-    left: 0;
-    top: calc(100% - 10px);
-    width: 100%;
-    padding: 10px 0;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    top: calc(100% - 2px);
+    width: auto;
+    padding: 6px;
+    gap: 2px;
+    z-index: 60;
+}
+
+#new-menu-popover ul {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+    gap: 2px;
 }
 
 .popover-item {
     display: flex;
     align-items: center;
-    padding: 8px 15px;
-    gap: 12px;
+    padding: 8px 10px;
+    gap: 10px;
     border-radius: 8px;
-    color: var(--text-color);
+    color: var(--text-primary);
     cursor: pointer;
-    transition: background-color 0.2s, color 0.2s;
-    font-size: 15px;
+    transition: background-color 0.14s ease, color 0.14s ease;
+    font-size: 13px;
+    font-weight: 500;
     white-space: nowrap;
-    margin: 0 10px;
+    margin: 0;
 }
 
 .popover-item i {
-    width: 24px;
-    font-size: 18px;
+    width: 18px;
+    font-size: 14px;
     text-align: center;
-    color: var(--text-light-color);
+    color: var(--accent);
 }
 
 .popover-item:hover {
-    background-color: #f5f7fa;
+    background-color: var(--surface-hover);
 }
